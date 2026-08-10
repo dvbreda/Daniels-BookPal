@@ -1,0 +1,517 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { api, imageUrl } from "../api/client";
+import type { BookDetail } from "../api/types";
+import { pickPageProfile } from "../lib/profile";
+import { useStoredState } from "../lib/useStoredState";
+import {
+  buildSpreads,
+  orderForDisplay,
+  pagesToPreload,
+  percentFor,
+  spreadIndexOfPage,
+} from "./spreads";
+
+export type FitMode = "width" | "height" | "screen";
+export type ViewMode = "paged" | "vertical";
+
+const PRELOAD_SPREADS = 2;
+const PROGRESS_DEBOUNCE_MS = 1200;
+const ZOOM_STEP = 0.25;
+const MAX_ZOOM = 4;
+
+interface Props {
+  book: BookDetail;
+  onClose: () => void;
+}
+
+export function ComicReader({ book, onClose }: Props) {
+  const pageCount = book.page_count ?? 0;
+  const profile = useMemo(() => pickPageProfile(), []);
+
+  const [viewMode, setViewMode] = useStoredState<ViewMode>("reader.viewMode", "paged");
+  const [doublePage, setDoublePage] = useStoredState("reader.doublePage", true);
+  const [fit, setFit] = useStoredState<FitMode>("reader.fit", "height");
+  // De leesrichting komt uit de metadata, maar blijft overschrijfbaar: niet elk
+  // bestand heeft een correct ingevuld Manga-veld.
+  const [rtlOverride, setRtlOverride] = useState<boolean | null>(null);
+  const rightToLeft = rtlOverride ?? book.right_to_left;
+
+  const [aspects, setAspects] = useState<Record<number, number>>({});
+  // De pagina is de bron van waarheid, niet de spread-index.
+  //
+  // Andersom lijkt logischer, maar dan moet bij elke moduswissel de index
+  // omgerekend worden, en dat gebeurt onvermijdelijk één render te laat: de
+  // nieuwe weergave ziet dan nog de oude positie en springt naar de verkeerde
+  // pagina. Met de pagina als basis is de index puur afgeleid en kan hij per
+  // definitie niet uit de pas lopen.
+  const [page, setPage] = useState(() => {
+    const stored = book.progress?.position as { page?: number } | undefined;
+    return typeof stored?.page === "number" ? stored.page : 0;
+  });
+  const [zoom, setZoom] = useState(1);
+  const [showChrome, setShowChrome] = useState(true);
+
+  const spreads = useMemo(
+    () => buildSpreads(pageCount, viewMode === "paged" && doublePage, { aspects }),
+    [pageCount, viewMode, doublePage, aspects],
+  );
+
+  const spreadIndex = spreadIndexOfPage(spreads, page);
+  const currentSpread = spreads[spreadIndex] ?? [];
+  const currentPage = currentSpread[0] ?? 0;
+
+  const noteAspect = useCallback((index: number, width: number, height: number) => {
+    if (height <= 0) return;
+    setAspects((current) =>
+      current[index] === undefined ? { ...current, [index]: width / height } : current,
+    );
+  }, []);
+
+  // Vooruit laden zodat een paginawissel geen laadmoment is.
+  useEffect(() => {
+    if (viewMode !== "paged") return;
+    for (const page of pagesToPreload(spreads, spreadIndex, PRELOAD_SPREADS)) {
+      const image = new Image();
+      image.src = imageUrl.page(book.id, page, profile);
+    }
+  }, [book.id, profile, spreadIndex, spreads, viewMode]);
+
+  // Voortgang wegschrijven, ontdaan van ruis tijdens snel doorbladeren.
+  const pendingPercent = useRef<number | null>(null);
+  useEffect(() => {
+    if (spreads.length === 0) return;
+    const percent = percentFor(spreads, spreadIndex, pageCount);
+    pendingPercent.current = percent;
+    const timer = window.setTimeout(() => {
+      void api
+        .setProgress({
+          book_id: book.id,
+          position: { page: currentPage },
+          percent,
+          device: "web",
+        })
+        .catch(() => {
+          /* offline: de lezer moet gewoon doorlopen */
+        });
+    }, PROGRESS_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [book.id, currentPage, pageCount, spreadIndex, spreads]);
+
+  const goToSpread = useCallback(
+    (index: number) => {
+      const clamped = Math.min(Math.max(index, 0), spreads.length - 1);
+      const target = spreads[clamped];
+      if (target && target.length > 0) {
+        setZoom(1);
+        setPage(target[0] as number);
+      }
+    },
+    [spreads],
+  );
+
+  const goNext = useCallback(() => goToSpread(spreadIndex + 1), [goToSpread, spreadIndex]);
+  const goPrevious = useCallback(() => goToSpread(spreadIndex - 1), [goToSpread, spreadIndex]);
+
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      switch (event.key) {
+        case "ArrowRight":
+          // Bij manga loopt de rechterpijl mee met de leesrichting.
+          rightToLeft ? goPrevious() : goNext();
+          break;
+        case "ArrowLeft":
+          rightToLeft ? goNext() : goPrevious();
+          break;
+        case " ":
+        case "ArrowDown":
+          event.preventDefault();
+          goNext();
+          break;
+        case "ArrowUp":
+          goPrevious();
+          break;
+        case "Home":
+          goToSpread(0);
+          break;
+        case "End":
+          goToSpread(spreads.length - 1);
+          break;
+        case "d":
+          setDoublePage(!doublePage);
+          break;
+        case "v":
+          setViewMode(viewMode === "paged" ? "vertical" : "paged");
+          break;
+        case "f":
+          setFit(fit === "width" ? "height" : fit === "height" ? "screen" : "width");
+          break;
+        case "Escape":
+          onClose();
+          break;
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    doublePage,
+    fit,
+    goNext,
+    goPrevious,
+    goToSpread,
+    onClose,
+    rightToLeft,
+    setDoublePage,
+    setFit,
+    setViewMode,
+    spreads.length,
+    viewMode,
+  ]);
+
+  function onWheel(event: React.WheelEvent) {
+    if (!event.ctrlKey) return;
+    event.preventDefault();
+    setZoom((current) =>
+      Math.min(MAX_ZOOM, Math.max(1, current - Math.sign(event.deltaY) * ZOOM_STEP)),
+    );
+  }
+
+  function onClickArea(event: React.MouseEvent<HTMLDivElement>) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const relative = (event.clientX - bounds.left) / bounds.width;
+    // Middenderde schakelt de knoppenbalk; de zijkanten bladeren.
+    if (relative > 0.35 && relative < 0.65) {
+      setShowChrome((visible) => !visible);
+      return;
+    }
+    const forward = relative >= 0.65;
+    (rightToLeft ? !forward : forward) ? goNext() : goPrevious();
+  }
+
+  if (pageCount === 0) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-ink-900 text-slate-300">
+        <div className="text-center">
+          <p>Dit boek heeft geen leesbare pagina's.</p>
+          <button className="mt-4 rounded bg-ink-700 px-4 py-2" onClick={onClose}>
+            Terug
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const fitClass =
+    fit === "width"
+      ? "w-full h-auto"
+      : fit === "height"
+        ? "h-full w-auto"
+        : "max-h-full max-w-full";
+
+  return (
+    <div className="relative h-screen select-none overflow-hidden bg-ink-900">
+      {viewMode === "vertical" ? (
+        <VerticalReader
+          book={book}
+          pageCount={pageCount}
+          profile={profile}
+          initialPage={currentPage}
+          onVisiblePage={setPage}
+          onAspect={noteAspect}
+        />
+      ) : (
+        <div
+          className="flex h-full items-center justify-center"
+          onClick={onClickArea}
+          onWheel={onWheel}
+          style={{ cursor: zoom > 1 ? "grab" : "default" }}
+        >
+          <div
+            className="flex h-full items-center justify-center gap-0.5 transition-transform"
+            style={{ transform: `scale(${zoom})` }}
+          >
+            {orderForDisplay(currentSpread, rightToLeft).map((page) => (
+              <img
+                key={page}
+                src={imageUrl.page(book.id, page, profile)}
+                alt={`Pagina ${page + 1}`}
+                className={`object-contain ${fitClass}`}
+                draggable={false}
+                onLoad={(event) =>
+                  noteAspect(
+                    page,
+                    event.currentTarget.naturalWidth,
+                    event.currentTarget.naturalHeight,
+                  )
+                }
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {showChrome && (
+        <Chrome
+          book={book}
+          fit={fit}
+          setFit={setFit}
+          viewMode={viewMode}
+          setViewMode={setViewMode}
+          doublePage={doublePage}
+          setDoublePage={setDoublePage}
+          rightToLeft={rightToLeft}
+          setRightToLeft={setRtlOverride}
+          zoom={zoom}
+          setZoom={setZoom}
+          spreadIndex={spreadIndex}
+          spreadCount={spreads.length}
+          currentPage={currentPage}
+          pageCount={pageCount}
+          onSeek={setPage}
+          onClose={onClose}
+        />
+      )}
+    </div>
+  );
+}
+
+interface VerticalProps {
+  book: BookDetail;
+  pageCount: number;
+  profile: string;
+  initialPage: number;
+  onVisiblePage: (page: number) => void;
+  onAspect: (index: number, width: number, height: number) => void;
+}
+
+/** Doorlopende verticale weergave voor webtoons — daar zijn "pagina's" een
+ * kunstmatige knip en wil je gewoon scrollen. */
+function VerticalReader({
+  book,
+  pageCount,
+  profile,
+  initialPage,
+  onVisiblePage,
+  onAspect,
+}: VerticalProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const jumped = useRef(false);
+  const [loaded, setLoaded] = useState<Set<number>>(() => new Set());
+
+  // Naar de huidige pagina springen vóór de observer aan gaat. Zonder dit
+  // begint de doorlopende modus altijd bovenaan en meldt de observer meteen
+  // pagina 1 terug — je verliest dan je plek bij elke moduswissel.
+  //
+  // De sprong wordt een paar keer herhaald: de beelden laden lui, dus de
+  // hoogte van alles erboven staat pas na een paar frames vast en één keer
+  // scrollen landt dan te hoog.
+  useEffect(() => {
+    if (jumped.current) return;
+    if (initialPage <= 0) {
+      jumped.current = true;
+      return;
+    }
+    const container = containerRef.current;
+    if (!container) return;
+
+    let attempts = 0;
+    const timer = window.setInterval(() => {
+      const target = container.querySelector<HTMLElement>(`[data-page="${initialPage}"]`);
+      if (target) target.scrollIntoView({ block: "start" });
+      attempts += 1;
+      if (attempts >= 8) {
+        window.clearInterval(timer);
+        jumped.current = true;
+      }
+    }, 150);
+    return () => window.clearInterval(timer);
+  }, [initialPage]);
+
+  useEffect(() => {
+    // Pas observeren nadat de sprong gedaan is.
+    if (!jumped.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const index = Number((entry.target as HTMLElement).dataset.page);
+            if (!Number.isNaN(index)) onVisiblePage(index);
+          }
+        }
+      },
+      { root: container, threshold: 0.5 },
+    );
+    for (const child of container.querySelectorAll("[data-page]")) observer.observe(child);
+    return () => observer.disconnect();
+  }, [onVisiblePage, pageCount]);
+
+  return (
+    <div ref={containerRef} className="h-full overflow-y-auto">
+      <div className="mx-auto flex max-w-3xl flex-col">
+        {Array.from({ length: pageCount }, (_, index) => (
+          // Zolang een pagina nog niet geladen is houdt de wrapper 2:3 aan, de
+          // verhouding van vrijwel elke stripbladzijde. Zonder die reservering
+          // hebben ongeladen pagina's hoogte nul, schuift alles onder je weg
+          // zodra ze binnenkomen, en landt geen enkele scrollpositie goed.
+          <div
+            key={index}
+            data-page={index}
+            className="w-full"
+            style={loaded.has(index) ? undefined : { aspectRatio: "2 / 3" }}
+          >
+            <img
+              src={imageUrl.page(book.id, index, profile)}
+              alt={`Pagina ${index + 1}`}
+              className="w-full"
+              loading="lazy"
+              draggable={false}
+              onLoad={(event) => {
+                onAspect(
+                  index,
+                  event.currentTarget.naturalWidth,
+                  event.currentTarget.naturalHeight,
+                );
+                setLoaded((current) =>
+                  current.has(index) ? current : new Set(current).add(index),
+                );
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface ChromeProps {
+  book: BookDetail;
+  fit: FitMode;
+  setFit: (value: FitMode) => void;
+  viewMode: ViewMode;
+  setViewMode: (value: ViewMode) => void;
+  doublePage: boolean;
+  setDoublePage: (value: boolean) => void;
+  rightToLeft: boolean;
+  setRightToLeft: (value: boolean) => void;
+  zoom: number;
+  setZoom: (value: number) => void;
+  spreadIndex: number;
+  spreadCount: number;
+  currentPage: number;
+  pageCount: number;
+  onSeek: (page: number) => void;
+  onClose: () => void;
+}
+
+function Chrome(props: ChromeProps) {
+  const {
+    book,
+    fit,
+    setFit,
+    viewMode,
+    setViewMode,
+    doublePage,
+    setDoublePage,
+    rightToLeft,
+    setRightToLeft,
+    zoom,
+    setZoom,
+    spreadIndex,
+    spreadCount,
+    currentPage,
+    pageCount,
+    onSeek,
+    onClose,
+  } = props;
+
+  return (
+    <>
+      <div className="absolute inset-x-0 top-0 flex items-center gap-3 bg-ink-900/90 px-4 py-3 text-sm text-slate-200 backdrop-blur">
+        <button className="rounded px-2 py-1 hover:bg-ink-700" onClick={onClose}>
+          ← Terug
+        </button>
+        <span className="truncate font-medium">
+          {book.series_title}
+          {book.number ? ` ${book.number}` : ""}
+        </span>
+        <span className="ml-auto tabular-nums text-slate-400">
+          {currentPage + 1} / {pageCount}
+        </span>
+      </div>
+
+      <div className="absolute inset-x-0 bottom-0 space-y-2 bg-ink-900/90 px-4 py-3 backdrop-blur">
+        <input
+          type="range"
+          min={0}
+          max={Math.max(0, pageCount - 1)}
+          value={currentPage}
+          onChange={(event) => onSeek(Number(event.target.value))}
+          className="w-full accent-accent"
+          // Bij manga loopt de balk mee met de leesrichting.
+          style={{ direction: rightToLeft ? "rtl" : "ltr" }}
+        />
+        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+          <Toggle active={viewMode === "vertical"} onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}>
+            {viewMode === "vertical" ? "Doorlopend" : "Pagina's"}
+          </Toggle>
+          <Toggle
+            active={doublePage}
+            disabled={viewMode === "vertical"}
+            onClick={() => setDoublePage(!doublePage)}
+          >
+            Dubbel
+          </Toggle>
+          <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
+            {rightToLeft ? "Rechts → links" : "Links → rechts"}
+          </Toggle>
+          <div className="flex gap-1">
+            {(["width", "height", "screen"] as FitMode[]).map((mode) => (
+              <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
+                {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
+              </Toggle>
+            ))}
+          </div>
+          <div className="ml-auto flex items-center gap-1">
+            <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
+              −
+            </Toggle>
+            <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+            <Toggle active={false} onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
+              +
+            </Toggle>
+          </div>
+          <span className="w-full text-slate-500">
+            Spread {spreadIndex + 1} van {spreadCount} · pijltjes bladeren, D dubbel, V doorlopend,
+            F passend, Esc sluit
+          </span>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function Toggle({
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      disabled={disabled}
+      onClick={onClick}
+      className={`rounded px-2 py-1 transition ${
+        active ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-200 hover:bg-ink-600"
+      } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
+    >
+      {children}
+    </button>
+  );
+}

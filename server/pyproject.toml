@@ -1,0 +1,76 @@
+[project]
+name = "bookpal-server"
+version = "0.1.0"
+description = "Daniels BookPal — bibliotheekserver voor comics, manga en boeken"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pillow>=11.0",
+    "pymupdf>=1.24",
+    "libarchive-c>=5.1",
+    "lxml>=5.3",
+    "python-multipart>=0.0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-lxml",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["bookpal*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint.isort]
+known-third-party = ["alembic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "B008",  # FastAPI Depends() in defaults is idiomatisch
+    # ScanAborted en UnsupportedOperation lezen beter zonder Error-suffix; die
+    # laatste volgt bovendien io.UnsupportedOperation uit de standaardbibliotheek.
+    "N818",
+]
+
+# En- en em-dashes staan bewust in de code: echte stripbestandsnamen gebruiken
+# ze, dus de parser moet ze kunnen wegstrippen.
+allowed-confusables = ["\u2013", "\u2014"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+disallow_untyped_defs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+# PyMuPDF wordt zonder type-informatie uitgeleverd; strikte modus zou dan elke
+# aanroep afkeuren zonder dat daar iets tegen te doen is.
+[[tool.mypy.overrides]]
+module = "bookpal.formats.pdf"
+disallow_untyped_calls = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning:bookpal.*"]
