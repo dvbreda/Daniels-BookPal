@@ -58,8 +58,11 @@ export const api = {
   profiles: () => request<ImageProfile[]>("/api/profiles"),
 
   libraries: () => request<LibraryRoot[]>("/api/libraries"),
-  addLibrary: (body: { name: string; path: string }) =>
-    request<LibraryRoot>("/api/libraries", { method: "POST", body: JSON.stringify(body) }),
+  addLibrary: (body: {
+    name: string;
+    path: string;
+    default_origin_region?: string | null;
+  }) => request<LibraryRoot>("/api/libraries", { method: "POST", body: JSON.stringify(body) }),
   deleteLibrary: (id: number) =>
     request<void>(`/api/libraries/${id}`, { method: "DELETE" }),
   scanLibrary: (id: number, force = false) =>

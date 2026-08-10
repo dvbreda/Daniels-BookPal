@@ -28,16 +28,25 @@ Nog niet: tabs als opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling
 ## Draaien op de NAS
 
 ```bash
-cp docker/compose.yml docker/compose.override.yml   # pas de volumes aan
+cp .env.example .env
+ls -d /volume1/_*        # kijk welke mappen je écht hebt
+nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA goed
 docker compose -f docker/compose.yml up -d --build
 ```
 
-Open daarna `http://<nas>:8000`, ga naar **Instellingen** en voeg je mappen toe
-met het pad **zoals de container ze ziet** (`/library/strips`, niet het NAS-pad).
-Druk op **Scannen**.
+Open daarna **`http://<nas>:1997`**, ga naar **Instellingen** en voeg je mappen
+toe met het pad **zoals de container ze ziet** — dus `/library/strips`, niet
+`/volume1/_strips`. Druk op **Scannen**.
+
+Zet per map de standaard-herkomst goed (`/library/manga` → Japan): dat is het
+vangnet voor bestanden zonder ComicInfo.xml, en het is een instelling per map.
+Daarom zijn aparte mappen per soort handiger dan één grote map.
 
 De collectie wordt alleen gelezen (`:ro` in de compose); BookPal schrijft
 uitsluitend in zijn eigen `/data`-volume.
+
+Wil je Claude Code op de NAS zelf laten draaien, zie
+[`docker/claude-code.md`](docker/claude-code.md).
 
 ## Lokaal ontwikkelen
 

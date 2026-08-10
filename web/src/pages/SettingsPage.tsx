@@ -9,6 +9,7 @@ export function SettingsPage() {
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
+  const [region, setRegion] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<ScanResult | null>(null);
 
@@ -22,10 +23,12 @@ export function SettingsPage() {
   }
 
   const addRoot = useMutation({
-    mutationFn: () => api.addLibrary({ name, path }),
+    mutationFn: () =>
+      api.addLibrary({ name, path, default_origin_region: region || null }),
     onSuccess: () => {
       setName("");
       setPath("");
+      setRegion("");
       setMessage(null);
       refresh();
     },
@@ -125,6 +128,19 @@ export function SettingsPage() {
             required
             className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
           />
+          <select
+            value={region}
+            onChange={(event) => setRegion(event.target.value)}
+            className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+            title="Herkomst voor bestanden in deze map die zelf niets prijsgeven"
+          >
+            <option value="">Herkomst afleiden</option>
+            <option value="europe">Standaard Europa</option>
+            <option value="japan">Standaard Japan</option>
+            <option value="korea">Standaard Korea</option>
+            <option value="china">Standaard China</option>
+            <option value="us">Standaard VS</option>
+          </select>
           <button
             type="submit"
             disabled={addRoot.isPending}
@@ -133,6 +149,11 @@ export function SettingsPage() {
             Toevoegen
           </button>
         </form>
+        <p className="mt-2 text-xs text-slate-500">
+          De herkomst is het vangnet voor bestanden zonder ComicInfo.xml. Wat het
+          bestand zelf zegt wint hier altijd van, en jouw handmatige keuze per serie
+          wint van allebei.
+        </p>
 
         {message && <p className="mt-3 rounded bg-red-950 p-3 text-sm text-red-300">{message}</p>}
         {lastScan && (
