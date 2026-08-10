@@ -33,9 +33,14 @@ plaats van hem te installeren — de volledige uitleg staat in
 
 ```bash
 mkdir -p /volume1/docker/bookpal && cd /volume1/docker/bookpal
-docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v /volume1/docker/bookpal:/w -w /w \
-  alpine/git clone -b claude/daniels-bookpal-app-wiud2v \
+
+# Een GitHub-token, niet je wachtwoord — dat werkt niet meer voor git.
+read -rsp "GitHub token: " GH_TOKEN; echo; export GH_TOKEN
+
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GH_TOKEN \
+  -v /volume1/docker/bookpal:/w -w /w alpine/git \
+  -c credential.helper='!f(){ echo username=x-access-token; echo password=$GH_TOKEN; };f' \
+  clone -b claude/daniels-bookpal-app-wiud2v \
   https://github.com/dvbreda/Daniels-BookPal.git
 ```
 

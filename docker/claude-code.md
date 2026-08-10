@@ -15,24 +15,64 @@ UGOS heeft geen `git`, en de repo is privé — een anonieme download werkt dus
 ook niet. De oplossing is git te lenen uit een container in plaats van hem te
 installeren; dan blijft de NAS schoon en overleeft het een firmware-update.
 
-Je hebt een **GitHub Personal Access Token** nodig met leesrechten op deze repo
-(github.com → Settings → Developer settings → Personal access tokens).
+### 1. Maak een token
+
+Je gewone GitHub-wachtwoord werkt niet; GitHub accepteert dat sinds 2021 niet
+meer voor git. Geef je het toch op, dan volgt:
+
+```
+remote: Invalid username or token. Password authentication is not supported
+```
+
+Maak dus een **Personal Access Token**. Twee smaken, allebei goed:
+
+**Fine-grained** (github.com → Settings → Developer settings → Personal access
+tokens → Fine-grained tokens → Generate new token):
+
+- Resource owner: `dvbreda`
+- Repository access: **Only select repositories** → `Daniels-BookPal`
+- Permissions → Repository permissions → **Contents: Read-only**
+
+**Classic** (→ Tokens (classic) → Generate new token): vink alleen `repo` aan.
+
+Kopieer de token meteen; GitHub toont hem daarna nooit meer.
+
+### 2. Controleer de token vóór je kloont
+
+Scheelt gokken. `read -rs` houdt hem uit je shell-geschiedenis:
+
+```bash
+read -rsp "GitHub token: " GH_TOKEN; echo; export GH_TOKEN
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "Authorization: Bearer $GH_TOKEN" \
+  https://api.github.com/repos/dvbreda/Daniels-BookPal
+```
+
+| Antwoord | Betekenis |
+|---|---|
+| `200` | goed, ga door |
+| `401` | token ongeldig, verlopen of verkeerd geplakt |
+| `404` | token geldig, maar heeft geen toegang tot déze repo |
+
+### 3. Klonen
 
 ```bash
 mkdir -p /volume1/docker/bookpal && cd /volume1/docker/bookpal
 
-docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
-  -v /volume1/docker/bookpal:/w -w /w \
-  alpine/git clone -b claude/daniels-bookpal-app-wiud2v \
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e GH_TOKEN \
+  -v /volume1/docker/bookpal:/w -w /w alpine/git \
+  -c credential.helper='!f(){ echo username=x-access-token; echo password=$GH_TOKEN; };f' \
+  clone -b claude/daniels-bookpal-app-wiud2v \
   https://github.com/dvbreda/Daniels-BookPal.git
 ```
 
-Git vraagt om gebruikersnaam en wachtwoord: dat is je GitHub-gebruikersnaam en
-**de token als wachtwoord** — GitHub accepteert je echte wachtwoord al sinds
-2021 niet meer. Laat git ernaar vragen in plaats van de token in het commando
-te zetten; anders staat hij in je shell-geschiedenis en in `ps`.
+Twee details die er bewust in zitten:
 
-Het `--user`-deel zorgt dat de bestanden van jou zijn en niet van root.
+- `-e GH_TOKEN` zonder waarde geeft de variabele door uit je huidige shell. De
+  token staat dus niet in het commando, en dus niet in je geschiedenis of in
+  `ps`. De credential-helper voert hem binnen de container aan git.
+- `--user "$(id -u):$(id -g)"` zorgt dat de bestanden van jou worden en niet
+  van root — anders kun je ze straks niet bewerken.
 
 Dit bootstrap-probleem bestaat maar één keer: de Claude-container hieronder
 bevat zelf wél git, dus bijwerken gaat daarna met
