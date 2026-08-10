@@ -9,15 +9,47 @@ Je DXP2800 voldoet ruim: x86\_64 en 8 GB, terwijl 4 GB het minimum is.
 Je hebt een **Claude Pro-, Max-, Team- of Enterprise-abonnement** nodig. Het
 gratis Claude.ai-plan geeft geen toegang tot Claude Code.
 
+## Eerst: de repo op de NAS krijgen zonder git
+
+UGOS heeft geen `git`, en de repo is privé — een anonieme download werkt dus
+ook niet. De oplossing is git te lenen uit een container in plaats van hem te
+installeren; dan blijft de NAS schoon en overleeft het een firmware-update.
+
+Je hebt een **GitHub Personal Access Token** nodig met leesrechten op deze repo
+(github.com → Settings → Developer settings → Personal access tokens).
+
+```bash
+mkdir -p /volume1/docker/bookpal && cd /volume1/docker/bookpal
+
+docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v /volume1/docker/bookpal:/w -w /w \
+  alpine/git clone -b claude/daniels-bookpal-app-wiud2v \
+  https://github.com/dvbreda/Daniels-BookPal.git
+```
+
+Git vraagt om gebruikersnaam en wachtwoord: dat is je GitHub-gebruikersnaam en
+**de token als wachtwoord** — GitHub accepteert je echte wachtwoord al sinds
+2021 niet meer. Laat git ernaar vragen in plaats van de token in het commando
+te zetten; anders staat hij in je shell-geschiedenis en in `ps`.
+
+Het `--user`-deel zorgt dat de bestanden van jou zijn en niet van root.
+
+Dit bootstrap-probleem bestaat maar één keer: de Claude-container hieronder
+bevat zelf wél git, dus bijwerken gaat daarna met
+
+```bash
+docker exec -it bookpal-claude git pull
+```
+
+Liever git tóch op de NAS zelf? `sudo apt update && sudo apt install -y git`
+werkt meestal op UGOS, maar kan bij een firmware-update verdwijnen.
+
 ## Installeren
 
 ```bash
-# 1. SSH naar de NAS (aanzetten in UGOS onder Terminal/SSH) en haal de repo op
-mkdir -p /volume1/docker/bookpal && cd /volume1/docker/bookpal
-git clone https://github.com/dvbreda/Daniels-BookPal.git
-cd Daniels-BookPal
+cd /volume1/docker/bookpal/Daniels-BookPal
 
-# 2. Paden invullen
+# Paden invullen
 cp .env.example .env
 ls -d /volume1/_*          # kijk welke mappen je écht hebt
 nano .env                  # zet BOOKPAL_BOEKEN/_STRIPS/_MANGA goed
@@ -25,10 +57,10 @@ echo "BOOKPAL_WORKSPACE=/volume1/docker/bookpal" >> .env
 echo "HOST_UID=$(id -u)"  >> .env
 echo "HOST_GID=$(id -g)"  >> .env
 
-# 3. Container bouwen en starten
+# Container bouwen en starten
 docker compose -f docker/claude-code.compose.yml up -d --build
 
-# 4. Erin en inloggen
+# Erin en inloggen
 docker exec -it bookpal-claude claude
 ```
 
@@ -79,5 +111,6 @@ docker compose -f docker/claude-code.compose.yml build --no-cache
 docker compose -f docker/claude-code.compose.yml up -d
 ```
 
-De npm-installatie werkt niet vanzelf bij binnen de container, dus dit is de
-manier om een nieuwe versie op te halen.
+Claude Code wordt in de image als root geïnstalleerd en draait als gebruiker
+`node`, dus de ingebouwde auto-update kan niet bij zijn eigen installatiemap.
+Opnieuw bouwen is daarom de manier om een nieuwe versie op te halen.

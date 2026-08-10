@@ -27,7 +27,22 @@ Nog niet: tabs als opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling
 
 ## Draaien op de NAS
 
+Heeft je NAS geen `git`? Dat is normaal op UGOS. Leen hem uit een container in
+plaats van hem te installeren — de volledige uitleg staat in
+[`docker/claude-code.md`](docker/claude-code.md):
+
 ```bash
+mkdir -p /volume1/docker/bookpal && cd /volume1/docker/bookpal
+docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp \
+  -v /volume1/docker/bookpal:/w -w /w \
+  alpine/git clone -b claude/daniels-bookpal-app-wiud2v \
+  https://github.com/dvbreda/Daniels-BookPal.git
+```
+
+Daarna:
+
+```bash
+cd Daniels-BookPal
 cp .env.example .env
 ls -d /volume1/_*        # kijk welke mappen je écht hebt
 nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA goed
