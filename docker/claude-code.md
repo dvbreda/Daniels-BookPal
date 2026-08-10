@@ -98,7 +98,7 @@ echo "HOST_UID=$(id -u)"  >> .env
 echo "HOST_GID=$(id -g)"  >> .env
 
 # Container bouwen en starten
-docker compose -f docker/claude-code.compose.yml up -d --build
+docker compose -f compose.claude.yml up -d --build
 
 # Erin en inloggen
 docker exec -it bookpal-claude claude
@@ -141,14 +141,14 @@ Bewust drie verschillende niveaus:
 
 Die laatste is de zwaarste: toegang tot de Docker-socket komt in de praktijk
 neer op root op de NAS. Wil je dat niet, haal de regel dan uit
-`claude-code.compose.yml` en bouw BookPal zelf vanuit je SSH-sessie. Alles
+`compose.claude.yml` en bouw BookPal zelf vanuit je SSH-sessie. Alles
 behalve het bouwen en herstarten van containers werkt dan gewoon door.
 
 ## Bijwerken
 
 ```bash
-docker compose -f docker/claude-code.compose.yml build --no-cache
-docker compose -f docker/claude-code.compose.yml up -d
+docker compose -f compose.claude.yml build --no-cache
+docker compose -f compose.claude.yml up -d
 ```
 
 Claude Code wordt in de image als root geïnstalleerd en draait als gebruiker

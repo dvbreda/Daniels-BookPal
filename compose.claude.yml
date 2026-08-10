@@ -1,6 +1,6 @@
 # Claude Code op de NAS.
 #
-#   docker compose -f docker/claude-code.compose.yml up -d --build
+#   docker compose -f compose.claude.yml up -d --build
 #   docker exec -it bookpal-claude claude
 #
 # De eerste keer vraagt hij om in te loggen. In een container krijg je meestal
@@ -9,7 +9,7 @@
 services:
   claude:
     build:
-      context: ..
+      context: .
       dockerfile: docker/claude-code.Dockerfile
       args:
         UID: "${HOST_UID:-1000}"

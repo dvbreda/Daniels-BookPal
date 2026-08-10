@@ -51,7 +51,7 @@ cd Daniels-BookPal
 cp .env.example .env
 ls -d /volume1/_*        # kijk welke mappen je écht hebt
 nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA goed
-docker compose -f docker/compose.yml up -d --build
+docker compose up -d --build
 ```
 
 Open daarna **`http://<nas>:1997`**, ga naar **Instellingen** en voeg je mappen
@@ -106,6 +106,8 @@ server/     Python 3.12 + FastAPI + SQLite
     images/     beeldprofielen en cache
     api/        REST-endpoints
 web/        React + TypeScript + Vite
-docker/     Dockerfile en compose
+compose.yml         BookPal draaien
+compose.claude.yml  Claude Code op de NAS
+docker/     Dockerfiles
 docs/       architectuur en routekaart
 ```

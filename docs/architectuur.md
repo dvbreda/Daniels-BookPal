@@ -206,7 +206,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 ## M0 + M1 — gebouwd
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
-   libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `docker/compose.yml` met
+   libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
    volumes voor je library-roots, de SQLite-DB en de paginacache; GitHub Actions die lint + tests
    draait. Testfixtures worden **gegenereerd** (kleine cbz/cbr/epub/pdf) zodat er geen materiaal in
    de repo komt.
