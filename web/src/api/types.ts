@@ -122,3 +122,46 @@ export interface SeriesQuery {
   offset?: number;
   limit?: number;
 }
+
+/**
+ * Een regelboom: combinatoren (`and`/`or`/`not`) met condities op een veld,
+ * bv. `{"origin_region": {"eq": "europe"}}`. Spiegelt bookpal/tabs/rules.py —
+ * bewust `unknown` op waarde-niveau, want de vorm hangt af van het veld.
+ */
+export type RuleNode = Record<string, unknown>;
+
+export interface Tab {
+  id: number;
+  name: string;
+  icon: string | null;
+  position: number;
+  rule: RuleNode;
+  view_mode: string;
+  group_by: string | null;
+  enabled: boolean;
+}
+
+export interface TabIn {
+  name: string;
+  icon?: string | null;
+  position?: number;
+  rule?: RuleNode;
+  view_mode?: string;
+  group_by?: string | null;
+  enabled?: boolean;
+}
+
+export interface Collection {
+  id: number;
+  name: string;
+  smart: boolean;
+  rule: RuleNode;
+  group_by: string | null;
+}
+
+export interface CollectionIn {
+  name: string;
+  smart?: boolean;
+  rule?: RuleNode;
+  group_by?: string | null;
+}

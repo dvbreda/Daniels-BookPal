@@ -4,39 +4,34 @@ import { Link } from "react-router-dom";
 
 import { api, imageUrl } from "../api/client";
 import type { BookKind, OriginRegion, Series } from "../api/types";
+import { KIND_LABELS, REGION_LABELS } from "../lib/labels";
 import { pickCoverProfile } from "../lib/profile";
 
-const REGION_LABELS: Record<OriginRegion, string> = {
-  europe: "Europa",
-  japan: "Japan",
-  korea: "Korea",
-  china: "China",
-  us: "VS",
-  other: "Overig",
-  unknown: "Onbekend",
-};
-
-const KIND_LABELS: Record<BookKind, string> = {
-  comic: "Strips",
-  epub: "Boeken",
-  pdf: "PDF",
-};
-
 /**
- * De bibliotheek met de filters die in M3 door de regel-engine vervangen worden.
- * De vorm is bewust al die van een tab: soort + regio + zoekterm — precies de
- * condities waar een tab-regel straks naar compileert.
+ * "Alles" filtert nog los op soort/regio/zoekterm — precies de condities
+ * waar een tab-regel naar compileert (ontwerp 2). Een echte tab vervangt die
+ * twee knoppenrijen door zijn regel; de zoekbalk blijft erbovenop werken.
  */
 export function LibraryPage() {
   const [kind, setKind] = useState<BookKind | undefined>();
   const [region, setRegion] = useState<OriginRegion | undefined>();
   const [search, setSearch] = useState("");
+  const [activeTabId, setActiveTabId] = useState<number | null>(null);
   const coverProfile = pickCoverProfile();
 
-  const { data, isLoading, error } = useQuery({
+  const { data: tabs } = useQuery({ queryKey: ["tabs"], queryFn: api.tabs });
+
+  const allSeries = useQuery({
     queryKey: ["series", kind, region, search],
     queryFn: () => api.series({ kind, region, search: search || undefined, limit: 200 }),
+    enabled: activeTabId === null,
   });
+  const tabSeries = useQuery({
+    queryKey: ["tab-series", activeTabId, search],
+    queryFn: () => api.tabSeries(activeTabId!, { search: search || undefined, limit: 200 }),
+    enabled: activeTabId !== null,
+  });
+  const { data, isLoading, error } = activeTabId === null ? allSeries : tabSeries;
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-6">
@@ -53,24 +48,54 @@ export function LibraryPage() {
         </Link>
       </header>
 
-      <div className="mb-6 flex flex-wrap gap-2">
-        <FilterGroup
-          label="Soort"
-          value={kind}
-          options={Object.entries(KIND_LABELS) as [BookKind, string][]}
-          onChange={setKind}
-        />
-        <FilterGroup
-          label="Herkomst"
-          value={region}
-          options={
-            (["europe", "japan", "korea", "us", "unknown"] as OriginRegion[]).map(
-              (value) => [value, REGION_LABELS[value]] as [OriginRegion, string],
-            )
-          }
-          onChange={setRegion}
-        />
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setActiveTabId(null)}
+          className={`rounded px-3 py-1.5 text-sm ${
+            activeTabId === null ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+          }`}
+        >
+          Alles
+        </button>
+        {tabs
+          ?.filter((tab) => tab.enabled)
+          .map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTabId(tab.id)}
+              className={`rounded px-3 py-1.5 text-sm ${
+                activeTabId === tab.id ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+              }`}
+            >
+              {tab.icon ? `${tab.icon} ` : ""}
+              {tab.name}
+            </button>
+          ))}
+        <Link to="/tabs" className="ml-auto text-xs text-slate-500 hover:text-slate-300">
+          Tabs beheren
+        </Link>
       </div>
+
+      {activeTabId === null && (
+        <div className="mb-6 flex flex-wrap gap-2">
+          <FilterGroup
+            label="Soort"
+            value={kind}
+            options={Object.entries(KIND_LABELS) as [BookKind, string][]}
+            onChange={setKind}
+          />
+          <FilterGroup
+            label="Herkomst"
+            value={region}
+            options={
+              (["europe", "japan", "korea", "us", "unknown"] as OriginRegion[]).map(
+                (value) => [value, REGION_LABELS[value]] as [OriginRegion, string],
+              )
+            }
+            onChange={setRegion}
+          />
+        </div>
+      )}
 
       {isLoading && <p className="text-slate-400">Laden…</p>}
       {error && <p className="text-red-400">Kon de bibliotheek niet laden.</p>}

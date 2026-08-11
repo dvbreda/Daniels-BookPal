@@ -1,5 +1,7 @@
 import type {
   BookDetail,
+  Collection,
+  CollectionIn,
   Health,
   ImageProfile,
   LibraryRoot,
@@ -9,6 +11,8 @@ import type {
   Series,
   SeriesDetail,
   SeriesQuery,
+  Tab,
+  TabIn,
 } from "./types";
 
 export class ApiError extends Error {
@@ -90,6 +94,23 @@ export const api = {
     finished?: boolean;
     device?: string;
   }) => request<Progress>("/api/progress", { method: "PUT", body: JSON.stringify(body) }),
+
+  tabs: () => request<Tab[]>("/api/tabs"),
+  createTab: (body: TabIn) =>
+    request<Tab>("/api/tabs", { method: "POST", body: JSON.stringify(body) }),
+  updateTab: (id: number, body: TabIn) =>
+    request<Tab>(`/api/tabs/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteTab: (id: number) => request<void>(`/api/tabs/${id}`, { method: "DELETE" }),
+  tabSeries: (id: number, query: { search?: string; offset?: number; limit?: number } = {}) =>
+    request<Paginated<Series>>(`/api/tabs/${id}/series${queryString({ ...query })}`),
+
+  collections: () => request<Collection[]>("/api/collections"),
+  createCollection: (body: CollectionIn) =>
+    request<Collection>("/api/collections", { method: "POST", body: JSON.stringify(body) }),
+  updateCollection: (id: number, body: CollectionIn) =>
+    request<Collection>(`/api/collections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteCollection: (id: number) =>
+    request<void>(`/api/collections/${id}`, { method: "DELETE" }),
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */

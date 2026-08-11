@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1 + deels M2)
+## Wat er nu werkt (M0 + M1 + deels M2 + M3)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -26,10 +26,14 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   bijgewerkt zonder dat het apparaat iets hoeft uit te voeren.
 - **OPDS** (`/opds`): catalogfeed voor apps die dat al spreken, zoals Chunky of
   KyBook.
+- **Tabs** (`/tabs` in de web-app): opslaanbare regels — combinaties van
+  soort, bestandstype, herkomst, uitgever, label, map, bron en leesstatus —
+  die naar een SQLAlchemy-query compileren. Slimme collecties (`/api/collections`)
+  delen dezelfde regel-engine; die hebben nog geen eigen beheerscherm.
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), tabs als
-opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling (M6/M8), trackers
-(M7) en de Kobo-app (M9/M10).
+Nog niet: Nickel-integratie in de instellingen (rest van M2), UI voor slimme
+collecties (rest van M3), iOS (M4), MangaDex (M5), vertaling (M6/M8),
+trackers (M7) en de Kobo-app (M9/M10).
 
 ## Draaien op de NAS
 
