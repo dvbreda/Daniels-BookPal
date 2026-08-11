@@ -70,17 +70,7 @@ def list_series(
         )
     )
     rows = session.scalars(base.order_by(Series.sort_title).offset(offset).limit(limit)).all()
-
-    items: list[SeriesOut] = []
-    for series in rows:
-        counts = session.execute(
-            select(Book.kind, func.count(Book.id))
-            .where(Book.series_id == series.id)
-            .group_by(Book.kind)
-        ).all()
-        book_count = sum(int(count) for _, count in counts)
-        kinds = [str(k.value if hasattr(k, "value") else k) for k, _ in counts]
-        items.append(deps.to_series_out(series, book_count, kinds))
+    items = deps.series_out_list(session, list(rows))
 
     return Paginated(items=items, total=int(total or 0), offset=offset, limit=limit)
 

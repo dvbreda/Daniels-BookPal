@@ -140,6 +140,50 @@ class ProfileOut(BaseModel):
     grayscale: bool
 
 
+class TabIn(BaseModel):
+    """Een tab: naam + icoon + volgorde + regel + weergave (ontwerp 2)."""
+
+    name: str = Field(max_length=100)
+    icon: str | None = Field(default=None, max_length=60)
+    position: int = 0
+    rule: dict[str, Any] = Field(default_factory=dict)
+    view_mode: str = Field(default="grid", max_length=20)
+    group_by: str | None = Field(default=None, max_length=20)
+    enabled: bool = True
+
+
+class TabOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    icon: str | None
+    position: int
+    rule: dict[str, Any]
+    view_mode: str
+    group_by: str | None
+    enabled: bool
+
+
+class CollectionIn(BaseModel):
+    """Een slimme collectie: dezelfde regel-engine als tabs, plus group_by."""
+
+    name: str = Field(max_length=200)
+    smart: bool = True
+    rule: dict[str, Any] = Field(default_factory=dict)
+    group_by: str | None = Field(default=None, max_length=20)
+
+
+class CollectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    smart: bool
+    rule: dict[str, Any]
+    group_by: str | None
+
+
 T = TypeVar("T")
 
 

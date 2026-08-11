@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import get_session
@@ -137,3 +137,19 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         book_count=book_count,
         kinds=kinds,  # type: ignore[arg-type]
     )
+
+
+def series_out_list(session: Session, rows: list[Series]) -> list[SeriesOut]:
+    """Series met hun boekentelling en soorten — gedeeld door /api/series,
+    tabs en collecties, want ze tonen allemaal dezelfde serie-kaart."""
+    items: list[SeriesOut] = []
+    for series in rows:
+        counts = session.execute(
+            select(Book.kind, func.count(Book.id))
+            .where(Book.series_id == series.id)
+            .group_by(Book.kind)
+        ).all()
+        book_count = sum(int(count) for _, count in counts)
+        kinds = [str(k.value if hasattr(k, "value") else k) for k, _ in counts]
+        items.append(to_series_out(series, book_count, kinds))
+    return items
