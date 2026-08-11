@@ -192,6 +192,11 @@ class Series(Base):
     # schone versie van de bron is dan de betere keuze. Werkt zowel voor een
     # abonnement als voor een lokale serie die je handmatig koppelt.
     cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
+    # Handmatig gekozen: "pagina 1" is niet altijd de omslag, en niet elke
+    # serie heeft een bron met een schone versie. Wint van cover_url zodra
+    # gezet — de laatste keuze van de twee geldt, zie attach_cover die dit
+    # weer leegmaakt.
+    cover_page_index: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # M5: waar deze serie vandaan komt als hij geabonneerd is.
     source_id: Mapped[int | None] = mapped_column(

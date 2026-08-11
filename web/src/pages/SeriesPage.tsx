@@ -87,7 +87,7 @@ export function SeriesPage() {
         </div>
       </section>
 
-      <CoverPicker seriesId={seriesId} />
+      <CoverPicker series={data} />
       <TranslationPicker seriesId={seriesId} books={data.books} />
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">

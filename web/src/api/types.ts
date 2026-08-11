@@ -72,6 +72,8 @@ export interface Series {
   from_source: boolean;
   /** Heeft deze serie een omslag van een bron (in plaats van "pagina 1")? */
   has_cover_url: boolean;
+  /** Handmatig gekozen paginanummer voor de omslag, als dat gezet is. */
+  cover_page_index: number | null;
 }
 
 export interface SeriesDetail extends Series {

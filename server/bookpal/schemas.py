@@ -107,6 +107,8 @@ class SeriesOut(BaseModel):
     # of /api/series/{id}/cover iets oplevert, en moet hij het gewoon proberen
     # en op een 404 wachten.
     has_cover_url: bool = False
+    # Handmatig gekozen paginanummer voor de omslag, als dat gezet is.
+    cover_page_index: int | None = None
 
 
 class SeriesDetailOut(SeriesOut):
@@ -128,6 +130,13 @@ class AttachCoverIn(BaseModel):
 
     source_id: int
     ref: str = Field(max_length=200)
+
+
+class SetCoverPageIn(BaseModel):
+    """Een vaste pagina van het eerste boek als omslag, in plaats van
+    'pagina 1'. ``None`` zet de serie terug op de standaardkeuze."""
+
+    page_index: int | None = Field(default=None, ge=0)
 
 
 class TocEntryOut(BaseModel):

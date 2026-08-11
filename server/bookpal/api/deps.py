@@ -159,6 +159,7 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         kinds=kinds,  # type: ignore[arg-type]
         from_source=series.source_id is not None,
         has_cover_url=series.cover_url is not None,
+        cover_page_index=series.cover_page_index,
     )
 
 

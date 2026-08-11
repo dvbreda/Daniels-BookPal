@@ -3,9 +3,11 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 from fastapi.testclient import TestClient
 from PIL import Image
 
+from bookpal.models import Series
 from tests.fixtures import make_cbz
 
 
@@ -251,6 +253,123 @@ class TestPages:
         response = scanned.get(f"/api/books/{book_id}/pages/0")
         assert response.status_code == 410
         assert "scan" in response.json()["detail"]
+
+
+class TestSeriesCover:
+    """Precedence: handmatige pagina > bron-omslag > pagina 1 van het eerste
+    boek. 'Storm 01.cbz' heeft 5 pagina's (zie fixtures.py)."""
+
+    def _storm_series_id(self, client: TestClient) -> int:
+        return next(
+            item["id"]
+            for item in client.get("/api/series").json()["items"]
+            if item["title"] == "Storm"
+        )
+
+    def test_defaults_to_page_one_of_the_first_book(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+
+        series_cover = scanned.get(f"/api/series/{series_id}/cover")
+        book_page = scanned.get(f"/api/books/{book_id}/pages/0")
+        assert series_cover.status_code == 200
+        assert series_cover.content == book_page.content
+
+    def test_set_cover_page_changes_the_result(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+
+        patched = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 2})
+        assert patched.status_code == 200
+        assert patched.json()["cover_page_index"] == 2
+
+        series_cover = scanned.get(f"/api/series/{series_id}/cover")
+        page_two = scanned.get(f"/api/books/{book_id}/pages/2")
+        page_zero = scanned.get(f"/api/books/{book_id}/pages/0")
+        assert series_cover.content == page_two.content
+        assert series_cover.content != page_zero.content
+
+    def test_out_of_range_page_is_rejected(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        response = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 99})
+        assert response.status_code == 400
+
+    def test_negative_page_is_rejected_by_validation(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        response = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": -1})
+        assert response.status_code == 422
+
+    def test_epub_series_cannot_set_a_cover_page(self, scanned: TestClient):
+        series_id = next(
+            item["id"]
+            for item in scanned.get("/api/series").json()["items"]
+            if item["title"] == "Een Testboek"
+        )
+        response = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 1})
+        assert response.status_code == 409
+
+    def test_clearing_falls_back_to_the_default(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 2})
+        cleared = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": None})
+        assert cleared.json()["cover_page_index"] is None
+
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+        series_cover = scanned.get(f"/api/series/{series_id}/cover")
+        page_zero = scanned.get(f"/api/books/{book_id}/pages/0")
+        assert series_cover.content == page_zero.content
+
+    def test_cover_page_wins_over_a_previously_attached_source_cover(
+        self, scanned: TestClient, session
+    ):
+        series_id = self._storm_series_id(scanned)
+        series = session.get(Series, series_id)
+        series.cover_url = "https://example.test/never-fetched.jpg"
+        session.commit()
+
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 1})
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+        series_cover = scanned.get(f"/api/series/{series_id}/cover")
+        page_one = scanned.get(f"/api/books/{book_id}/pages/1")
+        assert series_cover.content == page_one.content
+
+    def test_clearing_reveals_the_source_cover_again(
+        self, scanned: TestClient, session, monkeypatch
+    ):
+        """cover_url wordt niet weggegooid door een paginakeuze — alleen
+        overschaduwd. Terugzetten op de standaardkeuze maakt hem weer zichtbaar."""
+        def fake_get(url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(200, content=_solid_png(), request=httpx.Request("GET", url))
+
+        monkeypatch.setattr("bookpal.images.pipeline.httpx.get", fake_get)
+
+        series_id = self._storm_series_id(scanned)
+        series = session.get(Series, series_id)
+        series.cover_url = "https://example.test/echte-omslag.jpg"
+        session.commit()
+
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 1})
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+        with_page = scanned.get(f"/api/series/{series_id}/cover")
+        page_one = scanned.get(f"/api/books/{book_id}/pages/1")
+        assert with_page.content == page_one.content  # de pagina wint nog
+
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": None})
+        after_clearing = scanned.get(f"/api/series/{series_id}/cover")
+        # Herbewerkt door de eigen beeldpipeline (webp), dus niet byte-voor-byte
+        # gelijk aan de bron-PNG — wel duidelijk niet meer 'pagina 1'.
+        assert after_clearing.content != page_one.content
+        assert after_clearing.headers["content-type"] == "image/webp"
+
+
+def _solid_png() -> bytes:
+    from io import BytesIO
+
+    from PIL import Image
+
+    buffer = BytesIO()
+    Image.new("RGB", (4, 4), (10, 20, 30)).save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 class TestBookDetail:

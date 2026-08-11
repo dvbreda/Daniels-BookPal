@@ -10,7 +10,15 @@ from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
 from bookpal.formats.base import UnsupportedOperation
-from bookpal.images import ImageProfile, render_remote_cover
+from bookpal.images import (
+    ImageProfile,
+    RenderedImage,
+    open_source,
+    render_cover,
+    render_page,
+    render_remote_cover,
+    source_id_for,
+)
 from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
 from bookpal.schemas import (
     AttachCoverIn,
@@ -18,6 +26,7 @@ from bookpal.schemas import (
     Paginated,
     SeriesDetailOut,
     SeriesOut,
+    SetCoverPageIn,
 )
 from bookpal.sources import SourceError
 from bookpal.sources import service as source_service
@@ -145,6 +154,45 @@ def attach_cover(
         source_service.attach_cover(series, implementation, payload.ref)
     except SourceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Een net gekozen bron-omslag mag niet verborgen blijven achter een oude
+    # handmatige paginakeuze; die kan altijd terug via .../cover-page.
+    series.cover_page_index = None
+    session.commit()
+
+    book_count = int(
+        session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
+    )
+    return deps.to_series_out(series, book_count, [])
+
+
+@router.patch("/{series_id}/cover-page", response_model=SeriesOut)
+def set_cover_page(
+    series_id: int, payload: SetCoverPageIn, session: Session = Depends(get_session)
+) -> SeriesOut:
+    """Een vaste pagina van het eerste boek als omslag.
+
+    Nuttig als er geen bron met een schone omslag bestaat, of als 'pagina 1'
+    domweg niet de omslag is. Wint van een eerder gekoppelde bron-omslag —
+    die blijft ondertussen bewaard en komt terug zodra je dit weer op de
+    standaardkeuze zet (``page_index: null``).
+    """
+    series = deps.get_series(session, series_id)
+    if payload.page_index is not None:
+        first = series.books[0] if series.books else None
+        if first is None:
+            raise HTTPException(status_code=409, detail="deze serie heeft nog geen boeken")
+        if first.kind is BookKind.EPUB:
+            raise HTTPException(
+                status_code=409,
+                detail="een epub heeft geen vaste pagina's om als omslag te kiezen",
+            )
+        if first.page_count is not None and payload.page_index >= first.page_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"pagina {payload.page_index} bestaat niet; {first.title} heeft er "
+                f"{first.page_count}",
+            )
+    series.cover_page_index = payload.page_index
     session.commit()
 
     book_count = int(
@@ -159,20 +207,48 @@ def get_series_cover(
     profile: ImageProfile = deps.ProfileDep,
     session: Session = Depends(get_session),
 ) -> Response:
-    """De omslag van de bron, als die gekoppeld is.
+    """De omslag van deze serie: eerst een handmatig gekozen pagina, dan een
+    omslag van de bron, dan pagina 1 van het eerste boek.
 
-    Geen fallback naar 'pagina 1 van het eerste boek' hier — dat blijft aan de
-    client, want alleen die weet welk boek daarvoor het eerste is.
+    Alle drie via dezelfde cache en beeldpipeline als elke andere afbeelding
+    — dus ook grijswaarden en dithering voor de Kobo.
     """
     series = deps.get_series(session, series_id)
-    if not series.cover_url:
-        raise HTTPException(status_code=404, detail="deze serie heeft geen omslag van een bron")
-    try:
-        rendered = render_remote_cover(
-            series.cover_url, profile, source_id=f"series-cover:{series.id}:{series.cover_url}"
-        )
-    except UnsupportedOperation as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    if series.cover_page_index is not None:
+        first = series.books[0] if series.books else None
+        if first is not None and first.file_id is not None:
+            path = deps.book_file_path(session, first)
+            source = open_source(path)
+            try:
+                rendered = render_page(
+                    source, series.cover_page_index, profile, source_id=source_id_for(path)
+                )
+                return _cover_response(rendered)
+            except (IndexError, UnsupportedOperation):
+                pass  # gekozen pagina bestaat niet meer; val terug
+
+    if series.cover_url:
+        try:
+            rendered = render_remote_cover(
+                series.cover_url, profile, source_id=f"series-cover:{series.id}:{series.cover_url}"
+            )
+        except UnsupportedOperation as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _cover_response(rendered)
+
+    first = series.books[0] if series.books else None
+    if first is not None and first.file_id is not None:
+        path = deps.book_file_path(session, first)
+        source = open_source(path)
+        maybe_rendered = render_cover(source, profile, source_id=source_id_for(path))
+        if maybe_rendered is not None:
+            return _cover_response(maybe_rendered)
+
+    raise HTTPException(status_code=404, detail="deze serie heeft nog geen omslag")
+
+
+def _cover_response(rendered: RenderedImage) -> Response:
     return Response(
         content=rendered.data,
         media_type=rendered.media_type,

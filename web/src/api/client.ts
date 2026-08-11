@@ -94,6 +94,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  setCoverPage: (id: number, pageIndex: number | null) =>
+    request<Series>(`/api/series/${id}/cover-page`, {
+      method: "PATCH",
+      body: JSON.stringify({ page_index: pageIndex }),
+    }),
 
   book: (id: number) => request<BookDetail>(`/api/books/${id}`),
 
