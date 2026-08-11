@@ -116,6 +116,37 @@ class TestContinue:
         body = client.get(f"/api/series/{series.id}/continue").json()
         assert body["book_id"] == books[2].id
 
+    def test_an_old_half_open_chapter_does_not_trap_you(
+        self, client: TestClient, session: Session
+    ):
+        """Het geval uit de praktijk: 7% op een hoofdstuk uit deel 1 dat ooit
+        even openging, terwijl je allang in deel 3 zit. Dat oude restje hoorde
+        je niet terug te trekken."""
+        series = _series_with_chapters(session, 6)
+        books = _books(session, series)
+        _progress(session, books[0], 7.0, False, page=1)   # ooit even opengeslagen
+        _progress(session, books[3], 89.0, False, page=18)  # waar je echt bent
+        session.commit()
+
+        body = client.get(f"/api/series/{series.id}/continue").json()
+        assert body["book_id"] == books[3].id
+        assert body["page"] == 18
+        # En het oude restje is precies wat de opruimknop aanbiedt.
+        assert body["unread_before"] == 3
+
+    def test_after_finishing_the_furthest_it_goes_to_the_next(
+        self, client: TestClient, session: Session
+    ):
+        series = _series_with_chapters(session, 5)
+        books = _books(session, series)
+        _progress(session, books[0], 7.0, False, page=1)
+        _progress(session, books[2], 100.0, True)
+        session.commit()
+
+        body = client.get(f"/api/series/{series.id}/continue").json()
+        assert body["book_id"] == books[3].id
+        assert body["resuming"] is False
+
     def test_everything_read_falls_back_to_the_last_chapter(
         self, client: TestClient, session: Session
     ):

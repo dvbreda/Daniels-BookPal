@@ -278,13 +278,17 @@ def _readable_books(session: Session, series_id: int) -> list[Book]:
 
 @router.get("/{series_id}/continue", response_model=ContinueOut)
 def continue_reading(series_id: int, session: Session = Depends(get_session)) -> ContinueOut:
-    """Waar je verder leest: het eerste hoofdstuk dat nog niet uit is.
+    """Waar je verder leest: vanaf hoe ver je in de serie bent.
 
-    Eerst iets dat je al begonnen was — daar wil je terug naar de pagina waar
-    je gebleven bent. Is er niets half af, dan het eerste dat je nog niet hebt
-    aangeraakt. Bewust op leesvolgorde en niet op "laatst gelezen": bij manga
-    lees je vooruit, en een serie waarin je een oud hoofdstuk hebt teruggekeken
-    hoort je niet daarheen terug te sturen.
+    Het ankerpunt is het **laatste** hoofdstuk in leesvolgorde waar voortgang op
+    staat, niet het eerste. Dat verschil is het hele punt: een hoofdstuk uit
+    deel 1 dat je ooit even hebt opengeslagen blijft anders eeuwig "de eerste
+    die nog openstaat", terwijl je allang in deel 3 zit. Zo'n oud restje hoort
+    je niet terug te trekken — daar is de knop "markeer eerdere als gelezen"
+    voor.
+
+    Staat er op dat anker nog voortgang, dan ga je daar verder op je eigen
+    pagina. Is het uit, dan het eerstvolgende hoofdstuk dat nog niet uit is.
     """
     deps.get_series(session, series_id)
     books = _readable_books(session, series_id)
@@ -294,23 +298,27 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
     user = current_user(session)
     progress = deps.progress_for(session, user, [book.id for book in books])
 
-    started: Book | None = None
-    fresh: Book | None = None
-    for book in books:
-        row = progress.get(book.id)
-        if row is not None and row.finished:
-            continue
-        if row is not None and row.percent > 0:
-            started = book
-            break
-        if fresh is None:
-            fresh = book
+    anchor_index: int | None = None
+    for index, book in enumerate(books):
+        if book.id in progress:
+            anchor_index = index
 
-    target = started or fresh
-    if target is None:
-        # Alles uit: dan maar het laatste hoofdstuk, zodat de knop iets doet
-        # in plaats van te verdwijnen.
-        target = books[-1]
+    if anchor_index is None:
+        target = books[0]
+    else:
+        anchor = books[anchor_index]
+        anchor_row = progress[anchor.id]
+        if not anchor_row.finished:
+            target = anchor
+        else:
+            later = [
+                book
+                for book in books[anchor_index + 1 :]
+                if not (book.id in progress and progress[book.id].finished)
+            ]
+            # Niets meer erna: dan maar het laatste hoofdstuk, zodat de knop
+            # iets doet in plaats van te verdwijnen.
+            target = later[0] if later else books[-1]
 
     row = progress.get(target.id)
     position = row.position if row is not None else {}
@@ -318,9 +326,8 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
 
     unread_before = sum(
         1
-        for book in books
-        if (book.sort_volume, book.sort_number) < (target.sort_volume, target.sort_number)
-        and not (progress.get(book.id) is not None and progress[book.id].finished)
+        for book in books[: books.index(target)]
+        if not (book.id in progress and progress[book.id].finished)
     )
 
     return ContinueOut(
