@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     # Waar herschaalde pagina's en covers gecached worden.
     cache_dir: Path = Path("./data/cache")
 
+    # Waar hoofdstukken van een bron (M5) belanden. Dit is een gewone map die
+    # ook gescand wordt, zodat gedownloade en eigen bestanden hetzelfde pad
+    # door de app volgen.
+    download_dir: Path = Path("./data/downloads")
+
     # Maximale grootte van de beeldcache in megabytes; 0 = onbeperkt.
     cache_max_mb: int = 4096
 
@@ -29,6 +34,7 @@ class Settings(BaseSettings):
     def ensure_dirs(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.download_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

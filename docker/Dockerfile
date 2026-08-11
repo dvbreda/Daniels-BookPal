@@ -20,7 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     BOOKPAL_DATA_DIR=/data \
-    BOOKPAL_CACHE_DIR=/data/cache
+    BOOKPAL_CACHE_DIR=/data/cache \
+    # Op het volume, niet in de container-laag: anders is elke gedownloade
+    # aflevering weg zodra het image opnieuw gebouwd wordt.
+    BOOKPAL_DOWNLOAD_DIR=/data/downloads
 
 WORKDIR /app
 

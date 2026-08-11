@@ -11,7 +11,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bookpal.models import BookKind, OriginRegion, OriginSource
+from bookpal.models import BookKind, OriginRegion, OriginSource, SubscriptionPolicy
 
 
 class LibraryRootIn(BaseModel):
@@ -182,6 +182,75 @@ class CollectionOut(BaseModel):
     smart: bool
     rule: dict[str, Any]
     group_by: str | None
+
+
+class SourceOut(BaseModel):
+    """Een externe bron (M5), bv. MangaDex."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    name: str
+    enabled: bool
+
+
+class SourceIn(BaseModel):
+    type: str = Field(max_length=50)
+    name: str = Field(max_length=100)
+    enabled: bool = True
+
+
+class SearchResultOut(BaseModel):
+    """Een treffer bij een bron — nog geen serie in je bibliotheek."""
+
+    ref: str
+    title: str
+    description: str | None = None
+    year: int | None = None
+    status: str | None = None
+    original_language: str | None = None
+    tracker_ids: dict[str, str] = Field(default_factory=dict)
+    # Volg je deze al? Dan hoeft de UI geen tweede aanroep te doen.
+    subscribed_series_id: int | None = None
+
+
+class SubscribeIn(BaseModel):
+    ref: str = Field(max_length=200)
+    policy: str = Field(default="readahead", pattern="^(permanent|readahead)$")
+    readahead_n: int = Field(default=3, ge=0, le=50)
+    ttl_days: int = Field(default=14, ge=1, le=365)
+    language: str = Field(default="en", max_length=8)
+
+
+class SubscriptionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_id: int
+    series_id: int
+    policy: SubscriptionPolicy
+    readahead_n: int
+    ttl_days: int
+    last_checked_at: datetime | None
+    series_title: str = ""
+    chapters_total: int = 0
+    chapters_local: int = 0
+
+
+class SubscribeResultOut(BaseModel):
+    subscription: SubscriptionOut
+    series_id: int
+    chapters_added: int
+
+
+class DownloadIn(BaseModel):
+    """Tijdelijk downloaden is het 'vooruitlezen' uit het datamodel: het
+    bestand krijgt een vervaldatum, de bron-referentie blijft."""
+
+    data_saver: bool = False
+    temporary: bool = False
+    ttl_days: int = Field(default=14, ge=1, le=365)
 
 
 T = TypeVar("T")

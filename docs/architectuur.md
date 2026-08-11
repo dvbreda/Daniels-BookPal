@@ -13,9 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0, M1 en M3 zijn gebouwd, M2 deels**
-(voortgang-sync, Kobo-beeldprofiel, BookPal Lite en OPDS wel, de Nickel-integratie niet); de latere
-milestones staan erin zodat de vroege keuzes ze niet blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0, M1 en M3 zijn gebouwd; M2 en M5
+deels** (M2: alles behalve de Nickel-integratie; M5: de bron-laag met MangaDex werkt, een web-UI
+ervoor nog niet); de latere milestones staan erin zodat de vroege keuzes ze niet blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -241,6 +241,20 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    JSON-modus voor geneste `and`/`or`/`not`. Groeperen (`group_by`) gebeurt voorlopig client-side
    in `CollectionViewPage`; server-side groepering komt terug zodra "submappen als collectie"
    op grote mappen gaat knellen.
+
+8. **M5, deels** — `bookpal/sources/` met de `Source`-interface (`search`, `detail`, `chapters`,
+   `page_urls`, `download`), een token-bucket rate limiter en `mangadex.py`. Abonneren maakt boeken
+   mét bron-referentie en zónder bestand; downloaden hangt er een cbz aan zonder die referentie te
+   wissen, zodat de TTL-opruiming het bestand later kan weghalen terwijl het hoofdstuk zichtbaar
+   blijft. Gedownloade bestanden landen in een gewone library-root, dus ze lopen daarna door
+   dezelfde scanner, formats en beeldprofielen als eigen bestanden. `originalLanguage` voedt stap 2
+   van de herkomst-keten en `links.mal` vult `tracker_ids` alvast voor M7. Nog open: een web-UI om
+   te zoeken en te volgen, en een achtergrond-worker die abonnementen automatisch bijwerkt en de
+   readahead ophaalt — nu zijn `refresh` en `download` handmatige API-aanroepen.
+
+   Een bron hoort een gepubliceerde API te hebben waarvan het gebruik is toegestaan; scrapers voor
+   sites die commercieel werk zonder licentie herdistribueren horen hier niet thuis. De interface
+   staat los van de implementatie, dus een nette bron toevoegen is één bestand.
 
 ## Verificatie
 

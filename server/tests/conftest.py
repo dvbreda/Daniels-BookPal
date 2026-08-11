@@ -20,6 +20,8 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     data_dir = tmp_path / "data"
     monkeypatch.setattr(settings, "data_dir", data_dir)
     monkeypatch.setattr(settings, "cache_dir", data_dir / "cache")
+    # Ook downloads omleiden, anders schrijft een test in de echte projectmap.
+    monkeypatch.setattr(settings, "download_dir", data_dir / "downloads")
     db_module.reset_engine()
     settings.ensure_dirs()
     yield data_dir
