@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1)
+## Wat er nu werkt (M0 + M1 + deels M2)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -21,9 +21,15 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
 - **Web-app** met bibliotheekgrid en een stripleer: enkel/dubbel, automatische
   herkenning van dubbelpagina's, doorlopende modus voor webtoons, links-naar-
   rechts én rechts-naar-links, zoom, fit-modi en vooruitladen.
+- **BookPal Lite** (`/lite`): server-rendered lezer zonder JavaScript voor de
+  Kobo-browser. Een pagina omslaan is een gewone link, dus de voortgang wordt
+  bijgewerkt zonder dat het apparaat iets hoeft uit te voeren.
+- **OPDS** (`/opds`): catalogfeed voor apps die dat al spreken, zoals Chunky of
+  KyBook.
 
-Nog niet: tabs als opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling
-(M6/M8), trackers (M7) en de Kobo-app (M9/M10).
+Nog niet: Nickel-integratie in de instellingen (rest van M2), tabs als
+opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling (M6/M8), trackers
+(M7) en de Kobo-app (M9/M10).
 
 ## Draaien op de NAS
 

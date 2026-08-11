@@ -13,8 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0 en M1 zijn gebouwd**; de latere
-milestones staan erin zodat de vroege keuzes ze niet blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0 en M1 zijn gebouwd, M2 is deels
+gebouwd** (voortgang-sync, Kobo-beeldprofiel, BookPal Lite en OPDS; de Nickel-integratie niet); de
+latere milestones staan erin zodat de vroege keuzes ze niet blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -203,7 +204,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 | **M9** | `bookpal-kobo`: FBInk, touch, tabs, comics, offline, NickelMenu-installer | Eigen native comic-lezer op de Kobo |
 | **M10** | `bookpal-kobo`: epub + pdf via crengine en MuPDF | Volwaardige eigen lezer op de Kobo |
 
-## M0 + M1 — gebouwd
+## M0 + M1 — gebouwd, M2 gedeeltelijk
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
    libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
@@ -223,6 +224,13 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    preload van omliggende pagina's. Voor epub/pdf komt in M6 **foliate-js** (MIT; epub/mobi/fb2/cbz
    en pdf via pdf.js) — die engine wordt ook in een WKWebView op iOS hergebruikt, zodat er maar één
    epub-lezer voor web en iOS onderhouden hoeft te worden.
+6. **M2, deels** — `/api/progress` bestond al vanaf M1 (gedeeld door alle clients, zie ontwerp 4);
+   daar bovenop nu **BookPal Lite** (`/lite`, Laag A uit ontwerp 3: server-rendered HTML, geen
+   JavaScript, een pagina omslaan is een gewone link die tegelijk de voortgang bijwerkt) en
+   **OPDS 1.2** (`/opds`, navigatiefeed met series + acquisitiefeed per serie). De Kobo-
+   beeldprofielen (`images/profiles.py`) waren al vanaf M1 aanwezig. Nog open: Laag B, de
+   Nickel-integratie in de instellingen — die leunt op reverse-engineering van
+   `KoboReader.sqlite` en is dus alleen te bouwen/testen met een echt apparaat erbij.
 
 ## Verificatie
 
