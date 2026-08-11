@@ -129,6 +129,7 @@ en herstart de container. De token is een jaar geldig.
 docker exec -it bookpal-claude claude doctor      # installatie en instellingen
 docker exec -it bookpal-claude claude --version
 docker exec -it bookpal-claude docker ps          # kan hij bij de socket?
+docker exec -it bookpal-claude docker compose version
 ```
 
 Geeft die laatste `permission denied` in plaats van een (lege) lijst, dan klopt
