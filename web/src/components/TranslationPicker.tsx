@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ApiError, api } from "../api/client";
+import type { Book } from "../api/types";
 
 /**
  * Welke vertaling wil je lezen?
@@ -14,7 +15,7 @@ import { ApiError, api } from "../api/client";
  *
  * Toont niets als deze serie geen abonnement heeft of er maar één groep is.
  */
-export function TranslationPicker({ seriesId }: { seriesId: number }) {
+export function TranslationPicker({ seriesId, books }: { seriesId: number; books: Book[] }) {
   const queryClient = useQueryClient();
   const [message, setMessage] = useState<string | null>(null);
 
@@ -68,9 +69,54 @@ export function TranslationPicker({ seriesId }: { seriesId: number }) {
         {choose.isPending && <span className="text-xs text-slate-400">Ophalen…</span>}
       </div>
       {message && <p className="mt-2 text-xs text-slate-400">{message}</p>}
+
+      <Breakdown
+        books={books}
+        leadName={
+          subscription.available_groups.find(
+            (group) => group.id === subscription.preferred_group_id,
+          )?.name ?? null
+        }
+      />
+
       <p className="mt-2 text-xs text-slate-500">
         Al opgehaalde afleveringen blijven staan, ook die van de andere vertaling.
       </p>
     </section>
+  );
+}
+
+/**
+ * Hoeveel komt er van je voorkeur, en hoeveel is aanvulling?
+ *
+ * Zonder dit is niet te zien dat een groep met minder hoofdstukken toch een
+ * complete reeks oplevert: de rest wordt aangevuld vanuit een andere groep.
+ * Alleen de groepsnaam per hoofdstuk laten zien dwingt je door de hele lijst
+ * te scrollen om dat te ontdekken.
+ */
+function Breakdown({ books, leadName }: { books: Book[]; leadName: string | null }) {
+  const counts = new Map<string, number>();
+  for (const book of books) {
+    if (!book.source_group_name) continue;
+    counts.set(book.source_group_name, (counts.get(book.source_group_name) ?? 0) + 1);
+  }
+  if (counts.size === 0) return null;
+
+  const rows = [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  // Zonder voorkeur is de grootste groep vanzelf de leidende.
+  const lead = leadName ?? rows[0]?.[0];
+
+  return (
+    <ul className="mt-3 space-y-1 text-xs text-slate-400">
+      {rows.map(([name, count]) => (
+        <li key={name}>
+          <span className="text-slate-300">{count}</span>{" "}
+          {name === lead ? `van ${name}` : `aangevuld vanuit ${name}`}
+        </li>
+      ))}
+      <li className="text-slate-500">
+        samen {books.length} {books.length === 1 ? "hoofdstuk" : "hoofdstukken"}
+      </li>
+    </ul>
   );
 }

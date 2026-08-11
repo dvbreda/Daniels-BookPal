@@ -86,7 +86,7 @@ export function SeriesPage() {
         </div>
       </section>
 
-      <TranslationPicker seriesId={seriesId} />
+      <TranslationPicker seriesId={seriesId} books={data.books} />
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {data.books.map((book) => (
