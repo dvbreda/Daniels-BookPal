@@ -11,8 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
-from bookpal.models import Book, Progress, utcnow
+from bookpal.models import Book, Progress
 from bookpal.schemas import ProgressIn, ProgressOut
+
+from . import deps
 
 router = APIRouter(prefix="/api/progress", tags=["progress"])
 
@@ -56,19 +58,15 @@ def set_progress(payload: ProgressIn, session: Session = Depends(get_session)) -
     if session.get(Book, payload.book_id) is None:
         raise HTTPException(status_code=404, detail="boek niet gevonden")
 
-    row = session.scalar(
-        select(Progress).where(Progress.user_id == user.id, Progress.book_id == payload.book_id)
+    row = deps.upsert_progress(
+        session,
+        user,
+        payload.book_id,
+        position=payload.position,
+        percent=payload.percent,
+        device=payload.device,
+        finished=payload.finished or payload.percent >= 100.0,
     )
-    if row is None:
-        row = Progress(user_id=user.id, book_id=payload.book_id)
-        session.add(row)
-
-    row.position = payload.position
-    row.percent = payload.percent
-    row.finished = payload.finished or payload.percent >= 100.0
-    row.device = payload.device
-    row.updated_at = utcnow()
-    session.commit()
     return ProgressOut.model_validate(row)
 
 

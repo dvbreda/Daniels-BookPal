@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
-from bookpal.models import Book, File, Progress, Series, User
+from bookpal.models import Book, File, Progress, Series, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 
 SessionDep = Depends(get_session)
@@ -63,6 +63,35 @@ def book_file_path(session: Session, book: Book) -> Path:
             detail="het bestand staat niet meer op deze plek; draai een scan",
         )
     return path
+
+
+def upsert_progress(
+    session: Session,
+    user: User,
+    book_id: int,
+    *,
+    position: dict[str, object],
+    percent: float,
+    device: str | None,
+    finished: bool | None = None,
+) -> Progress:
+    """Positie opslaan. Laatste schrijver wint — gedeeld door de REST-endpoint
+    en Lite, zodat een paginaomslag in de Kobo-browser dezelfde waarheid
+    bijwerkt als een tap in de web-app."""
+    row = session.scalar(
+        select(Progress).where(Progress.user_id == user.id, Progress.book_id == book_id)
+    )
+    if row is None:
+        row = Progress(user_id=user.id, book_id=book_id)
+        session.add(row)
+
+    row.position = position
+    row.percent = percent
+    row.finished = finished if finished is not None else percent >= 100.0
+    row.device = device
+    row.updated_at = utcnow()
+    session.commit()
+    return row
 
 
 def progress_for(session: Session, user: User, book_ids: list[int]) -> dict[int, Progress]:

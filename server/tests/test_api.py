@@ -1,57 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
 from io import BytesIO
 from pathlib import Path
 
-import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from bookpal import db as db_module
-from bookpal.main import app
-from tests.fixtures import comicinfo_xml, make_cbz, make_epub, make_pdf
-
-
-@pytest.fixture
-def client(temp_settings: Path) -> Iterator[TestClient]:
-    db_module.init_db()
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def library(tmp_path: Path) -> Path:
-    root = tmp_path / "collectie"
-    make_cbz(
-        root / "strips" / "Storm 01.cbz",
-        pages=5,
-        comicinfo=comicinfo_xml(series="Storm", number="1", publisher="Dupuis"),
-    )
-    make_cbz(
-        root / "strips" / "Storm 02.cbz",
-        pages=3,
-        comicinfo=comicinfo_xml(series="Storm", number="2", publisher="Dupuis"),
-    )
-    make_cbz(
-        root / "manga" / "Tesuto 01.cbz",
-        pages=4,
-        comicinfo=comicinfo_xml(series="Tesuto", number="1", manga="YesAndRightToLeft"),
-    )
-    make_epub(root / "boeken" / "Een Testboek.epub")
-    make_pdf(root / "boeken" / "Een Testdocument.pdf", pages=2)
-    return root
-
-
-@pytest.fixture
-def scanned(client: TestClient, library: Path) -> TestClient:
-    response = client.post("/api/libraries", json={"name": "Collectie", "path": str(library)})
-    assert response.status_code == 201
-    root_id = response.json()["id"]
-    scan = client.post(f"/api/libraries/{root_id}/scan")
-    assert scan.status_code == 200, scan.text
-    assert scan.json()["added"] == 5
-    return client
+from tests.fixtures import make_cbz
 
 
 class TestHealth:
