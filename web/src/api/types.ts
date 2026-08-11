@@ -31,6 +31,10 @@ export interface Book {
   page_count: number | null;
   right_to_left: boolean;
   has_file: boolean;
+  /** Van een abonnement (bron) in plaats van uit je eigen mappen. */
+  from_source: boolean;
+  /** Gezet bij een tijdelijke readahead-download. */
+  expires_at: string | null;
   extension: string | null;
   added_at: string;
   progress: Progress | null;
@@ -62,6 +66,8 @@ export interface Series {
   summary: string | null;
   book_count: number;
   kinds: BookKind[];
+  /** Gevolgd bij een bron; kan hoofdstukken hebben zonder lokaal bestand. */
+  from_source: boolean;
 }
 
 export interface SeriesDetail extends Series {
@@ -164,4 +170,52 @@ export interface CollectionIn {
   smart?: boolean;
   rule?: RuleNode;
   group_by?: string | null;
+}
+
+export interface SourceRow {
+  id: number;
+  type: string;
+  name: string;
+  enabled: boolean;
+}
+
+export interface SearchHit {
+  ref: string;
+  title: string;
+  description: string | null;
+  year: number | null;
+  status: string | null;
+  original_language: string | null;
+  tracker_ids: Record<string, string>;
+  /** Gevuld als je deze serie al volgt. */
+  subscribed_series_id: number | null;
+}
+
+export type SubscriptionPolicy = "permanent" | "readahead";
+
+export interface SubscriptionRow {
+  id: number;
+  source_id: number;
+  series_id: number;
+  policy: SubscriptionPolicy;
+  readahead_n: number;
+  ttl_days: number;
+  last_checked_at: string | null;
+  series_title: string;
+  chapters_total: number;
+  chapters_local: number;
+}
+
+export interface SubscribeResult {
+  subscription: SubscriptionRow;
+  series_id: number;
+  chapters_added: number;
+}
+
+export interface RunReport {
+  subscriptions: number;
+  chapters_added: number;
+  downloaded: number;
+  expired: number;
+  errors: string[];
 }

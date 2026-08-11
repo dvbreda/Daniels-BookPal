@@ -16,6 +16,7 @@ from bookpal.api import router
 from bookpal.config import settings
 from bookpal.db import init_db
 from bookpal.formats import book_cache
+from bookpal.sources.worker import start_worker, stop_worker
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -29,7 +30,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings.ensure_dirs()
     init_db()
     logger.info("BookPal gestart — data in %s", settings.data_dir.resolve())
+    start_worker()
     yield
+    stop_worker()
     book_cache.clear()
 
 

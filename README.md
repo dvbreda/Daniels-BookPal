@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1 + M3 + deels M2 en M5)
+## Wat er nu werkt (M0 + M1 + M3 + M5 + deels M2)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -32,16 +32,20 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   Eén engine voor allebei; collecties groeperen hun uitkomst bovendien op
   uitgever of map.
 
-- **Bronnen** (`/api/sources`): MangaDex zoeken, volgen en hoofdstukken
-  ophalen. Een gevolgd hoofdstuk is eerst een boek zonder bestand; downloaden
-  hangt er een cbz aan die daarna door dezelfde scanner, lezer en
-  beeldprofielen loopt als je eigen bestanden. Tijdelijke downloads krijgen een
-  vervaldatum; als die verloopt gaat alleen het bestand weg, niet het
-  hoofdstuk.
+- **Bronnen** (`/bronnen` in de web-app): MangaDex zoeken, volgen en
+  hoofdstukken ophalen. Een gevolgd hoofdstuk is eerst een boek zonder bestand;
+  ophalen hangt er een cbz aan die daarna door dezelfde scanner, lezer en
+  beeldprofielen loopt als je eigen bestanden. Kaartjes tonen waar iets vandaan
+  komt: geen badge voor je eigen bestanden, ☁ voor wat nog online staat, ✓ voor
+  opgehaald en ⏳ met het aantal dagen voor een tijdelijke download.
+- **Vooruitlezen**: een achtergrond-worker haalt periodiek nieuwe hoofdstukken
+  op en downloadt er `readahead_n` vooruit vanaf waar je gebleven bent.
+  Tijdelijke downloads verlopen na hun TTL — dan gaat alleen het bestand weg,
+  het hoofdstuk blijft staan. Uit te zetten met `BOOKPAL_SUBSCRIPTIONS_ENABLED=false`,
+  of handmatig te draaien via de knop "Nu bijwerken".
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4), een
-web-UI voor bronnen (rest van M5), vertaling (M6/M8), trackers (M7) en de
-Kobo-app (M9/M10).
+Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4),
+vertaling (M6/M8), trackers (M7) en de Kobo-app (M9/M10).
 
 Let op: **epub gaat nu nog als download**, niet als lezer in de browser —
 herschikbare tekst heeft een client-side lezer nodig (foliate-js, gepland in

@@ -27,6 +27,11 @@ class Settings(BaseSettings):
     # CORS-origins voor de web-app tijdens ontwikkeling.
     cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
+    # M5: automatisch abonnementen bijwerken en vooruitlezen. Uit te zetten als
+    # je liever zelf bepaalt wanneer er verkeer naar een bron gaat.
+    subscriptions_enabled: bool = True
+    subscriptions_interval_minutes: int = 60
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'bookpal.db').resolve()}"

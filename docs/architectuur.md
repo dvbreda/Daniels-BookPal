@@ -13,9 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0, M1 en M3 zijn gebouwd; M2 en M5
-deels** (M2: alles behalve de Nickel-integratie; M5: de bron-laag met MangaDex werkt, een web-UI
-ervoor nog niet); de latere milestones staan erin zodat de vroege keuzes ze niet blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0, M1, M3 en M5 zijn gebouwd; M2 deels**
+(alles behalve de Nickel-integratie); de latere milestones staan erin zodat de vroege keuzes ze niet
+blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -248,9 +248,18 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    wissen, zodat de TTL-opruiming het bestand later kan weghalen terwijl het hoofdstuk zichtbaar
    blijft. Gedownloade bestanden landen in een gewone library-root, dus ze lopen daarna door
    dezelfde scanner, formats en beeldprofielen als eigen bestanden. `originalLanguage` voedt stap 2
-   van de herkomst-keten en `links.mal` vult `tracker_ids` alvast voor M7. Nog open: een web-UI om
-   te zoeken en te volgen, en een achtergrond-worker die abonnementen automatisch bijwerkt en de
-   readahead ophaalt — nu zijn `refresh` en `download` handmatige API-aanroepen.
+   van de herkomst-keten en `links.mal` vult `tracker_ids` alvast voor M7.
+
+   `worker.py` draait de drie taken op een interval in een achtergrond-thread (bewust een thread:
+   ophalen is synchroon en hoort niet in de event loop). De beslissing zit in `plan_readahead`, een
+   pure functie: begin bij het eerste nog niet uitgelezen deel en pak daarvandaan `readahead_n`
+   hoofdstukken zonder bestand. Alles vóór die grens blijft met rust — dat is gelezen of bewust
+   overgeslagen, en opnieuw ophalen zou juist de bandbreedte kosten die voor het vooruitlezen
+   bedoeld is. Eén hikkende bron stopt de ronde niet; de fout komt in het rapport terecht.
+
+   De web-app heeft `/bronnen` om te zoeken, te volgen en een ronde met de hand te draaien.
+   `BookOut.from_source` en `expires_at` maken de drie toestanden zichtbaar die anders niet uit
+   elkaar te houden zijn: eigen bestand, opgehaald, en nog online.
 
    Een bron hoort een gepubliceerde API te hebben waarvan het gebruik is toegestaan; scrapers voor
    sites die commercieel werk zonder licentie herdistribueren horen hier niet thuis. De interface

@@ -1,8 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams } from "react-router-dom";
 
-import { api, imageUrl } from "../api/client";
+import { ApiError, api, imageUrl } from "../api/client";
 import type { Book, OriginRegion } from "../api/types";
+import { SourceBadge } from "../components/SourceBadge";
 
 const REGIONS: [OriginRegion, string][] = [
   ["europe", "Europa"],
@@ -86,19 +87,27 @@ export function SeriesPage() {
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {data.books.map((book) => (
-          <BookCard key={book.id} book={book} />
+          <BookCard key={book.id} book={book} seriesId={seriesId} />
         ))}
       </div>
     </div>
   );
 }
 
-function BookCard({ book }: { book: Book }) {
+function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
+  const queryClient = useQueryClient();
   const percent = book.progress?.percent ?? 0;
   // Een epub of pdf gaat niet naar de stripleer maar naar het bestand zelf;
   // die formaten rendert de client, niet de server.
   const isComic = book.kind === "comic" || book.kind === "pdf";
   const target = isComic ? `/lezen/${book.id}` : imageUrl.file(book.id);
+
+  const download = useMutation({
+    mutationFn: () => api.downloadChapter(book.id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+    },
+  });
 
   const inner = (
     <>
@@ -112,6 +121,13 @@ function BookCard({ book }: { book: Book }) {
             event.currentTarget.style.visibility = "hidden";
           }}
         />
+        <div className="absolute left-1 top-1">
+          <SourceBadge
+            fromSource={book.from_source}
+            hasFile={book.has_file}
+            expiresAt={book.expires_at}
+          />
+        </div>
         {percent > 0 && (
           <div className="absolute inset-x-0 bottom-0 h-1 bg-ink-900/70">
             <div className="h-full bg-accent" style={{ width: `${percent}%` }} />
@@ -133,6 +149,30 @@ function BookCard({ book }: { book: Book }) {
 
   const className =
     "block overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent";
+
+  // Een hoofdstuk van een bron dat nog niet is opgehaald heeft niets om naartoe
+  // te linken; daar hoort een knop, geen dode link.
+  if (!book.has_file) {
+    return (
+      <div className={className}>
+        {inner}
+        <div className="px-2 pb-2">
+          <button
+            onClick={() => download.mutate()}
+            disabled={download.isPending}
+            className="w-full rounded bg-accent px-2 py-1.5 text-xs text-ink-900 disabled:opacity-50"
+          >
+            {download.isPending ? "Ophalen…" : "Ophalen"}
+          </button>
+          {download.isError && (
+            <p className="mt-1 text-xs text-red-400">
+              {download.error instanceof ApiError ? download.error.message : "Ophalen mislukt."}
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return isComic ? (
     <Link to={target} className={className}>

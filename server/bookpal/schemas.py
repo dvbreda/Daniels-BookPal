@@ -70,6 +70,12 @@ class BookOut(BaseModel):
     # Lokaal bestand of alleen een bron-referentie? Clients gebruiken dit om te
     # bepalen of ze kunnen lezen of eerst moeten downloaden.
     has_file: bool
+    # Komt dit van een abonnement of uit je eigen mappen? Samen met has_file
+    # geeft dat de drie toestanden die een client wil tonen: eigen bestand,
+    # opgehaald van een bron, en nog op te halen.
+    from_source: bool = False
+    # Bij een tijdelijke (readahead-)download: wanneer mag het bestand weg?
+    expires_at: datetime | None = None
     extension: str | None
     added_at: datetime
     progress: ProgressOut | None = None
@@ -92,6 +98,9 @@ class SeriesOut(BaseModel):
     summary: str | None
     book_count: int = 0
     kinds: list[BookKind] = Field(default_factory=list)
+    # Gevolgd bij een bron? Dan toont de client dat, en weet hij dat er
+    # hoofdstukken kunnen zijn zonder lokaal bestand.
+    from_source: bool = False
 
 
 class SeriesDetailOut(SeriesOut):
@@ -242,6 +251,16 @@ class SubscribeResultOut(BaseModel):
     subscription: SubscriptionOut
     series_id: int
     chapters_added: int
+
+
+class RunReportOut(BaseModel):
+    """Wat een ronde van de abonnementen-worker heeft gedaan."""
+
+    subscriptions: int
+    chapters_added: int
+    downloaded: int
+    expired: int
+    errors: list[str] = Field(default_factory=list)
 
 
 class DownloadIn(BaseModel):

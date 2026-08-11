@@ -7,10 +7,16 @@ import type {
   LibraryRoot,
   Paginated,
   Progress,
+  RunReport,
   ScanResult,
+  SearchHit,
   Series,
   SeriesDetail,
   SeriesQuery,
+  SourceRow,
+  SubscribeResult,
+  SubscriptionPolicy,
+  SubscriptionRow,
   Tab,
   TabIn,
 } from "./types";
@@ -114,6 +120,39 @@ export const api = {
     request<void>(`/api/collections/${id}`, { method: "DELETE" }),
   collectionSeries: (id: number, query: { offset?: number; limit?: number } = {}) =>
     request<Paginated<Series>>(`/api/collections/${id}/series${queryString({ ...query })}`),
+
+  sourceTypes: () => request<string[]>("/api/sources/types"),
+  sources: () => request<SourceRow[]>("/api/sources"),
+  addSource: (body: { type: string; name: string }) =>
+    request<SourceRow>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
+  deleteSource: (id: number) => request<void>(`/api/sources/${id}`, { method: "DELETE" }),
+  searchSource: (id: number, q: string, limit = 20) =>
+    request<SearchHit[]>(`/api/sources/${id}/search${queryString({ q, limit })}`),
+  subscribe: (
+    sourceId: number,
+    body: {
+      ref: string;
+      policy?: SubscriptionPolicy;
+      readahead_n?: number;
+      ttl_days?: number;
+      language?: string;
+    },
+  ) =>
+    request<SubscribeResult>(`/api/sources/${sourceId}/subscribe`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  subscriptions: () => request<SubscriptionRow[]>("/api/sources/subscriptions/all"),
+  refreshSubscription: (id: number) =>
+    request<SubscribeResult>(`/api/sources/subscriptions/${id}/refresh`, { method: "POST" }),
+  unsubscribe: (id: number) =>
+    request<void>(`/api/sources/subscriptions/${id}`, { method: "DELETE" }),
+  downloadChapter: (bookId: number, body: { temporary?: boolean; ttl_days?: number } = {}) =>
+    request<{ book_id: number; has_file: boolean; expires_at: string | null }>(
+      `/api/sources/books/${bookId}/download`,
+      { method: "POST", body: JSON.stringify(body) },
+    ),
+  runSources: () => request<RunReport>("/api/sources/run", { method: "POST" }),
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */

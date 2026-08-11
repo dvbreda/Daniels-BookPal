@@ -15,6 +15,7 @@ from bookpal.db import get_session
 from bookpal.models import Book, Series, Source, Subscription, SubscriptionPolicy, utcnow
 from bookpal.schemas import (
     DownloadIn,
+    RunReportOut,
     SearchResultOut,
     SourceIn,
     SourceOut,
@@ -22,7 +23,7 @@ from bookpal.schemas import (
     SubscribeResultOut,
     SubscriptionOut,
 )
-from bookpal.sources import REGISTRY, SourceError, get_source
+from bookpal.sources import REGISTRY, SourceError, get_source, worker
 from bookpal.sources import service as source_service
 
 from . import deps
@@ -241,3 +242,24 @@ def expire_downloads(session: Session = Depends(get_session)) -> dict[str, int]:
     removed = source_service.expire_downloads(session)
     session.commit()
     return {"removed": removed}
+
+
+@router.post("/run", response_model=RunReportOut)
+def run_now(
+    refresh: bool = Query(default=True, description="Nieuwe hoofdstukken ophalen"),
+    download: bool = Query(default=True, description="Vooruitlezen ophalen"),
+    session: Session = Depends(get_session),
+) -> RunReportOut:
+    """Doe nu wat de achtergrond-worker anders op zijn interval doet.
+
+    Handig om niet op de klok te hoeven wachten, en om te zien wat er zou
+    gebeuren voordat je de worker aanzet.
+    """
+    report = worker.run_once(session, refresh=refresh, download=download)
+    return RunReportOut(
+        subscriptions=report.subscriptions,
+        chapters_added=report.chapters_added,
+        downloaded=report.downloaded,
+        expired=report.expired,
+        errors=report.errors,
+    )

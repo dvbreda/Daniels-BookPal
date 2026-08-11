@@ -114,6 +114,8 @@ def to_book_out(book: Book, progress: Progress | None, extension: str | None) ->
         page_count=book.page_count,
         right_to_left=book.right_to_left,
         has_file=book.file_id is not None,
+        from_source=book.source_id is not None,
+        expires_at=book.expires_at,
         extension=extension,
         added_at=book.added_at,
         progress=ProgressOut.model_validate(progress) if progress is not None else None,
@@ -136,6 +138,7 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         summary=series.summary,
         book_count=book_count,
         kinds=kinds,  # type: ignore[arg-type]
+        from_source=series.source_id is not None,
     )
 
 

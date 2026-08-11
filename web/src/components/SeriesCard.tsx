@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import { api, imageUrl } from "../api/client";
 import type { Series } from "../api/types";
 import { REGION_LABELS } from "../lib/labels";
+import { SubscriptionBadge } from "./SourceBadge";
 
 export function SeriesCard({ series, coverProfile }: { series: Series; coverProfile: string }) {
   return (
@@ -11,8 +12,11 @@ export function SeriesCard({ series, coverProfile }: { series: Series; coverProf
       to={`/serie/${series.id}`}
       className="group overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent"
     >
-      <div className="aspect-[2/3] bg-ink-700">
+      <div className="relative aspect-[2/3] bg-ink-700">
         <CoverImage seriesId={series.id} profile={coverProfile} />
+        <div className="absolute left-1 top-1">
+          <SubscriptionBadge fromSource={series.from_source} />
+        </div>
       </div>
       <div className="p-2">
         <p className="truncate text-sm font-medium text-slate-100">{series.title}</p>

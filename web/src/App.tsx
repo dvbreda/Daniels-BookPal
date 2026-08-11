@@ -7,6 +7,7 @@ import { LibraryPage } from "./pages/LibraryPage";
 import { ReaderPage } from "./pages/ReaderPage";
 import { SeriesPage } from "./pages/SeriesPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { SourcesPage } from "./pages/SourcesPage";
 import { TabsPage } from "./pages/TabsPage";
 
 const queryClient = new QueryClient({
@@ -33,6 +34,7 @@ export function App() {
           <Route path="/tabs" element={<TabsPage />} />
           <Route path="/collecties" element={<CollectionsPage />} />
           <Route path="/collectie/:id" element={<CollectionViewPage />} />
+          <Route path="/bronnen" element={<SourcesPage />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
