@@ -50,7 +50,7 @@ Daarna:
 cd Daniels-BookPal
 cp .env.example .env
 ls -d /volume1/_*        # kijk welke mappen je écht hebt
-nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA goed
+nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA, HOST_UID en HOST_GID goed
 docker compose up -d --build
 ```
 

@@ -10,6 +10,12 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile
+      args:
+        # Jouw NAS-gebruiker: `id -u` / `id -g`. Bestanden in je collectie
+        # staan vaak op 600 (alleen de eigenaar mag lezen), dus zonder deze
+        # match ziet bookpal niets anders dan "permission denied".
+        UID: "${HOST_UID:-1000}"
+        GID: "${HOST_GID:-1000}"
     image: bookpal:latest
     container_name: bookpal
     restart: unless-stopped

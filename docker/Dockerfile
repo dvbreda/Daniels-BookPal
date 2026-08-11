@@ -31,8 +31,15 @@ RUN pip install --no-cache-dir -e ./server
 COPY server/ ./server/
 COPY --from=web /build/dist ./web/dist
 
-# Niet als root draaien; /data is het enige dat beschreven wordt.
-RUN useradd --create-home --uid 1000 bookpal && mkdir -p /data && chown -R bookpal /data /app
+# Niet als root draaien; /data is het enige dat beschreven wordt. UID/GID
+# instelbaar: bestanden op de NAS staan vaak op 600, alleen leesbaar door de
+# eigen gebruiker, dus moet deze container met diezelfde UID draaien om de
+# collectie ooit te kunnen lezen. Zie HOST_UID/HOST_GID in compose.yml.
+ARG UID=1000
+ARG GID=1000
+RUN (getent group ${GID} || groupadd -g ${GID} bookpal) && \
+    useradd --create-home --uid ${UID} --gid ${GID} bookpal && \
+    mkdir -p /data && chown -R ${UID}:${GID} /data /app
 USER bookpal
 
 WORKDIR /app/server
