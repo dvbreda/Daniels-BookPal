@@ -24,6 +24,10 @@ services:
       - "1997:8000"
     environment:
       BOOKPAL_CACHE_MAX_MB: "${BOOKPAL_CACHE_MAX_MB:-4096}"
+      # M8: zonder sleutel blijft alles werken, alleen de vertaalknop is dan uit.
+      BOOKPAL_GEMINI_API_KEY: "${BOOKPAL_GEMINI_API_KEY:-}"
+      BOOKPAL_GEMINI_MODEL: "${BOOKPAL_GEMINI_MODEL:-gemini-3-flash-preview}"
+      BOOKPAL_TRANSLATE_LANG: "${BOOKPAL_TRANSLATE_LANG:-nl}"
     volumes:
       - bookpal-data:/data
       # Links het pad op de NAS, rechts het pad in de container. Die rechterkant

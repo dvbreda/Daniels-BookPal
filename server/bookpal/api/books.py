@@ -18,6 +18,9 @@ from bookpal.images import (
 )
 from bookpal.models import Book, BookKind, File, Series
 from bookpal.schemas import BookDetailOut, BookOut, Paginated, TocEntryOut
+from bookpal.translate import service as translation_service
+from bookpal.translate.base import PageResult
+from bookpal.translate.overlay import bake
 
 from . import deps
 
@@ -104,9 +107,17 @@ def get_page(
     book_id: int,
     index: int,
     profile: ImageProfile = deps.ProfileDep,
+    translate: str | None = Query(default=None, max_length=8),
     session: Session = Depends(get_session),
 ) -> Response:
-    """Eén pagina, klaargemaakt voor het gevraagde apparaat."""
+    """Eén pagina, klaargemaakt voor het gevraagde apparaat.
+
+    ``translate=nl`` bakt een al gemaakte vertaling in het beeld. Dat is er
+    voor de Kobo en voor BookPal Lite: die kunnen geen overlay tekenen, maar
+    krijgen hun pagina's toch al server-side klaargemaakt. Nog niet vertaald?
+    Dan gewoon het origineel — een lezer hoort niet te blokkeren op een
+    vertaling die nog moet komen.
+    """
     book = deps.get_book(session, book_id)
     if book.kind is BookKind.EPUB:
         raise HTTPException(
@@ -125,8 +136,16 @@ def get_page(
     except UnsupportedOperation as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    data = rendered.data
+    if translate:
+        row = translation_service.find(session, book.id, index, translate, "gemini")
+        if row is not None:
+            bubbles = PageResult.from_payload(row.payload).bubbles
+            if bubbles:
+                data = bake(data, bubbles, media_type=rendered.media_type)
+
     return Response(
-        content=rendered.data,
+        content=data,
         media_type=rendered.media_type,
         headers={
             "Cache-Control": PAGE_CACHE_CONTROL,

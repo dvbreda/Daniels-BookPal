@@ -240,6 +240,41 @@ export interface RunReport {
   errors: string[];
 }
 
+export type BubbleKind = "speech" | "thought" | "caption" | "sfx";
+
+export interface Bubble {
+  /** [x0, y0, x1, y1], genormaliseerd op 0..1 van de hele pagina. */
+  box: [number, number, number, number] | number[];
+  source: string;
+  translation: string;
+  kind: BubbleKind;
+}
+
+export interface PageTranslation {
+  book_id: number;
+  page_index: number;
+  target_lang: string;
+  provider: string;
+  model: string;
+  bubbles: Bubble[];
+}
+
+export interface TranslationStatus {
+  book_id: number;
+  target_lang: string;
+  provider: string;
+  /** False als er geen Gemini-sleutel is; dan blijft de knop verborgen. */
+  configured: boolean;
+  page_count: number | null;
+  translated: number;
+  queued: number;
+}
+
+export interface TranslateBookResult {
+  queued: number;
+  already_done: number;
+}
+
 export interface TrackerAccountRow {
   id: number;
   provider: string;

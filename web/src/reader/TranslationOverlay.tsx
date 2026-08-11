@@ -1,0 +1,77 @@
+import { useQuery } from "@tanstack/react-query";
+import { useState } from "react";
+
+import { ApiError, api } from "../api/client";
+import type { Bubble } from "../api/types";
+
+/**
+ * De vertaalde tekstwolkjes over een pagina heen (M8).
+ *
+ * De vakken staan in procenten, niet in pixels: de server levert ze
+ * genormaliseerd op 0..1 van de hele pagina, dus dezelfde vertaling past over
+ * elk beeldprofiel en over elke zoomfactor. Daarom hoeft dit niets te weten
+ * van de afmeting van de afbeelding — dat scheelt een resize-observer en een
+ * hoop gedoe bij het omslaan.
+ *
+ * Er is bewust geen inpainting: een dekkend vlakje met de vertaling erop. Tik
+ * erop en je ziet het origineel weer, want dat is precies waar je bij een
+ * twijfelachtige vertaling naar wilt kunnen kijken.
+ */
+export function TranslationOverlay({
+  bookId,
+  pageIndex,
+  enabled,
+}: {
+  bookId: number;
+  pageIndex: number;
+  enabled: boolean;
+}) {
+  const { data } = useQuery({
+    queryKey: ["translation", bookId, pageIndex],
+    queryFn: () => api.pageTranslation(bookId, pageIndex),
+    enabled,
+    // 404 = nog niet vertaald. Dat is een normale toestand, geen storing, dus
+    // niet opnieuw proberen: de wachtrij komt er vanzelf aan toe.
+    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
+    staleTime: Infinity,
+  });
+
+  if (!enabled || !data || data.bubbles.length === 0) return null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      {data.bubbles.map((bubble, index) => (
+        <BubbleBox key={index} bubble={bubble} />
+      ))}
+    </div>
+  );
+}
+
+function BubbleBox({ bubble }: { bubble: Bubble }) {
+  const [showSource, setShowSource] = useState(false);
+  const [x0, y0, x1, y1] = bubble.box;
+
+  return (
+    <div
+      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-sm border border-black/40 bg-white px-0.5 text-center font-semibold leading-tight text-black"
+      style={{
+        left: `${x0 * 100}%`,
+        top: `${y0 * 100}%`,
+        width: `${(x1 - x0) * 100}%`,
+        height: `${(y1 - y0) * 100}%`,
+        // Meeschalen met het vlak zelf: cqw is een procent van de breedte van
+        // de pagina-container, dus de tekst blijft in verhouding bij zoomen.
+        fontSize: `clamp(7px, ${Math.max(1.1, (x1 - x0) * 7)}cqw, 20px)`,
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        setShowSource((value) => !value);
+      }}
+      title={bubble.source}
+    >
+      <span className="max-h-full overflow-hidden">
+        {showSource ? bubble.source : bubble.translation}
+      </span>
+    </div>
+  );
+}

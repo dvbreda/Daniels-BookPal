@@ -14,6 +14,10 @@ FROM python:3.12-slim AS server
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libarchive13 \
         libarchive-tools \
+        # M8: zonder een echte TrueType-font valt Pillow terug op een bitmapfont
+        # van vaste grootte — dan staat elke ingebakken vertaling in hetzelfde
+        # priegelformaat en verschijnt er een leeg blokje voor tekens als ¥.
+        fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \

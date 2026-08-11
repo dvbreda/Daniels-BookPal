@@ -18,6 +18,7 @@ from bookpal.db import init_db
 from bookpal.formats import book_cache
 from bookpal.sources.worker import start_worker, stop_worker
 from bookpal.trackers.scheduler import stop_all as stop_tracker_scheduler
+from bookpal.translate.queue import queue as translate_queue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -32,9 +33,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     init_db()
     logger.info("BookPal gestart — data in %s", settings.data_dir.resolve())
     start_worker()
+    translate_queue.start()
     yield
     stop_worker()
     stop_tracker_scheduler()
+    translate_queue.stop()
     book_cache.clear()
 
 

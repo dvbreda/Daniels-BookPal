@@ -40,6 +40,19 @@ class Settings(BaseSettings):
     # Voorkomt dat elke paginawissel een eigen aanroep naar MyAnimeList wordt.
     tracker_debounce_seconds: float = 20.0
 
+    # M8: tekstwolkjes vertalen via Gemini. Zonder sleutel blijft alles
+    # gewoon werken; de lezer toont dan het origineel.
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-3-flash-preview"
+    # Waarheen vertaald wordt als de client niets meegeeft.
+    translate_lang: str = "nl"
+    # De achtergrondwachtrij die pagina's vooruit vertaalt. Uit in tests
+    # (elders uitgezet via monkeypatch), anders blijft er een thread hangen.
+    translations_enabled: bool = True
+    # Vooruit vertalen vanaf je leespositie, net als het vooruitlezen van M5:
+    # de NAS loopt vast op wat je zo gaat lezen. 0 zet het uit.
+    translate_readahead_pages: int = 3
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'bookpal.db').resolve()}"

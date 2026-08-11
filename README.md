@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1 + M3 + M5 + M6 + M7 + deels M2)
+## Wat er nu werkt (M0 + M1 + M3 + M5 + M6 + M7 + M8 + deels M2)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -54,8 +54,16 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   sinds eind 2020) — daarvoor is er een CSV-export voor My Books → Import and
   Export. Uit te zetten met `BOOKPAL_TRACKERS_ENABLED=false`.
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4),
-bubble-vertaling voor manga (M8) en de Kobo-app (M9/M10).
+- **Tekstwolkjes vertalen** (in de stripleer): één Gemini-aanroep per pagina
+  doet detectie, uitlezen en vertalen tegelijk — het model ziet de hele
+  pagina, dus een ballon wordt niet los van zijn context vertaald. De web-lezer
+  legt er een overlay overheen (tik op een ballon voor het origineel); voor de
+  Kobo bakt de server de vertaling in het beeld. Een achtergrondwachtrij loopt
+  vooruit op je leespositie. Zet `BOOKPAL_GEMINI_API_KEY` om het aan te
+  zetten — zonder sleutel blijft de knop verborgen.
+
+Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4)
+en de Kobo-app (M9/M10).
 
 ## Draaien op de NAS
 

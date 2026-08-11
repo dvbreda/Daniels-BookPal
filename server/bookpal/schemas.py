@@ -362,6 +362,49 @@ class PushReportOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class BubbleOut(BaseModel):
+    """Eén tekstvlak. ``box`` is [x0, y0, x1, y1] genormaliseerd op 0..1 ten
+    opzichte van de hele pagina, zodat dezelfde vertaling over elk
+    beeldprofiel past."""
+
+    box: list[float]
+    source: str
+    translation: str
+    kind: str
+
+
+class PageTranslationOut(BaseModel):
+    book_id: int
+    page_index: int
+    target_lang: str
+    provider: str
+    model: str = ""
+    bubbles: list[BubbleOut] = Field(default_factory=list)
+
+
+class TranslationStatusOut(BaseModel):
+    book_id: int
+    target_lang: str
+    provider: str
+    # Zonder sleutel kan er niets; de client verbergt de knop dan.
+    configured: bool
+    page_count: int | None
+    translated: int
+    queued: int
+
+
+class TranslateBookIn(BaseModel):
+    lang: str | None = Field(default=None, max_length=8)
+    # Vanaf welke pagina; standaard vanaf het begin. De wachtrij werkt in
+    # leesvolgorde, dus dit bepaalt ook wat er als eerste klaar is.
+    from_page: int = Field(default=0, ge=0)
+
+
+class TranslateBookOut(BaseModel):
+    queued: int
+    already_done: int
+
+
 class DownloadIn(BaseModel):
     """Tijdelijk downloaden is het 'vooruitlezen' uit het datamodel: het
     bestand krijgt een vervaldatum, de bron-referentie blijft."""

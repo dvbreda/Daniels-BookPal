@@ -28,6 +28,10 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     # Idem voor de gedebouncede tracker-push: anders overleeft een timer de
     # teardown van deze test en raakt hij de database van de volgende.
     monkeypatch.setattr(settings, "trackers_enabled", False)
+    # En de vertaalwachtrij: die zou anders een thread laten draaien die na de
+    # teardown nog naar Gemini en naar de oude database wil.
+    monkeypatch.setattr(settings, "translations_enabled", False)
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     db_module.reset_engine()
     settings.ensure_dirs()
     yield data_dir

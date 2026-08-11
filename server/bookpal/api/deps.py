@@ -8,6 +8,7 @@ from fastapi import Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
 from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
@@ -15,6 +16,7 @@ from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 from bookpal.sources import Source as SourceImpl
 from bookpal.sources import SourceError, get_source
 from bookpal.trackers import scheduler as trackers_scheduler
+from bookpal.translate.queue import queue as translate_queue
 
 SessionDep = Depends(get_session)
 
@@ -115,6 +117,12 @@ def upsert_progress(
     # M7: gedebounced, dus dit is een goedkope aanroep — geen netwerk, alleen
     # een timer resetten.
     trackers_scheduler.notify_progress(series_id)
+
+    # M8: nu we weten waar je bent, kan de vertaalwachtrij vooruitlopen op wat
+    # je zo omslaat. Alleen zinvol voor een strip met paginanummers.
+    page = position.get("page")
+    if isinstance(page, int):
+        translate_queue.notify_reading(book_id, page + 1, settings.translate_lang)
     return row
 
 

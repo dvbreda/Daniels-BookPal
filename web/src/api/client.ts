@@ -5,15 +5,16 @@ import type {
   Health,
   ImageProfile,
   LibraryRoot,
+  PageTranslation,
   Paginated,
   Progress,
+  PushReport,
   RunReport,
   ScanResult,
   SearchHit,
   Series,
   SeriesDetail,
   SeriesQuery,
-  PushReport,
   SourceRow,
   SubscribeResult,
   SubscriptionPolicy,
@@ -21,6 +22,8 @@ import type {
   Tab,
   TabIn,
   TrackerAccountRow,
+  TranslateBookResult,
+  TranslationStatus,
 } from "./types";
 
 export class ApiError extends Error {
@@ -199,6 +202,25 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+
+  pageTranslation: (bookId: number, index: number, lang?: string) =>
+    request<PageTranslation>(
+      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
+    ),
+  makePageTranslation: (bookId: number, index: number, lang?: string) =>
+    request<PageTranslation>(
+      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
+      { method: "POST" },
+    ),
+  translateBook: (bookId: number, body: { lang?: string; from_page?: number } = {}) =>
+    request<TranslateBookResult>(`/api/books/${bookId}/translate`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  translationStatus: (bookId: number, lang?: string) =>
+    request<TranslationStatus>(
+      `/api/books/${bookId}/translation-status${queryString({ lang })}`,
+    ),
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */

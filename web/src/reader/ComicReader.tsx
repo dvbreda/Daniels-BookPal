@@ -1,9 +1,11 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, imageUrl } from "../api/client";
 import type { BookDetail } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
+import { TranslationOverlay } from "./TranslationOverlay";
 import {
   buildSpreads,
   orderForDisplay,
@@ -51,6 +53,7 @@ export function ComicReader({ book, onClose }: Props) {
   });
   const [zoom, setZoom] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
+  const [translated, setTranslated] = useStoredState("reader.translated", false);
 
   const spreads = useMemo(
     () => buildSpreads(pageCount, viewMode === "paged" && doublePage, { aspects }),
@@ -218,6 +221,7 @@ export function ComicReader({ book, onClose }: Props) {
           initialPage={currentPage}
           onVisiblePage={setPage}
           onAspect={noteAspect}
+          translated={translated}
         />
       ) : (
         <div
@@ -231,20 +235,24 @@ export function ComicReader({ book, onClose }: Props) {
             style={{ transform: `scale(${zoom})` }}
           >
             {orderForDisplay(currentSpread, rightToLeft).map((page) => (
-              <img
-                key={page}
-                src={imageUrl.page(book.id, page, profile)}
-                alt={`Pagina ${page + 1}`}
-                className={`object-contain ${fitClass}`}
-                draggable={false}
-                onLoad={(event) =>
-                  noteAspect(
-                    page,
-                    event.currentTarget.naturalWidth,
-                    event.currentTarget.naturalHeight,
-                  )
-                }
-              />
+              // De overlay staat absoluut binnen dit vlak, dus het moet net zo
+              // groot zijn als de afbeelding zelf — vandaar w-fit en relative.
+              <div key={page} className="relative w-fit [container-type:inline-size]">
+                <img
+                  src={imageUrl.page(book.id, page, profile)}
+                  alt={`Pagina ${page + 1}`}
+                  className={`object-contain ${fitClass}`}
+                  draggable={false}
+                  onLoad={(event) =>
+                    noteAspect(
+                      page,
+                      event.currentTarget.naturalWidth,
+                      event.currentTarget.naturalHeight,
+                    )
+                  }
+                />
+                <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
+              </div>
             ))}
           </div>
         </div>
@@ -267,6 +275,8 @@ export function ComicReader({ book, onClose }: Props) {
           spreadCount={spreads.length}
           currentPage={currentPage}
           pageCount={pageCount}
+          translated={translated}
+          setTranslated={setTranslated}
           onSeek={setPage}
           onClose={onClose}
         />
@@ -282,6 +292,7 @@ interface VerticalProps {
   initialPage: number;
   onVisiblePage: (page: number) => void;
   onAspect: (index: number, width: number, height: number) => void;
+  translated: boolean;
 }
 
 /** Doorlopende verticale weergave voor webtoons — daar zijn "pagina's" een
@@ -293,6 +304,7 @@ function VerticalReader({
   initialPage,
   onVisiblePage,
   onAspect,
+  translated,
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);
@@ -358,7 +370,7 @@ function VerticalReader({
           <div
             key={index}
             data-page={index}
-            className="w-full"
+            className="relative w-full [container-type:inline-size]"
             style={loaded.has(index) ? undefined : { aspectRatio: "2 / 3" }}
           >
             <img
@@ -378,6 +390,9 @@ function VerticalReader({
                 );
               }}
             />
+            {loaded.has(index) && (
+              <TranslationOverlay bookId={book.id} pageIndex={index} enabled={translated} />
+            )}
           </div>
         ))}
       </div>
@@ -401,6 +416,8 @@ interface ChromeProps {
   spreadCount: number;
   currentPage: number;
   pageCount: number;
+  translated: boolean;
+  setTranslated: (value: boolean) => void;
   onSeek: (page: number) => void;
   onClose: () => void;
 }
@@ -422,6 +439,8 @@ function Chrome(props: ChromeProps) {
     spreadCount,
     currentPage,
     pageCount,
+    translated,
+    setTranslated,
     onSeek,
     onClose,
   } = props;
@@ -466,6 +485,12 @@ function Chrome(props: ChromeProps) {
           <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
             {rightToLeft ? "Rechts → links" : "Links → rechts"}
           </Toggle>
+          <TranslateControl
+            bookId={book.id}
+            currentPage={currentPage}
+            active={translated}
+            setActive={setTranslated}
+          />
           <div className="flex gap-1">
             {(["width", "height", "screen"] as FitMode[]).map((mode) => (
               <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
@@ -489,6 +514,86 @@ function Chrome(props: ChromeProps) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * Vertaalknop met voortgang (M8).
+ *
+ * Verschijnt alleen als er een Gemini-sleutel is: zonder sleutel zou hij je op
+ * een 409 laten lopen, en dat is geen keuze die je in een lezer wilt maken.
+ * "Vertaal de rest" zet het boek in de wachtrij vanaf waar je bent — wat je al
+ * gelezen hebt hoeft niet meer.
+ */
+function TranslateControl({
+  bookId,
+  currentPage,
+  active,
+  setActive,
+}: {
+  bookId: number;
+  currentPage: number;
+  active: boolean;
+  setActive: (value: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: ["translation-status", bookId],
+    queryFn: () => api.translationStatus(bookId),
+    // Terwijl de wachtrij loopt willen we de teller zien oplopen; daarna niet
+    // meer pollen dan nodig.
+    refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 4000 : false),
+  });
+
+  const [busy, setBusy] = useState(false);
+
+  if (!status?.configured) return null;
+
+  const total = status.page_count ?? 0;
+  const done = status.translated;
+
+  async function translateThisPage() {
+    setBusy(true);
+    try {
+      await api.makePageTranslation(bookId, currentPage);
+      setActive(true);
+      void queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
+      void queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] });
+    } catch {
+      /* zacht falen: de lezer toont gewoon het origineel */
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Toggle active={active} onClick={() => setActive(!active)}>
+        Vertaling
+      </Toggle>
+      <Toggle active={false} disabled={busy} onClick={() => void translateThisPage()}>
+        {busy ? "Bezig…" : "Deze pagina"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={status.queued > 0}
+        onClick={() => {
+          void api
+            .translateBook(bookId, { from_page: currentPage })
+            .then(() =>
+              queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] }),
+            )
+            .catch(() => {
+              /* zacht falen */
+            });
+        }}
+      >
+        {status.queued > 0 ? `In wachtrij: ${status.queued}` : "Rest vertalen"}
+      </Toggle>
+      <span className="tabular-nums text-slate-500">
+        {done}/{total}
+      </span>
+    </div>
   );
 }
 

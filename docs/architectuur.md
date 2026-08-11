@@ -13,9 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0, M1, M3, M5, M6 en M7 zijn gebouwd; M2
-deels** (alles behalve de Nickel-integratie); de latere milestones staan erin zodat de vroege keuzes
-ze niet blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0, M1, M3, M5, M6, M7 en M8 zijn
+gebouwd; M2 deels** (alles behalve de Nickel-integratie); de latere milestones staan erin zodat de
+vroege keuzes ze niet blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -204,7 +204,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 | **M9** | `bookpal-kobo`: FBInk, touch, tabs, comics, offline, NickelMenu-installer | Eigen native comic-lezer op de Kobo |
 | **M10** | `bookpal-kobo`: epub + pdf via crengine en MuPDF | Volwaardige eigen lezer op de Kobo |
 
-## M0 + M1 + M3 + M5 + M6 + M7 — gebouwd, M2 gedeeltelijk
+## M0 + M1 + M3 + M5 + M6 + M7 + M8 — gebouwd, M2 gedeeltelijk
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
    libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
@@ -289,6 +289,33 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
     aanzet. De web-app heeft `/trackers` om een MAL-app te koppelen (client-id/secret zelf
     registreren op `myanimelist.net/apiconfig`, autorisatie-URL openen, code terugplakken),
     dry-run/actief te schakelen, met de hand te pushen, en de Goodreads-CSV te downloaden.
+
+11. **M8** — `bookpal/translate/` doet detectie, uitlezen én vertalen in **één** multimodale
+    Gemini-aanroep per pagina, in plaats van de keten YOLOv8 → crop → manga-ocr/PaddleOCR → Gemini
+    die hierboven beschreven staat. Die afwijking is bewust en om drie redenen:
+
+    * Het model ziet de **hele pagina**, niet losse uitgeknipte strings. Dat is precies wat deze
+      architectuur wilde bereiken met "vertaling mét paginacontext" — een keten die strings
+      doorgeeft, gooit die context juist weg.
+    * Geen ~700 MB aan modelgewichten (torch, manga-ocr, YOLO) in een image die op een N100 draait.
+    * Nagemeten op een echte pagina uit de eigen bibliotheek: gemini-3-flash-preview vond alle acht
+      tekstvlakken met vakken die sluitend om de tekst zaten, waar 2.5-flash er zeven vond en de
+      laatste regel van elke ballon afkapte.
+
+    De prijs is een netwerkverzoek per pagina en een API-sleutel. `BubbleTranslator` is daarom een
+    aparte ABC: een lokale YOLO+OCR-pipeline kan er later naast zonder dat de rest iets merkt.
+
+    Resultaten komen in de bestaande `translation`-tabel (`payload` bevat de vlakken), dus M8 had
+    geen migratie nodig — het datamodel uit M0 had hier al ruimte voor gelaten. Vakken worden
+    genormaliseerd op 0..1 bewaard en niet in pixels: dezelfde vertaling moet over elk beeldprofiel
+    passen, en web, Kobo en miniatuur hebben alle drie een andere afmeting.
+
+    `queue.py` is geen FIFO maar een gesorteerde wachtrij: een voortgangsupdate zet de pagina's vlak
+    vóór je uit vooraan, zodat de NAS vooruitloopt op wat je leest. Eén thread, want op een N100
+    telt het uitserveren van beeld zwaarder dan snel vertalen. De web-lezer tekent een HTML-overlay
+    (tik op een ballon en je ziet het origineel); voor de Kobo en BookPal Lite bakt
+    `overlay.py` de vertaling in het beeld, met behoud van de geditherde grijswaarden — die naar RGB
+    tillen zou precies het werk weggooien waar het Kobo-profiel voor bestaat.
 
 ## Verificatie
 
