@@ -140,6 +140,28 @@ class SetCoverPageIn(BaseModel):
     page_index: int | None = Field(default=None, ge=0)
 
 
+class ContinueOut(BaseModel):
+    """Waar je verder leest in deze serie."""
+
+    book_id: int
+    title: str
+    number: str | None
+    # De pagina waar je gebleven was; 0 voor een hoofdstuk dat je nog moet
+    # beginnen. Een epub heeft geen paginanummer — daar gebruikt de lezer zijn
+    # eigen opgeslagen positie.
+    page: int
+    # Ga je verder in iets dat je al begonnen was, of begin je aan een nieuw
+    # hoofdstuk? Bepaalt of de knop "Lees verder" of "Beginnen" heet.
+    resuming: bool
+    # Hoeveel hoofdstukken hiervóór nog niet uitgelezen zijn — dat is precies
+    # wat de knop "markeer vorige als gelezen" zou opruimen.
+    unread_before: int
+
+
+class MarkReadBeforeOut(BaseModel):
+    marked: int
+
+
 class TocEntryOut(BaseModel):
     title: str
     target: str

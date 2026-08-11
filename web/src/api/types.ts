@@ -81,6 +81,19 @@ export interface SeriesDetail extends Series {
   books: Book[];
 }
 
+export interface ContinueInfo {
+  book_id: number;
+  title: string;
+  number: string | null;
+  /** De pagina waar je gebleven was; 0 voor een nieuw hoofdstuk. */
+  page: number;
+  /** Ga je verder in iets dat je al begonnen was, of begin je aan een nieuw
+   * hoofdstuk? Bepaalt of de knop "Lees verder" of "Beginnen" heet. */
+  resuming: boolean;
+  /** Hoeveel hoofdstukken hiervóór nog niet uit zijn. */
+  unread_before: number;
+}
+
 export interface LibraryRoot {
   id: number;
   name: string;

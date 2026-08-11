@@ -22,6 +22,8 @@ from bookpal.images import (
 from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
 from bookpal.schemas import (
     AttachCoverIn,
+    ContinueOut,
+    MarkReadBeforeOut,
     OriginPatch,
     Paginated,
     SeriesDetailOut,
@@ -257,3 +259,115 @@ def _cover_response(rendered: RenderedImage) -> Response:
             "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",
         },
     )
+
+
+def _readable_books(session: Session, series_id: int) -> list[Book]:
+    """De hoofdstukken in leesvolgorde, alleen wat je daadwerkelijk kunt openen.
+
+    Hoofdstukken zonder bestand (een abonnement dat nog niet is opgehaald)
+    slaan we over: "lees verder" hoort je niet op een lege pagina te zetten.
+    """
+    return list(
+        session.scalars(
+            select(Book)
+            .where(Book.series_id == series_id, Book.file_id.isnot(None))
+            .order_by(Book.sort_volume, Book.sort_number)
+        )
+    )
+
+
+@router.get("/{series_id}/continue", response_model=ContinueOut)
+def continue_reading(series_id: int, session: Session = Depends(get_session)) -> ContinueOut:
+    """Waar je verder leest: het eerste hoofdstuk dat nog niet uit is.
+
+    Eerst iets dat je al begonnen was — daar wil je terug naar de pagina waar
+    je gebleven bent. Is er niets half af, dan het eerste dat je nog niet hebt
+    aangeraakt. Bewust op leesvolgorde en niet op "laatst gelezen": bij manga
+    lees je vooruit, en een serie waarin je een oud hoofdstuk hebt teruggekeken
+    hoort je niet daarheen terug te sturen.
+    """
+    deps.get_series(session, series_id)
+    books = _readable_books(session, series_id)
+    if not books:
+        raise HTTPException(status_code=404, detail="deze serie heeft nog niets te lezen")
+
+    user = current_user(session)
+    progress = deps.progress_for(session, user, [book.id for book in books])
+
+    started: Book | None = None
+    fresh: Book | None = None
+    for book in books:
+        row = progress.get(book.id)
+        if row is not None and row.finished:
+            continue
+        if row is not None and row.percent > 0:
+            started = book
+            break
+        if fresh is None:
+            fresh = book
+
+    target = started or fresh
+    if target is None:
+        # Alles uit: dan maar het laatste hoofdstuk, zodat de knop iets doet
+        # in plaats van te verdwijnen.
+        target = books[-1]
+
+    row = progress.get(target.id)
+    position = row.position if row is not None else {}
+    page = position.get("page") if isinstance(position, dict) else None
+
+    unread_before = sum(
+        1
+        for book in books
+        if (book.sort_volume, book.sort_number) < (target.sort_volume, target.sort_number)
+        and not (progress.get(book.id) is not None and progress[book.id].finished)
+    )
+
+    return ContinueOut(
+        book_id=target.id,
+        title=target.title,
+        number=target.number,
+        page=page if isinstance(page, int) and page >= 0 else 0,
+        resuming=row is not None and row.percent > 0 and not row.finished,
+        unread_before=unread_before,
+    )
+
+
+@router.post("/{series_id}/mark-read-before/{book_id}", response_model=MarkReadBeforeOut)
+def mark_read_before(
+    series_id: int, book_id: int, session: Session = Depends(get_session)
+) -> MarkReadBeforeOut:
+    """Alles vóór dit hoofdstuk als gelezen wegzetten.
+
+    Voor de gewone situatie dat je elders al tot hier was, of dat je een serie
+    halverwege oppakt. Het hoofdstuk zelf blijft ongemoeid — daar ga je juist
+    lezen.
+    """
+    deps.get_series(session, series_id)
+    target = deps.get_book(session, book_id)
+    if target.series_id != series_id:
+        raise HTTPException(status_code=400, detail="dit hoofdstuk hoort niet bij deze serie")
+
+    user = current_user(session)
+    books = _readable_books(session, series_id)
+    progress = deps.progress_for(session, user, [book.id for book in books])
+
+    marked = 0
+    for book in books:
+        if (book.sort_volume, book.sort_number) >= (target.sort_volume, target.sort_number):
+            continue
+        row = progress.get(book.id)
+        if row is not None and row.finished:
+            continue
+        deps.upsert_progress(
+            session,
+            user,
+            book.id,
+            series_id=series_id,
+            position={"page": max(0, (book.page_count or 1) - 1)},
+            percent=100.0,
+            device="web",
+            finished=True,
+        )
+        marked += 1
+    return MarkReadBeforeOut(marked=marked)

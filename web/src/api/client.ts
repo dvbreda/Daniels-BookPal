@@ -1,6 +1,7 @@
 import type {
   BookDetail,
   Collection,
+  ContinueInfo,
   CollectionIn,
   Health,
   ImageProfile,
@@ -105,6 +106,13 @@ export const api = {
     request<Series>(`/api/series/${id}/cover-page`, {
       method: "PATCH",
       body: JSON.stringify({ page_index: pageIndex }),
+    }),
+
+  continueReading: (seriesId: number) =>
+    request<ContinueInfo>(`/api/series/${seriesId}/continue`),
+  markReadBefore: (seriesId: number, bookId: number) =>
+    request<{ marked: number }>(`/api/series/${seriesId}/mark-read-before/${bookId}`, {
+      method: "POST",
     }),
 
   book: (id: number) => request<BookDetail>(`/api/books/${id}`),

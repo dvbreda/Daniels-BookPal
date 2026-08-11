@@ -1,11 +1,13 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router-dom";
+import { useMemo } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
 import type { Book, OriginRegion } from "../api/types";
 import { CoverPicker } from "../components/CoverPicker";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
+import { useStoredState } from "../lib/useStoredState";
 
 const REGIONS: [OriginRegion, string][] = [
   ["europe", "Europa"],
@@ -34,6 +36,13 @@ export function SeriesPage() {
     queryKey: ["series-detail", seriesId],
     queryFn: () => api.seriesDetail(seriesId),
   });
+
+  // Onthouden over series heen: wie dit aanzet wil het meestal overal.
+  const [hideRead, setHideRead] = useStoredState("series.hideRead", false);
+  const visible = useMemo(
+    () => (hideRead ? (data?.books ?? []).filter((b) => !b.progress?.finished) : data?.books ?? []),
+    [data?.books, hideRead],
+  );
 
   const setOrigin = useMutation({
     mutationFn: (region: OriginRegion) =>
@@ -88,14 +97,37 @@ export function SeriesPage() {
         </div>
       </section>
 
+      <ContinueBar seriesId={seriesId} />
+
       <CoverPicker series={data} />
       <TranslationPicker seriesId={seriesId} books={data.books} />
 
-      <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
-        {data.books.map((book) => (
+      <div className="mt-6 flex items-center justify-between">
+        <h2 className="text-sm font-medium text-slate-200">
+          {visible.length === data.books.length
+            ? `${data.books.length} delen`
+            : `${visible.length} van ${data.books.length} delen`}
+        </h2>
+        <label className="flex items-center gap-2 text-xs text-slate-400">
+          <input
+            type="checkbox"
+            checked={hideRead}
+            onChange={(event) => setHideRead(event.target.checked)}
+          />
+          Gelezen verbergen
+        </label>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
+        {visible.map((book) => (
           <BookCard key={book.id} book={book} seriesId={seriesId} />
         ))}
       </div>
+      {visible.length === 0 && (
+        <p className="mt-4 text-sm text-slate-500">
+          Alles gelezen. Haal het vinkje weg om ze weer te zien.
+        </p>
+      )}
     </div>
   );
 }
@@ -191,5 +223,65 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
     <Link to={target} className={className}>
       {inner}
     </Link>
+  );
+}
+
+
+/**
+ * "Lees verder" (M8-bijwerk).
+ *
+ * De server bepaalt wáár je verder leest — op leesvolgorde, niet op "laatst
+ * geopend", want bij manga lees je vooruit en een teruggekeken oud hoofdstuk
+ * hoort je niet terug te trekken. De knop ernaast ruimt op wat je daarvóór
+ * blijkbaar al elders gelezen had.
+ */
+function ContinueBar({ seriesId }: { seriesId: number }) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { data } = useQuery({
+    queryKey: ["continue", seriesId],
+    queryFn: () => api.continueReading(seriesId),
+    // 404 = niets leesbaars in deze serie; dat is geen storing.
+    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
+  });
+
+  const markRead = useMutation({
+    mutationFn: () => api.markReadBefore(seriesId, data!.book_id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["continue", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+    },
+  });
+
+  if (!data) return null;
+
+  const label = data.resuming ? "Lees verder" : "Beginnen";
+  const waar = [data.number ? `#${data.number}` : null, data.title].filter(Boolean).join(" ");
+
+  return (
+    <section className="mt-6 flex flex-wrap items-center gap-3 rounded border border-ink-600 p-4">
+      <button
+        onClick={() => navigate(`/lezen/${data.book_id}`)}
+        className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900"
+      >
+        {label}
+      </button>
+      <span className="min-w-0 flex-1 truncate text-sm text-slate-400">
+        {waar}
+        {data.resuming && data.page > 0 ? ` · pagina ${data.page + 1}` : ""}
+      </span>
+      {data.unread_before > 0 && (
+        <button
+          onClick={() => markRead.mutate()}
+          disabled={markRead.isPending}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+          title="Zet alles vóór dit hoofdstuk op gelezen"
+        >
+          {markRead.isPending
+            ? "Bezig…"
+            : `Markeer ${data.unread_before} eerdere als gelezen`}
+        </button>
+      )}
+    </section>
   );
 }
