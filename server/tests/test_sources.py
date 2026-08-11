@@ -52,7 +52,9 @@ MANGA_PAYLOAD = {
             "id": "cover-rel-id",
             "type": "cover_art",
             "attributes": {"fileName": "e0e1c1d1.jpg"},
-        }
+        },
+        {"id": "author-rel-id", "type": "author", "attributes": {"name": "Yoshito Usui"}},
+        {"id": "artist-rel-id", "type": "artist", "attributes": {"name": "Yoshito Usui"}},
     ],
 }
 
@@ -173,6 +175,33 @@ class TestMangaDexSearch:
             return httpx.Response(200, json={"result": "ok", "data": [payload]})
 
         assert make_source(handler).search("x")[0].cover_url is None
+
+    def test_author_and_artist_are_deduped(self):
+        """Bij manga is de schrijver vaak ook de tekenaar; dan hoort hij er
+        één keer te staan, niet twee."""
+        assert make_source().search("x")[0].authors == ["Yoshito Usui"]
+
+    def test_a_separate_artist_is_kept_alongside_the_author(self):
+        payload = {
+            **MANGA_PAYLOAD,
+            "relationships": [
+                {"id": "a", "type": "author", "attributes": {"name": "Schrijver"}},
+                {"id": "b", "type": "artist", "attributes": {"name": "Tekenaar"}},
+            ],
+        }
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"result": "ok", "data": [payload]})
+
+        assert make_source(handler).search("x")[0].authors == ["Schrijver", "Tekenaar"]
+
+    def test_no_authors_when_the_bron_has_none(self):
+        payload = {**MANGA_PAYLOAD, "relationships": []}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"result": "ok", "data": [payload]})
+
+        assert make_source(handler).search("x")[0].authors == []
 
     def test_detail(self):
         result = make_source().detail(MANGA_ID)
@@ -802,6 +831,24 @@ class TestAttachCover:
         # Blijft lokaal: geen abonnement, geen bron-referentie erbij.
         assert series.source_id is None
         assert series.source_ref is None
+
+    def test_the_author_comes_along(self, session: Session):
+        """Een lokale strip- of mangamap heeft zelden ComicInfo met een
+        schrijver erin, en we hebben het detail-antwoord toch al binnen."""
+        series = Series(title="Lokaal", sort_title="lokaal")
+        session.add(series)
+        session.flush()
+
+        source_service.attach_cover(series, make_source(), MANGA_ID)
+        assert series.authors == ["Yoshito Usui"]
+
+    def test_an_existing_author_is_not_lost(self, session: Session):
+        series = Series(title="Lokaal", sort_title="lokaal", authors=["Uit ComicInfo"])
+        session.add(series)
+        session.flush()
+
+        source_service.attach_cover(series, make_source(), MANGA_ID)
+        assert series.authors == ["Uit ComicInfo", "Yoshito Usui"]
 
     def test_raises_clearly_when_the_bron_has_no_cover(self, session: Session):
         series = Series(title="Lokaal", sort_title="lokaal")

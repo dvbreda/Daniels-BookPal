@@ -289,6 +289,40 @@ class TestSeriesCover:
         assert series_cover.content == page_two.content
         assert series_cover.content != page_zero.content
 
+    def test_cover_page_also_applies_to_the_books_in_the_series(self, scanned: TestClient):
+        """Bij scanlations zit de reclame op pagina 1 van élk hoofdstuk, dus de
+        keuze moet ook de deel-kaartjes vullen — niet alleen de serie-omslag."""
+        series_id = self._storm_series_id(scanned)
+        books = scanned.get(f"/api/series/{series_id}").json()["books"]
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 2})
+
+        for book in books:
+            cover = scanned.get(f"/api/books/{book['id']}/cover")
+            page_two = scanned.get(f"/api/books/{book['id']}/pages/2")
+            assert cover.status_code == 200
+            assert cover.content == page_two.content
+
+    def test_a_shorter_volume_falls_back_to_its_own_cover(self, scanned: TestClient):
+        """Storm 02 heeft maar 3 pagina's; een keuze van pagina 4 bestaat daar
+        niet en mag geen 404 op het kaartje opleveren."""
+        series_id = self._storm_series_id(scanned)
+        books = scanned.get(f"/api/series/{series_id}").json()["books"]
+        short = next(b for b in books if b["page_count"] == 3)
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 4})
+
+        cover = scanned.get(f"/api/books/{short['id']}/cover")
+        assert cover.status_code == 200
+        assert cover.content == scanned.get(f"/api/books/{short['id']}/pages/0").content
+
+    def test_clearing_restores_the_default_book_covers(self, scanned: TestClient):
+        series_id = self._storm_series_id(scanned)
+        book_id = int(scanned.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 2})
+        scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": None})
+
+        cover = scanned.get(f"/api/books/{book_id}/cover")
+        assert cover.content == scanned.get(f"/api/books/{book_id}/pages/0").content
+
     def test_out_of_range_page_is_rejected(self, scanned: TestClient):
         series_id = self._storm_series_id(scanned)
         response = scanned.patch(f"/api/series/{series_id}/cover-page", json={"page_index": 99})

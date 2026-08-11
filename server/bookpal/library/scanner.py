@@ -185,6 +185,11 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
         series.publisher = meta.publisher
     if meta.tags:
         series.tags = list(dict.fromkeys([*series.tags, *meta.tags]))
+    if meta.authors:
+        # Samenvoegen in plaats van overschrijven: een serie heeft vaak een
+        # tekenaar naast een schrijver, en die staan zelden in hetzelfde deel.
+        # dict.fromkeys houdt de volgorde aan waarin ze langskomen.
+        series.authors = list(dict.fromkeys([*series.authors, *meta.authors]))
     if meta.summary and not series.summary:
         series.summary = meta.summary
     _apply_origin(series, meta, root, FORMAT_KINDS[fmt])

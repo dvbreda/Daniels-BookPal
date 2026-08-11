@@ -199,6 +199,27 @@ class TestRunOnce:
         assert report.downloaded == 0
         assert session.query(Book).filter(Book.file_id.isnot(None)).count() == 0
 
+    def test_refresh_backfills_series_metadata(
+        self, session: Session, temp_settings: Path, monkeypatch
+    ):
+        """Metadata die pas later bij de bron goed komt te staan — auteur,
+        omslag, tracker-ids — moet een ronde later alsnog binnenkomen."""
+        monkeypatch.setattr(worker, "get_source", lambda _type: make_source())
+        source_row = Source(type="mangadex", name="MangaDex")
+        session.add(source_row)
+        session.flush()
+        from bookpal.sources import service as source_service
+
+        series, _subscription, _added = source_service.subscribe(
+            session, source_row, make_source(), MANGA_ID
+        )
+        series.authors = []  # alsof je de serie volgde toen de bron dit nog niet wist
+        session.commit()
+
+        worker.run_once(session, download=False)
+        session.refresh(series)
+        assert series.authors == ["Yoshito Usui"]
+
     def test_a_broken_source_is_reported_not_raised(
         self, session: Session, temp_settings: Path, monkeypatch
     ):
@@ -216,6 +237,9 @@ class TestRunOnce:
         session.commit()
 
         class Kapot:
+            def detail(self, *args, **kwargs):
+                raise SourceError("bron plat")
+
             def chapters(self, *args, **kwargs):
                 raise SourceError("bron plat")
 

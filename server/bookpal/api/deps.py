@@ -159,6 +159,7 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         origin_region=series.origin_region,
         origin_source=series.origin_source,
         publisher=series.publisher,
+        authors=series.authors,
         tags=series.tags,
         summary=series.summary,
         book_count=book_count,

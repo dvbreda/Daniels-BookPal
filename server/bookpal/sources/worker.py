@@ -127,6 +127,15 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
 
         if refresh and series.source_ref:
             try:
+                # Ook de serie-metadata zelf bijwerken, niet alleen de
+                # hoofdstukkenlijst: auteur, omslag en tracker-ids komen bij een
+                # bron later nog wel eens goed te staan, en zonder deze aanroep
+                # zou een serie voor altijd blijven zitten met wat er toevallig
+                # bekend was op de dag dat je 'm ging volgen. Eén extra verzoek
+                # naast de gepagineerde hoofdstukkenfeed valt in het niet.
+                source_service.upsert_series(
+                    session, source_row, implementation.detail(series.source_ref)
+                )
                 chapters = implementation.chapters(series.source_ref)
                 added, _ = source_service.sync_chapters(
                     session, series, chapters, subscription=subscription

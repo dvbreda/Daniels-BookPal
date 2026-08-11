@@ -145,6 +145,25 @@ def get_cover(
     book = deps.get_book(session, book_id)
     path = deps.book_file_path(session, book)
     source = open_source(path)
+
+    # Een handmatig gekozen omslagpagina geldt voor de hele serie, niet alleen
+    # voor het eerste deel: bij scanlations zit de reclame op pagina 1 van elk
+    # hoofdstuk, dus juist de deel-kaartjes hebben die keuze nodig.
+    page_index = book.series.cover_page_index if book.series is not None else None
+    if page_index is not None:
+        try:
+            chosen = render_page(source, page_index, profile, source_id=source_id_for(path))
+            return Response(
+                content=chosen.data,
+                media_type=chosen.media_type,
+                headers={
+                    "Cache-Control": COVER_CACHE_CONTROL,
+                    "X-BookPal-Cache": "hit" if chosen.from_cache else "miss",
+                },
+            )
+        except (IndexError, UnsupportedOperation):
+            pass  # dit deel is korter, of heeft geen vaste pagina's; val terug
+
     rendered = render_cover(source, profile, source_id=source_id_for(path))
     if rendered is None:
         raise HTTPException(status_code=404, detail="dit boek heeft geen omslag")

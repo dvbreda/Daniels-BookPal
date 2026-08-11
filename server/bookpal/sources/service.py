@@ -88,6 +88,10 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
     series.summary = result.description or series.summary
     if result.cover_url:
         series.cover_url = result.cover_url
+    if result.authors:
+        # Samenvoegen zoals de scanner dat doet, zodat een auteur uit ComicInfo
+        # niet verdwijnt zodra dezelfde serie ook bij een bron staat.
+        series.authors = list(dict.fromkeys([*(series.authors or []), *result.authors]))
     if result.tracker_ids:
         # Let op de `or {}`: column-defaults vullen pas bij het flushen, dus op
         # een net aangemaakte serie staat hier nog None.
@@ -285,13 +289,18 @@ def attach_cover(series: Series, implementation: SourceImpl, ref: str) -> Series
     Bewust geen ``upsert_series``: die zoekt en maakt series op
     ``(source_id, source_ref)``, en een lokale serie heeft dat paar niet — die
     zou dan een tweede, lege serie krijgen in plaats van zijn eigen omslag.
-    Dit raakt daarom uitsluitend ``cover_url``; de serie blijft "lokaal", er
-    komt geen abonnement of bron-referentie bij.
+    Dit raakt daarom alleen de metadata die je hier komt halen — omslag en
+    auteur; de serie blijft "lokaal", er komt geen abonnement of
+    bron-referentie bij.
     """
     detail = implementation.detail(ref)
     if not detail.cover_url:
         raise SourceError(f"{detail.title} heeft geen omslag bij deze bron")
     series.cover_url = detail.cover_url
+    if detail.authors:
+        # We hebben het detail-antwoord toch al binnen; een lokale strip- of
+        # mangamap heeft zelden ComicInfo met een schrijver erin.
+        series.authors = list(dict.fromkeys([*(series.authors or []), *detail.authors]))
     return series
 
 

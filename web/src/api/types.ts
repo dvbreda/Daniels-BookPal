@@ -64,6 +64,7 @@ export interface Series {
   origin_region: OriginRegion;
   origin_source: OriginSource;
   publisher: string | null;
+  authors: string[];
   tags: string[];
   summary: string | null;
   book_count: number;

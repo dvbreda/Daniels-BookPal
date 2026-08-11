@@ -304,6 +304,47 @@ class TestSeriesGrouping:
         assert series.folder_path == "Een Map"
 
 
+class TestAuthorsDuringScan:
+    def test_writer_from_comicinfo_lands_on_the_series(
+        self, session: Session, library_root: Path
+    ):
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.authors == ["Iemand Anders"]
+
+    def test_authors_are_merged_not_overwritten(self, session: Session, library_root: Path):
+        """Een serie heeft vaak een tekenaar naast een schrijver, en die staan
+        zelden in hetzelfde deel — dus samenvoegen, niet vervangen."""
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        make_cbz(
+            library_root / "b.cbz",
+            pages=1,
+            comicinfo=comicinfo_xml(series="Storm", number="2").replace(
+                b"<Writer>Iemand Anders</Writer>", b"<Writer>Nog Iemand</Writer>"
+            ),
+        )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert sorted(series.authors) == ["Iemand Anders", "Nog Iemand"]
+
+    def test_rescanning_does_not_duplicate_authors(self, session: Session, library_root: Path):
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        root = make_root(session, library_root)
+        scan_root(session, root)
+        scan_root(session, root, force=True)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.authors == ["Iemand Anders"]
+
+
 class TestOriginDuringScan:
     def test_publisher_from_comicinfo_sets_europe(self, session: Session, library_root: Path):
         make_cbz(

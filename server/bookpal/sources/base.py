@@ -35,6 +35,9 @@ class SearchResult:
     original_language: str | None = None
     # {"mal": "2435", "anilist": "32435"} — M7 krijgt de koppeling zo gratis.
     tracker_ids: dict[str, str] = field(default_factory=dict)
+    # Schrijver en tekenaar. Een scanlation-cbz heeft zelden ComicInfo, dus
+    # voor gevolgde series is dit de enige plek waar de auteur vandaan komt.
+    authors: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)

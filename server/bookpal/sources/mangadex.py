@@ -34,6 +34,11 @@ _TITLE_PREFERENCE = ("en", "ja-ro", "ja")
 # De trackers die M7 kent, met de sleutel zoals MangaDex hem noemt.
 _TRACKER_LINKS = {"mal": "mal", "al": "anilist"}
 
+# Zonder deze relaties geeft de API alleen id's terug, geen namen. Auteur en
+# tekenaar horen erbij: een scanlation-cbz heeft zelden ComicInfo, dus dit is
+# voor gevolgde series de enige plek waar de auteur vandaan komt.
+_INCLUDES = ["cover_art", "author", "artist"]
+
 
 def _pick_title(attributes: dict[str, Any]) -> str:
     titles: dict[str, str] = attributes.get("title") or {}
@@ -67,6 +72,18 @@ def _cover_url(item: dict[str, Any]) -> str | None:
     return None
 
 
+def _authors(item: dict[str, Any]) -> list[str]:
+    """Schrijver en tekenaar, in die volgorde en zonder dubbelen — bij manga
+    is dat vaak dezelfde persoon."""
+    names = [
+        str(name)
+        for relation in item.get("relationships") or []
+        if relation.get("type") in {"author", "artist"}
+        if (name := (relation.get("attributes") or {}).get("name"))
+    ]
+    return list(dict.fromkeys(names))
+
+
 def _to_result(item: dict[str, Any]) -> SearchResult:
     attributes = item.get("attributes") or {}
     links = attributes.get("links") or {}
@@ -82,6 +99,7 @@ def _to_result(item: dict[str, Any]) -> SearchResult:
         original_language=attributes.get("originalLanguage"),
         tracker_ids=tracker_ids,
         cover_url=_cover_url(item),
+        authors=_authors(item),
     )
 
 
@@ -142,12 +160,13 @@ class MangaDexSource(Source):
 
     def search(self, query: str, *, limit: int = 20) -> list[SearchResult]:
         payload = self._get(
-            "/manga", {"title": query, "limit": limit, "includes[]": "cover_art"}
+            "/manga",
+            {"title": query, "limit": limit, "includes[]": _INCLUDES},
         )
         return [_to_result(item) for item in payload.get("data", [])]
 
     def detail(self, ref: str) -> SearchResult:
-        payload = self._get(f"/manga/{ref}", {"includes[]": "cover_art"})
+        payload = self._get(f"/manga/{ref}", {"includes[]": _INCLUDES})
         data = payload.get("data")
         if not data:
             raise SourceError(f"serie {ref} niet gevonden bij MangaDex")

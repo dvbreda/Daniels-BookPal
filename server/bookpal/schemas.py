@@ -96,6 +96,7 @@ class SeriesOut(BaseModel):
     origin_region: OriginRegion
     origin_source: OriginSource
     publisher: str | None
+    authors: list[str] = Field(default_factory=list)
     tags: list[str]
     summary: str | None
     book_count: int = 0
