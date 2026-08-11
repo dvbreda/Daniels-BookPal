@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# BookPal-data: database, beeldcache. Hoort nooit in de repo.
+server/data/
+data/
+
+# Node
+node_modules/
+web/dist/
+*.local
+
+# Editors / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Nooit meenemen: eigen collectie of sleutels
+*.cbz
+*.cbr
+*.cb7
+*.epub
+*.pdf
+.env
+.env.*
+!.env.example
+*.tsbuildinfo

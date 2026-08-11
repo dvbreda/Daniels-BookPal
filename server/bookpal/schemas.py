@@ -1,0 +1,153 @@
+"""Pydantic-schema's voor de API.
+
+Bewust losgekoppeld van de SQLAlchemy-modellen: de clients (web, Lite, iOS,
+Kobo) hangen aan dít contract, niet aan het databaseschema.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Generic, Literal, TypeVar
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from bookpal.models import BookKind, OriginRegion, OriginSource
+
+
+class LibraryRootIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    path: str = Field(min_length=1)
+    default_origin_language: str | None = None
+    default_origin_region: OriginRegion | None = None
+    folder_as_collection: bool = False
+    enabled: bool = True
+
+
+class LibraryRootOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    path: str
+    enabled: bool
+    default_origin_language: str | None
+    default_origin_region: OriginRegion | None
+    folder_as_collection: bool
+    last_scan_at: datetime | None
+    series_count: int = 0
+    book_count: int = 0
+
+
+class ProgressOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    position: dict[str, Any]
+    percent: float
+    finished: bool
+    device: str | None
+    updated_at: datetime
+
+
+class ProgressIn(BaseModel):
+    book_id: int
+    position: dict[str, Any] = Field(default_factory=dict)
+    percent: float = Field(ge=0.0, le=100.0)
+    finished: bool = False
+    device: str | None = Field(default=None, max_length=100)
+
+
+class BookOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    series_id: int
+    kind: BookKind
+    title: str
+    number: str | None
+    volume: str | None
+    page_count: int | None
+    right_to_left: bool
+    # Lokaal bestand of alleen een bron-referentie? Clients gebruiken dit om te
+    # bepalen of ze kunnen lezen of eerst moeten downloaden.
+    has_file: bool
+    extension: str | None
+    added_at: datetime
+    progress: ProgressOut | None = None
+
+
+class SeriesOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    sort_title: str
+    library_root_id: int | None
+    folder_path: str | None
+    origin_language: str | None
+    origin_country: str | None
+    origin_region: OriginRegion
+    origin_source: OriginSource
+    publisher: str | None
+    tags: list[str]
+    summary: str | None
+    book_count: int = 0
+    kinds: list[BookKind] = Field(default_factory=list)
+
+
+class SeriesDetailOut(SeriesOut):
+    books: list[BookOut] = Field(default_factory=list)
+
+
+class OriginPatch(BaseModel):
+    """Handmatige correctie. Zet ``origin_source`` op MANUAL, waardoor een
+    rescan de keuze niet meer overschrijft."""
+
+    origin_language: str | None = None
+    origin_country: str | None = None
+    origin_region: OriginRegion
+
+
+class TocEntryOut(BaseModel):
+    title: str
+    target: str
+    level: int
+
+
+class BookDetailOut(BookOut):
+    series_title: str
+    toc: list[TocEntryOut] = Field(default_factory=list)
+
+
+class ScanResultOut(BaseModel):
+    root: str
+    added: int
+    updated: int
+    unchanged: int
+    removed: int
+    errors: list[str]
+
+
+class PageInfoOut(BaseModel):
+    index: int
+    url: str
+
+
+class ProfileOut(BaseModel):
+    name: str
+    max_width: int | None
+    max_height: int | None
+    format: str
+    grayscale: bool
+
+
+T = TypeVar("T")
+
+
+class Paginated(BaseModel, Generic[T]):
+    items: list[T]
+    total: int
+    offset: int
+    limit: int
+
+
+SortField = Literal["title", "added", "number"]

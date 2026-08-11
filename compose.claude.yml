@@ -1,0 +1,40 @@
+# Claude Code op de NAS.
+#
+#   docker compose -f compose.claude.yml up -d --build
+#   docker exec -it bookpal-claude claude
+#
+# De eerste keer vraagt hij om in te loggen. In een container krijg je meestal
+# geen browser die terugkoppelt, dus toont hij een code die je in de terminal
+# plakt — dat is de normale weg, niet een fout.
+services:
+  claude:
+    build:
+      context: .
+      dockerfile: docker/claude-code.Dockerfile
+      args:
+        UID: "${HOST_UID:-1000}"
+        GID: "${HOST_GID:-1000}"
+    image: bookpal-claude:latest
+    container_name: bookpal-claude
+    restart: unless-stopped
+    working_dir: /workspace/Daniels-BookPal
+    environment:
+      # Alleen nodig als je zonder browser wilt inloggen; zie claude-code.md.
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+    volumes:
+      # De repo. Lees én schrijf — hier werkt Claude in.
+      - "${BOOKPAL_WORKSPACE:-/volume1/docker/bookpal}:/workspace"
+      # Inloggegevens en instellingen bewaren, anders log je na elke herstart
+      # opnieuw in.
+      - claude-home:/home/node/.claude
+      # Je collectie, uitsluitend om te lezen: handig om echte bestanden te
+      # kunnen onderzoeken, maar Claude mag er niets in veranderen.
+      - "${BOOKPAL_BOEKEN:-/volume1/_boeken}:/library/boeken:ro"
+      - "${BOOKPAL_STRIPS:-/volume1/_strips}:/library/strips:ro"
+      - "${BOOKPAL_MANGA:-/volume1/_manga}:/library/manga:ro"
+      # Zodat Claude de BookPal-container kan bouwen en herstarten. Dit geeft
+      # feitelijk root op de NAS — laat deze regel weg als je dat niet wilt.
+      - /var/run/docker.sock:/var/run/docker.sock
+
+volumes:
+  claude-home:

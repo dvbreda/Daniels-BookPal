@@ -1,0 +1,52 @@
+# Daniels BookPal op de NAS.
+#
+# De paden hieronder komen uit .env (zie .env.example). Zo hoef je dit bestand
+# niet aan te passen en blijft een `git pull` conflictvrij.
+#
+# De collectie wordt alleen gelezen (`:ro`) — BookPal schrijft nooit in je
+# mappen, alleen in zijn eigen /data-volume.
+services:
+  bookpal:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: bookpal:latest
+    container_name: bookpal
+    restart: unless-stopped
+    ports:
+      # Buiten 1997, binnen 8000. Open dus http://<nas>:1997
+      - "1997:8000"
+    environment:
+      BOOKPAL_CACHE_MAX_MB: "${BOOKPAL_CACHE_MAX_MB:-4096}"
+    volumes:
+      - bookpal-data:/data
+      # Links het pad op de NAS, rechts het pad in de container. Die rechterkant
+      # vul je in bij Instellingen — dus /library/strips, niet /volume1/_strips.
+      - "${BOOKPAL_BOEKEN:-/volume1/_boeken}:/library/boeken:ro"
+      - "${BOOKPAL_STRIPS:-/volume1/_strips}:/library/strips:ro"
+      - "${BOOKPAL_MANGA:-/volume1/_manga}:/library/manga:ro"
+      #
+      # Heb je alles onder één map staan (bijvoorbeeld /volume1/_boeken met
+      # daarin strips/ en manga/)? Haal de drie regels hierboven weg, zet deze
+      # ervoor in de plaats:
+      #
+      #   - "/volume1/_boeken:/library:ro"
+      #
+      # en voeg in Instellingen drie roots toe die naar de submappen wijzen:
+      # /library/strips, /library/manga en /library (of /library/boeken).
+      #
+      # Aparte roots per soort is hoe dan ook de betere keuze: de standaard-
+      # herkomst is een instelling *per root*, en dat is precies wat "manga uit
+      # Japan" laat werken bij bestanden zonder ComicInfo.xml.
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+
+volumes:
+  bookpal-data:
