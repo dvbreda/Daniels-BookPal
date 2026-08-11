@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+from bookpal.ratelimit import RateLimiter
 from bookpal.sources.base import ChapterInfo, SearchResult, Source, SourceError
 from bookpal.sources.mangadex import MangaDexSource
-from bookpal.sources.ratelimit import RateLimiter
 
 #: Bron-implementaties op ``Source.type``. Een nieuwe bron is een regel erbij.
 REGISTRY: dict[str, type[Source]] = {

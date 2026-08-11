@@ -1,9 +1,9 @@
-"""Een token bucket, zodat we een bron nooit overvragen.
+"""Een token bucket, zodat we een externe dienst nooit overvragen.
 
-MangaDex staat ongeveer 5 verzoeken per seconde per IP toe en is strenger op
-``/at-home/server/`` (aandachtspunt in docs/architectuur.md). Dit is geen
-optimalisatie maar een fatsoensregel: een persoonlijke bibliotheek hoort geen
-publieke dienst plat te leggen.
+Gebruikt door zowel ``sources`` (MangaDex) als ``trackers`` (MyAnimeList) —
+geen van beide is intrinsiek een "bron"-concept, dus staat het hier los van
+allebei. Dit is geen optimalisatie maar een fatsoensregel: een persoonlijke
+bibliotheek hoort geen publieke dienst plat te leggen.
 """
 
 from __future__ import annotations

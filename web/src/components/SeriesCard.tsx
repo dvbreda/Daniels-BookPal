@@ -13,7 +13,11 @@ export function SeriesCard({ series, coverProfile }: { series: Series; coverProf
       className="group overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent"
     >
       <div className="relative aspect-[2/3] bg-ink-700">
-        <CoverImage seriesId={series.id} profile={coverProfile} />
+        <CoverImage
+          seriesId={series.id}
+          hasCoverUrl={series.has_cover_url}
+          profile={coverProfile}
+        />
         <div className="absolute left-1 top-1">
           <SubscriptionBadge fromSource={series.from_source} />
         </div>
@@ -29,8 +33,38 @@ export function SeriesCard({ series, coverProfile }: { series: Series; coverProf
   );
 }
 
-/** De omslag van een serie is die van het eerste deel. */
-function CoverImage({ seriesId, profile }: { seriesId: number; profile: string }) {
+/**
+ * De omslag van een serie. Een bron levert soms een betere dan "pagina 1 van
+ * het eerste deel" — bij scanlaties staat daar vaak een credits-pagina van de
+ * vertaalgroep over de echte omslag heen (zie TranslationPicker-achtige uitleg
+ * bij "Omslag" op de seriepagina). Die officiële omslag krijgt voorrang.
+ */
+function CoverImage({
+  seriesId,
+  hasCoverUrl,
+  profile,
+}: {
+  seriesId: number;
+  hasCoverUrl: boolean;
+  profile: string;
+}) {
+  if (hasCoverUrl) {
+    return (
+      <img
+        src={imageUrl.seriesCover(seriesId, profile)}
+        alt=""
+        loading="lazy"
+        className="h-full w-full object-cover"
+        onError={(event) => {
+          event.currentTarget.style.visibility = "hidden";
+        }}
+      />
+    );
+  }
+  return <FirstPageCover seriesId={seriesId} profile={profile} />;
+}
+
+function FirstPageCover({ seriesId, profile }: { seriesId: number; profile: string }) {
   const { data } = useQuery({
     queryKey: ["series-detail", seriesId],
     queryFn: () => api.seriesDetail(seriesId),

@@ -10,8 +10,10 @@ from sqlalchemy.orm import Session
 
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
-from bookpal.models import Book, File, Progress, Series, User, utcnow
+from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
+from bookpal.sources import Source as SourceImpl
+from bookpal.sources import SourceError, get_source
 
 SessionDep = Depends(get_session)
 
@@ -43,6 +45,22 @@ def get_series(session: Session, series_id: int) -> Series:
     if series is None:
         raise HTTPException(status_code=404, detail="serie niet gevonden")
     return series
+
+
+def get_source_row(session: Session, source_id: int) -> Source:
+    source = session.get(Source, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="bron niet gevonden")
+    if not source.enabled:
+        raise HTTPException(status_code=409, detail="deze bron staat uit")
+    return source
+
+
+def get_source_implementation(source: Source) -> SourceImpl:
+    try:
+        return get_source(source.type)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def book_file_path(session: Session, book: Book) -> Path:
@@ -140,6 +158,7 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         book_count=book_count,
         kinds=kinds,  # type: ignore[arg-type]
         from_source=series.source_id is not None,
+        has_cover_url=series.cover_url is not None,
     )
 
 

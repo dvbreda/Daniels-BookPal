@@ -3,6 +3,7 @@ import { Link, useParams } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
 import type { Book, OriginRegion } from "../api/types";
+import { CoverPicker } from "../components/CoverPicker";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
 
@@ -86,6 +87,7 @@ export function SeriesPage() {
         </div>
       </section>
 
+      <CoverPicker seriesId={seriesId} />
       <TranslationPicker seriesId={seriesId} books={data.books} />
 
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
@@ -138,6 +140,9 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
       </div>
       <div className="p-2">
         <p className="truncate text-sm text-slate-100">
+          {/* Zonder het deel is de volgorde niet te volgen zodra hoofdstukken
+              per deel opnieuw beginnen te tellen (elk deel heeft een "1"). */}
+          {book.volume ? `Deel ${book.volume} · ` : ""}
           {book.number ? `${book.number}. ` : ""}
           {book.title}
         </p>

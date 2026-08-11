@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 from PIL import Image, ImageOps
 
 from bookpal.config import settings
@@ -161,6 +162,30 @@ def render_cover(book: BookFile, profile: ImageProfile, *, source_id: str) -> Re
         return None
 
     data = process_image(raw.data, profile)
+    _store(path, data)
+    return RenderedImage(data, profile.media_type, from_cache=False)
+
+
+def render_remote_cover(url: str, profile: ImageProfile, *, source_id: str) -> RenderedImage:
+    """De officiële omslag van een bron (M5/M7), door dezelfde pipeline als
+    elke andere afbeelding — dus ook grijswaarden en dithering voor de Kobo.
+
+    Eén keer ophalen: de cache-sleutel bevat de URL zelf, dus een gewijzigde
+    omslag bij de bron krijgt vanzelf een nieuwe sleutel in plaats van dat hij
+    de oude blijft tonen.
+    """
+    key = _cache_key(source_id, -1, profile)
+    path = _cache_path(key, profile)
+    if path.exists():
+        return RenderedImage(path.read_bytes(), profile.media_type, from_cache=True)
+
+    try:
+        response = httpx.get(url, timeout=30.0, follow_redirects=True)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise UnsupportedOperation(f"omslag niet op te halen: {exc}") from exc
+
+    data = process_image(response.content, profile)
     _store(path, data)
     return RenderedImage(data, profile.media_type, from_cache=False)
 

@@ -4,18 +4,23 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
+from bookpal.formats.base import UnsupportedOperation
+from bookpal.images import ImageProfile, render_remote_cover
 from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
 from bookpal.schemas import (
+    AttachCoverIn,
     OriginPatch,
     Paginated,
     SeriesDetailOut,
     SeriesOut,
 )
+from bookpal.sources import SourceError
+from bookpal.sources import service as source_service
 
 from . import deps
 
@@ -120,3 +125,59 @@ def set_origin(
         session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
     )
     return deps.to_series_out(series, book_count, [])
+
+
+@router.post("/{series_id}/cover", response_model=SeriesOut)
+def attach_cover(
+    series_id: int, payload: AttachCoverIn, session: Session = Depends(get_session)
+) -> SeriesOut:
+    """Koppel de officiële omslag van een bron aan deze serie.
+
+    Nuttig bij scanlaties: 'pagina 1 van hoofdstuk 1' is daar vaak een
+    credits-pagina van de vertaalgroep over de echte omslag heen. Werkt ook
+    voor een serie die je zelf hebt gescand — er komt geen abonnement bij,
+    alleen de omslag zelf.
+    """
+    series = deps.get_series(session, series_id)
+    source = deps.get_source_row(session, payload.source_id)
+    implementation = deps.get_source_implementation(source)
+    try:
+        source_service.attach_cover(series, implementation, payload.ref)
+    except SourceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    session.commit()
+
+    book_count = int(
+        session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
+    )
+    return deps.to_series_out(series, book_count, [])
+
+
+@router.get("/{series_id}/cover")
+def get_series_cover(
+    series_id: int,
+    profile: ImageProfile = deps.ProfileDep,
+    session: Session = Depends(get_session),
+) -> Response:
+    """De omslag van de bron, als die gekoppeld is.
+
+    Geen fallback naar 'pagina 1 van het eerste boek' hier — dat blijft aan de
+    client, want alleen die weet welk boek daarvoor het eerste is.
+    """
+    series = deps.get_series(session, series_id)
+    if not series.cover_url:
+        raise HTTPException(status_code=404, detail="deze serie heeft geen omslag van een bron")
+    try:
+        rendered = render_remote_cover(
+            series.cover_url, profile, source_id=f"series-cover:{series.id}:{series.cover_url}"
+        )
+    except UnsupportedOperation as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(
+        content=rendered.data,
+        media_type=rendered.media_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",
+        },
+    )

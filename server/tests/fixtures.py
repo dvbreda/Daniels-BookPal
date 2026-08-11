@@ -32,6 +32,7 @@ def page_png(index: int, size: tuple[int, int] = (400, 600)) -> bytes:
 def comicinfo_xml(
     series: str = "Testreeks",
     number: str = "1",
+    volume: str | None = None,
     publisher: str | None = None,
     language: str | None = None,
     manga: str | None = None,
@@ -44,6 +45,8 @@ def comicinfo_xml(
         "<Writer>Iemand Anders</Writer>",
         "<Genre>Avontuur, Humor</Genre>",
     ]
+    if volume:
+        parts.append(f"<Volume>{volume}</Volume>")
     if publisher:
         parts.append(f"<Publisher>{publisher}</Publisher>")
     if language:

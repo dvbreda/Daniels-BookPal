@@ -20,10 +20,11 @@ from typing import Any
 
 import httpx
 
+from bookpal.ratelimit import RateLimiter
 from bookpal.sources.base import ChapterInfo, SearchResult, Source, SourceError
-from bookpal.sources.ratelimit import RateLimiter
 
 API_BASE = "https://api.mangadex.org"
+COVERS_BASE = "https://uploads.mangadex.org/covers"
 USER_AGENT = "DanielsBookPal/0.1 (persoonlijke bibliotheek; +https://github.com/dvbreda)"
 
 # Welke van de vele titelvarianten tonen we? Engels als dat er is, anders de
@@ -52,6 +53,20 @@ def _pick_description(attributes: dict[str, Any]) -> str | None:
     return descriptions.get("en") or (next(iter(descriptions.values()), None))
 
 
+def _cover_url(item: dict[str, Any]) -> str | None:
+    """De officiële omslag, niet 'pagina 1 van hoofdstuk 1' — bij scanlaties
+    staat daar vaak een credits-pagina van de vertaalgroep overheen. ``.512``
+    is een door MangaDex zelf aangeboden kleiner formaat; de volledige scan
+    is voor een omslag onnodig groot."""
+    manga_id = item.get("id")
+    for relation in item.get("relationships") or []:
+        if relation.get("type") == "cover_art":
+            file_name = (relation.get("attributes") or {}).get("fileName")
+            if file_name and manga_id:
+                return f"{COVERS_BASE}/{manga_id}/{file_name}.512.jpg"
+    return None
+
+
 def _to_result(item: dict[str, Any]) -> SearchResult:
     attributes = item.get("attributes") or {}
     links = attributes.get("links") or {}
@@ -66,6 +81,7 @@ def _to_result(item: dict[str, Any]) -> SearchResult:
         status=attributes.get("status"),
         original_language=attributes.get("originalLanguage"),
         tracker_ids=tracker_ids,
+        cover_url=_cover_url(item),
     )
 
 
@@ -125,11 +141,13 @@ class MangaDexSource(Source):
         return payload
 
     def search(self, query: str, *, limit: int = 20) -> list[SearchResult]:
-        payload = self._get("/manga", {"title": query, "limit": limit})
+        payload = self._get(
+            "/manga", {"title": query, "limit": limit, "includes[]": "cover_art"}
+        )
         return [_to_result(item) for item in payload.get("data", [])]
 
     def detail(self, ref: str) -> SearchResult:
-        payload = self._get(f"/manga/{ref}")
+        payload = self._get(f"/manga/{ref}", {"includes[]": "cover_art"})
         data = payload.get("data")
         if not data:
             raise SourceError(f"serie {ref} niet gevonden bij MangaDex")

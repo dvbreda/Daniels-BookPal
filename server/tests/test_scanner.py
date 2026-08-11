@@ -221,6 +221,47 @@ class TestSeriesGrouping:
         assert series is not None
         assert [book.number for book in series.books] == ["1", "2", "10"]
 
+    def test_sorts_by_volume_first_when_chapters_restart_per_volume(
+        self, session: Session, library_root: Path
+    ):
+        """Chapter 1 bestaat in elk deel — zonder sort_volume komen die naast
+        elkaar te staan in scanvolgorde in plaats van leesvolgorde. Precies
+        wat er met de echte Crayon Shin-Chan-collectie misging."""
+        folder = library_root / "Reeks"
+        # Bewust niet in leesvolgorde aanmaken: de bug zat in aanname dat
+        # scanvolgorde toevallig zou kloppen.
+        for vol, ch in [("10", "1"), ("1", "2"), ("2", "1"), ("1", "1")]:
+            make_cbz(
+                folder / f"vol{vol}-ch{ch}.cbz",
+                pages=1,
+                comicinfo=comicinfo_xml(series="Reeks", number=ch, volume=vol),
+            )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        volgorde = [(book.volume, book.number) for book in series.books]
+        assert volgorde == [("1", "1"), ("1", "2"), ("2", "1"), ("10", "1")]
+
+    def test_books_without_a_volume_still_sort_by_number(
+        self, session: Session, library_root: Path
+    ):
+        """De meeste strips hebben geen 'deel' apart van het nummer; die
+        mogen niet allemaal naar het einde van de reeks verdwijnen."""
+        for number in ("3", "1", "2"):
+            make_cbz(
+                library_root / f"los-{number}.cbz",
+                pages=1,
+                comicinfo=comicinfo_xml(series="Los", number=number),
+            )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert [book.number for book in series.books] == ["1", "2", "3"]
+
     def test_a_folder_holds_one_series_even_with_messy_filenames(
         self, session: Session, library_root: Path
     ):

@@ -103,6 +103,10 @@ class SeriesOut(BaseModel):
     # Gevolgd bij een bron? Dan toont de client dat, en weet hij dat er
     # hoofdstukken kunnen zijn zonder lokaal bestand.
     from_source: bool = False
+    # Heeft deze serie een omslag van een bron? Zonder dit weet de client niet
+    # of /api/series/{id}/cover iets oplevert, en moet hij het gewoon proberen
+    # en op een 404 wachten.
+    has_cover_url: bool = False
 
 
 class SeriesDetailOut(SeriesOut):
@@ -116,6 +120,14 @@ class OriginPatch(BaseModel):
     origin_language: str | None = None
     origin_country: str | None = None
     origin_region: OriginRegion
+
+
+class AttachCoverIn(BaseModel):
+    """Koppel de omslag van een bron aan een (ook lokale) serie, zonder
+    daarmee te abonneren."""
+
+    source_id: int
+    ref: str = Field(max_length=200)
 
 
 class TocEntryOut(BaseModel):
@@ -224,6 +236,9 @@ class SearchResultOut(BaseModel):
     tracker_ids: dict[str, str] = Field(default_factory=dict)
     # Volg je deze al? Dan hoeft de UI geen tweede aanroep te doen.
     subscribed_series_id: int | None = None
+    # Rechtstreeks te tonen als miniatuur in een zoekresultaat; pas bij
+    # koppelen (POST .../cover) gaat hij door de eigen cache en beeldpipeline.
+    cover_url: str | None = None
 
 
 class SubscribeIn(BaseModel):

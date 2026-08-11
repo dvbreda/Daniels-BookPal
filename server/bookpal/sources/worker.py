@@ -67,7 +67,7 @@ def plan_readahead(session: Session, subscription: Subscription, user: User) -> 
         session.scalars(
             select(Book)
             .where(Book.series_id == subscription.series_id)
-            .order_by(Book.sort_number, Book.id)
+            .order_by(Book.sort_volume, Book.sort_number, Book.id)
         )
     )
     if not books:

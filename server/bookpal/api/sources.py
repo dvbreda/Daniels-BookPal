@@ -24,28 +24,16 @@ from bookpal.schemas import (
     SubscriptionOut,
     SubscriptionPatch,
 )
-from bookpal.sources import REGISTRY, SourceError, get_source, worker
+from bookpal.sources import REGISTRY, SourceError, worker
 from bookpal.sources import service as source_service
 
 from . import deps
 
 router = APIRouter(prefix="/api/sources", tags=["sources"])
 
-
-def _get_source_row(session: Session, source_id: int) -> Source:
-    source = session.get(Source, source_id)
-    if source is None:
-        raise HTTPException(status_code=404, detail="bron niet gevonden")
-    if not source.enabled:
-        raise HTTPException(status_code=409, detail="deze bron staat uit")
-    return source
-
-
-def _implementation(source: Source):  # type: ignore[no-untyped-def]
-    try:
-        return get_source(source.type)
-    except SourceError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+# Gedeeld met api/series.py (omslag koppelen zonder te abonneren).
+_get_source_row = deps.get_source_row
+_implementation = deps.get_source_implementation
 
 
 @router.get("/types", response_model=list[str])
@@ -109,6 +97,7 @@ def search(
             original_language=result.original_language,
             tracker_ids=result.tracker_ids,
             subscribed_series_id=known.get(result.ref),
+            cover_url=result.cover_url,
         )
         for result in results
     ]

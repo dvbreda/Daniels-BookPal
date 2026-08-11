@@ -28,7 +28,7 @@ from bookpal.models import (
     SubscriptionPolicy,
     utcnow,
 )
-from bookpal.sources import ChapterInfo, RateLimiter, SourceError
+from bookpal.sources import ChapterInfo, RateLimiter, SourceError, mangadex
 from bookpal.sources import service as source_service
 from bookpal.sources.mangadex import MangaDexSource
 
@@ -47,6 +47,13 @@ MANGA_PAYLOAD = {
         "status": "completed",
         "links": {"mal": "2435", "al": "32435"},
     },
+    "relationships": [
+        {
+            "id": "cover-rel-id",
+            "type": "cover_art",
+            "attributes": {"fileName": "e0e1c1d1.jpg"},
+        }
+    ],
 }
 
 
@@ -152,8 +159,25 @@ class TestMangaDexSearch:
     def test_tracker_ids_come_along_for_m7(self):
         assert make_source().search("x")[0].tracker_ids == {"mal": "2435", "anilist": "32435"}
 
+    def test_cover_url_is_the_official_cover_not_page_one(self):
+        """Bij scanlaties staat er vaak een credits-pagina van de
+        vertaalgroep over de echte omslag heen; de bron heeft de schone
+        versie apart."""
+        cover = make_source().search("x")[0].cover_url
+        assert cover == f"{mangadex.COVERS_BASE}/{MANGA_ID}/e0e1c1d1.jpg.512.jpg"
+
+    def test_no_cover_url_when_the_bron_has_none(self):
+        payload = {**MANGA_PAYLOAD, "relationships": []}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"result": "ok", "data": [payload]})
+
+        assert make_source(handler).search("x")[0].cover_url is None
+
     def test_detail(self):
-        assert make_source().detail(MANGA_ID).title == "Crayon Shin-chan"
+        result = make_source().detail(MANGA_ID)
+        assert result.title == "Crayon Shin-chan"
+        assert result.cover_url == f"{mangadex.COVERS_BASE}/{MANGA_ID}/e0e1c1d1.jpg.512.jpg"
 
     def test_english_title_wins_when_present(self):
         payload = {**MANGA_PAYLOAD, "attributes": {**MANGA_PAYLOAD["attributes"]}}
@@ -296,6 +320,11 @@ class TestServiceLayer:
         source_row = self._source_row(session)
         series, _, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
         assert series.tracker_ids["mal"] == "2435"
+
+    def test_subscribe_sets_the_official_cover(self, session: Session, temp_settings: Path):
+        source_row = self._source_row(session)
+        series, _, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
+        assert series.cover_url == f"{mangadex.COVERS_BASE}/{MANGA_ID}/e0e1c1d1.jpg.512.jpg"
 
     def test_subscribing_twice_adds_nothing(self, session: Session, temp_settings: Path):
         source_row = self._source_row(session)
@@ -577,6 +606,19 @@ class TestSyncDeduplication:
         session.flush()
         return series
 
+    def test_books_sort_by_volume_then_chapter(self, session: Session):
+        """Chapter 1 bestaat in elk deel; zonder sort_volume komen die naast
+        elkaar te staan in de volgorde waarin de bron ze toevallig teruggaf."""
+        series = self._series(session)
+        chapters = [
+            ChapterInfo(ref="a", number="1", volume="10", title=None, language="en"),
+            ChapterInfo(ref="b", number="1", volume="2", title=None, language="en"),
+            ChapterInfo(ref="c", number="2", volume="2", title=None, language="en"),
+        ]
+        source_service.sync_chapters(session, series, chapters)
+        volgorde = [(book.volume, book.number) for book in series.books]
+        assert volgorde == [("2", "1"), ("2", "2"), ("10", "1")]
+
     def test_duplicates_never_become_books(self, session: Session):
         series = self._series(session)
         chapters = [
@@ -746,6 +788,78 @@ class TestSafeName:
         assert len(source_service.safe_name("x" * 500)) <= 120
 
 
+class TestAttachCover:
+    """Een lokale serie (zelf gescand) een omslag van een bron geven, zonder
+    er een abonnement van te maken."""
+
+    def test_sets_the_cover_on_an_existing_local_series(self, session: Session):
+        series = Series(title="Lokaal", sort_title="lokaal")
+        session.add(series)
+        session.flush()
+
+        source_service.attach_cover(series, make_source(), MANGA_ID)
+        assert series.cover_url == f"{mangadex.COVERS_BASE}/{MANGA_ID}/e0e1c1d1.jpg.512.jpg"
+        # Blijft lokaal: geen abonnement, geen bron-referentie erbij.
+        assert series.source_id is None
+        assert series.source_ref is None
+
+    def test_raises_clearly_when_the_bron_has_no_cover(self, session: Session):
+        series = Series(title="Lokaal", sort_title="lokaal")
+        session.add(series)
+        session.flush()
+        payload = {**MANGA_PAYLOAD, "relationships": []}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"result": "ok", "data": payload})
+
+        with pytest.raises(SourceError):
+            source_service.attach_cover(series, make_source(handler), MANGA_ID)
+
+
+class TestSeriesCoverApi:
+    def test_attach_cover_persists_on_the_series(
+        self, client, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
+            "id"
+        ]
+        series = Series(title="Lokaal", sort_title="lokaal")
+        session.add(series)
+        session.commit()
+
+        response = client.post(
+            f"/api/series/{series.id}/cover", json={"source_id": source_id, "ref": MANGA_ID}
+        )
+        assert response.status_code == 200
+        assert response.json()["has_cover_url"] is True
+        assert client.get("/api/sources/types").status_code == 200  # bron blijft werken
+
+    def test_get_cover_is_404_without_one(self, client, session: Session):
+        series = Series(title="Zonder omslag", sort_title="zonder omslag")
+        session.add(series)
+        session.commit()
+        assert client.get(f"/api/series/{series.id}/cover").status_code == 404
+
+    def test_get_cover_serves_the_official_image(
+        self, client, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        def fake_get(url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(200, content=_png(), request=httpx.Request("GET", url))
+
+        monkeypatch.setattr("bookpal.images.pipeline.httpx.get", fake_get)
+
+        series = Series(
+            title="Met omslag", sort_title="met omslag", cover_url="https://example.test/c.jpg"
+        )
+        session.add(series)
+        session.commit()
+
+        response = client.get(f"/api/series/{series.id}/cover", params={"profile": "thumb"})
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "image/webp"
+
+
 class TestSourcesApi:
     def test_types_lists_what_this_build_knows(self, client):
         assert "mangadex" in client.get("/api/sources/types").json()
@@ -761,6 +875,16 @@ class TestSourcesApi:
 
     def test_search_on_unknown_source_is_404(self, client):
         assert client.get("/api/sources/999/search", params={"q": "x"}).status_code == 404
+
+    def test_search_includes_the_cover_for_the_picker(
+        self, client, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
+            "id"
+        ]
+        hits = client.get(f"/api/sources/{source_id}/search", params={"q": "x"}).json()
+        assert hits[0]["cover_url"] == f"{mangadex.COVERS_BASE}/{MANGA_ID}/e0e1c1d1.jpg.512.jpg"
 
     def test_download_on_a_local_book_is_refused(self, scanned):
         book_id = scanned.get("/api/books").json()["items"][0]["id"]

@@ -89,6 +89,11 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  attachCover: (id: number, body: { source_id: number; ref: string }) =>
+    request<Series>(`/api/series/${id}/cover`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   book: (id: number) => request<BookDetail>(`/api/books/${id}`),
 
@@ -174,6 +179,9 @@ export const api = {
 export const imageUrl = {
   cover: (bookId: number, profile = "cover") =>
     `/api/books/${bookId}/cover${queryString({ profile })}`,
+  /** De officiële omslag van een bron — alleen zinvol als has_cover_url. */
+  seriesCover: (seriesId: number, profile = "cover") =>
+    `/api/series/${seriesId}/cover${queryString({ profile })}`,
   page: (bookId: number, index: number, profile: string) =>
     `/api/books/${bookId}/pages/${index}${queryString({ profile })}`,
   file: (bookId: number) => `/api/books/${bookId}/file`,

@@ -86,6 +86,8 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
         session.flush()
 
     series.summary = result.description or series.summary
+    if result.cover_url:
+        series.cover_url = result.cover_url
     if result.tracker_ids:
         # Let op de `or {}`: column-defaults vullen pas bij het flushen, dus op
         # een net aangemaakte serie staat hier nog None.
@@ -245,6 +247,7 @@ def sync_chapters(
                 number=chapter.number,
                 volume=chapter.volume,
                 sort_number=_sort_number(chapter.number),
+                sort_volume=_sort_number(chapter.volume),
                 page_count=chapter.page_count,
                 # Manga leest van rechts naar links; dat is bij een
                 # manga-bron de juiste aanname.
@@ -274,6 +277,22 @@ def _sort_number(number: str | None) -> float:
         return float(number) if number is not None else 0.0
     except ValueError:
         return 0.0
+
+
+def attach_cover(series: Series, implementation: SourceImpl, ref: str) -> Series:
+    """Koppel de officiële omslag van een bron aan een bestaande, lokale serie.
+
+    Bewust geen ``upsert_series``: die zoekt en maakt series op
+    ``(source_id, source_ref)``, en een lokale serie heeft dat paar niet — die
+    zou dan een tweede, lege serie krijgen in plaats van zijn eigen omslag.
+    Dit raakt daarom uitsluitend ``cover_url``; de serie blijft "lokaal", er
+    komt geen abonnement of bron-referentie bij.
+    """
+    detail = implementation.detail(ref)
+    if not detail.cover_url:
+        raise SourceError(f"{detail.title} heeft geen omslag bij deze bron")
+    series.cover_url = detail.cover_url
+    return series
 
 
 def subscribe(

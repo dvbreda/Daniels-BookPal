@@ -213,6 +213,7 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
     book.number = number
     book.sort_number = normalise_number(number)
     book.volume = meta.volume or parsed.volume
+    book.sort_volume = normalise_number(book.volume)
     book.page_count = page_count
     # Manga leest van rechts naar links; het ComicInfo-veld is de enige plek
     # waar dat expliciet in staat.

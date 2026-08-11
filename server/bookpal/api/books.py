@@ -48,7 +48,9 @@ def list_books(
 
     total = int(session.scalar(counter) or 0)
     books = session.scalars(
-        statement.order_by(Book.series_id, Book.sort_number).offset(offset).limit(limit)
+        statement.order_by(Book.series_id, Book.sort_volume, Book.sort_number)
+        .offset(offset)
+        .limit(limit)
     ).all()
 
     user = current_user(session)

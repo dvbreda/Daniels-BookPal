@@ -3,11 +3,13 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
+import httpx
 import pytest
 from PIL import Image
 
 from bookpal.config import settings
 from bookpal.formats import open_book
+from bookpal.formats.base import UnsupportedOperation
 from bookpal.images import (
     cache_size_bytes,
     get_profile,
@@ -16,6 +18,7 @@ from bookpal.images import (
     prune_cache,
     render_cover,
     render_page,
+    render_remote_cover,
     source_id_for,
     to_eink_gray,
 )
@@ -151,6 +154,85 @@ class TestRendering:
         with open_book(path) as book:
             rendered = render_page(book, 0, profile, source_id=source_id_for(path))
         assert open_bytes(rendered.data).width == pytest.approx(300, abs=2)
+
+
+class TestRemoteCover:
+    """De omslag van een bron (M5/M7) — 'pagina 1' is bij scanlaties vaak een
+    credits-pagina van de vertaalgroep, dus dit gaat via dezelfde pipeline als
+    elke andere afbeelding, maar met een URL in plaats van een lokaal bestand."""
+
+    def _stub_get(self, monkeypatch: pytest.MonkeyPatch, calls: list[str]) -> None:
+        def fake_get(url: str, **kwargs: object) -> httpx.Response:
+            calls.append(url)
+            # raise_for_status() eist een request-object; een productie-
+            # httpx.get() heeft dat altijd, deze losse Response niet vanzelf.
+            return httpx.Response(200, content=page_png(0), request=httpx.Request("GET", url))
+
+        monkeypatch.setattr("bookpal.images.pipeline.httpx.get", fake_get)
+
+    def test_fetches_and_processes_through_the_normal_pipeline(
+        self, temp_settings: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        calls: list[str] = []
+        self._stub_get(monkeypatch, calls)
+
+        rendered = render_remote_cover(
+            "https://uploads.mangadex.org/covers/x/y.jpg",
+            get_profile("thumb"),
+            source_id="series-cover:1:https://uploads.mangadex.org/covers/x/y.jpg",
+        )
+        assert calls == ["https://uploads.mangadex.org/covers/x/y.jpg"]
+        assert rendered.from_cache is False
+        assert open_bytes(rendered.data).width <= 320
+
+    def test_second_call_is_a_cache_hit_and_skips_the_network(
+        self, temp_settings: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        calls: list[str] = []
+        self._stub_get(monkeypatch, calls)
+        profile = get_profile("thumb")
+
+        render_remote_cover("https://example.test/cover.jpg", profile, source_id="s:1:url")
+        again = render_remote_cover("https://example.test/cover.jpg", profile, source_id="s:1:url")
+
+        assert len(calls) == 1
+        assert again.from_cache is True
+
+    def test_a_changed_cover_url_gets_its_own_cache_entry(
+        self, temp_settings: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """De cache-sleutel bevat de URL zelf: als de bron een nieuwe omslag
+        levert, mag de oude niet blijven hangen."""
+        calls: list[str] = []
+        self._stub_get(monkeypatch, calls)
+        profile = get_profile("thumb")
+
+        render_remote_cover("https://example.test/oud.jpg", profile, source_id="s:1:oud")
+        render_remote_cover("https://example.test/nieuw.jpg", profile, source_id="s:1:nieuw")
+
+        assert len(calls) == 2
+
+    def test_a_network_error_is_reported_clearly(
+        self, temp_settings: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        def fake_get(url: str, **kwargs: object) -> httpx.Response:
+            raise httpx.ConnectError("geen verbinding")
+
+        monkeypatch.setattr("bookpal.images.pipeline.httpx.get", fake_get)
+
+        with pytest.raises(UnsupportedOperation):
+            render_remote_cover("https://example.test/x.jpg", get_profile("thumb"), source_id="s")
+
+    def test_a_4xx_response_is_reported_clearly(
+        self, temp_settings: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        def fake_get(url: str, **kwargs: object) -> httpx.Response:
+            return httpx.Response(404, content=b"niet gevonden", request=httpx.Request("GET", url))
+
+        monkeypatch.setattr("bookpal.images.pipeline.httpx.get", fake_get)
+
+        with pytest.raises(UnsupportedOperation):
+            render_remote_cover("https://example.test/x.jpg", get_profile("thumb"), source_id="s")
 
 
 class TestCachePruning:

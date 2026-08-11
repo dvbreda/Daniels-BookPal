@@ -124,7 +124,10 @@ def lite_series(
     rows = []
     for book in books:
         prog = progress.get(book.id)
-        label = book.title if not book.number else f"{book.number} — {book.title}"
+        # Zonder het deel is de volgorde niet te volgen zodra hoofdstukken
+        # per deel opnieuw beginnen te tellen (elk deel heeft een "1").
+        prefix = f"{book.volume}.{book.number}" if book.volume else book.number
+        label = book.title if not prefix else f"{prefix} — {book.title}"
         meta = ""
         if prog is not None:
             state = "uitgelezen" if prog.finished else f"{prog.percent:.0f}%"

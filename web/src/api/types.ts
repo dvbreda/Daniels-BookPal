@@ -70,6 +70,8 @@ export interface Series {
   kinds: BookKind[];
   /** Gevolgd bij een bron; kan hoofdstukken hebben zonder lokaal bestand. */
   from_source: boolean;
+  /** Heeft deze serie een omslag van een bron (in plaats van "pagina 1")? */
+  has_cover_url: boolean;
 }
 
 export interface SeriesDetail extends Series {
@@ -191,6 +193,9 @@ export interface SearchHit {
   tracker_ids: Record<string, string>;
   /** Gevuld als je deze serie al volgt. */
   subscribed_series_id: number | null;
+  /** Rechtstreeks tonen als miniatuur; alleen na koppelen gaat hij door onze
+   * eigen cache (zie SourceBadge/imageUrl.seriesCover). */
+  cover_url: string | null;
 }
 
 export type SubscriptionPolicy = "permanent" | "readahead";

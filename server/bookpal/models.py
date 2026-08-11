@@ -182,6 +182,16 @@ class Series(Base):
     publisher: Mapped[str | None] = mapped_column(String(200), default=None)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     summary: Mapped[str | None] = mapped_column(Text, default=None)
+    # M7: elke format-parser levert dit al (ComicInfo, epub-OPF, pdf-metadata),
+    # maar niets bewaarde het — nodig voor de titel+auteur-matching die
+    # Goodreads' CSV-import gebruikt.
+    authors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # De officiële omslag van een bron, als afwijkend beter is dan "pagina 1
+    # van het eerste boek". Bij scanlaties is die pagina vaak een
+    # credits-pagina van de vertaalgroep over de echte cover heen, dus de
+    # schone versie van de bron is dan de betere keuze. Werkt zowel voor een
+    # abonnement als voor een lokale serie die je handmatig koppelt.
+    cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
     # M5: waar deze serie vandaan komt als hij geabonneerd is.
     source_id: Mapped[int | None] = mapped_column(
@@ -195,7 +205,9 @@ class Series(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     books: Mapped[list[Book]] = relationship(
-        back_populates="series", cascade="all, delete-orphan", order_by="Book.sort_number"
+        back_populates="series",
+        cascade="all, delete-orphan",
+        order_by="Book.sort_volume, Book.sort_number",
     )
 
     __table_args__ = (UniqueConstraint("library_root_id", "title", name="uq_series_root_title"),)
@@ -222,6 +234,11 @@ class Book(Base):
     # Genormaliseerd voor sorteren: "10.5" -> 10.5, ontbrekend -> heel groot.
     sort_number: Mapped[float] = mapped_column(Float, default=0.0)
     volume: Mapped[str | None] = mapped_column(String(40), default=None)
+    # Zonder dit sorteert een reeks puur op hoofdstuknummer, en dat nummer telt
+    # meestal opnieuw per deel: hoofdstuk 1 van deel 1, deel 2, deel 10 komen
+    # dan allemaal naast elkaar te staan in scan-volgorde in plaats van
+    # leesvolgorde. Eerst op deel, dan pas op hoofdstuk.
+    sort_volume: Mapped[float] = mapped_column(Float, default=0.0)
 
     page_count: Mapped[int | None] = mapped_column(Integer, default=None)
     right_to_left: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -246,7 +263,9 @@ class Book(Base):
         back_populates="book", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_book_series_sort", "series_id", "sort_number"),)
+    __table_args__ = (
+        Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),
+    )
 
 
 class User(Base):
