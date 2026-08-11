@@ -39,7 +39,12 @@ class SearchResult:
 
 @dataclass(frozen=True, slots=True)
 class ChapterInfo:
-    """Eén hoofdstuk bij een serie."""
+    """Eén hoofdstuk bij een serie.
+
+    Let op ``group_id``: dezelfde aflevering kan meerdere keren voorkomen,
+    vertaald door verschillende groepen. Wie dat vertaald heeft is het enige
+    bruikbare onderscheid — nummer, volume en paginatelling zijn dan gelijk.
+    """
 
     ref: str
     number: str | None
@@ -48,6 +53,8 @@ class ChapterInfo:
     language: str
     page_count: int | None = None
     published_at: str | None = None
+    group_id: str | None = None
+    group_name: str | None = None
 
 
 class Source(ABC):

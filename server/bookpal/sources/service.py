@@ -24,6 +24,7 @@ from bookpal.models import (
     BookKind,
     File,
     LibraryRoot,
+    Progress,
     Series,
     Source,
     Subscription,
@@ -108,6 +109,47 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
     return series
 
 
+def pick_best_chapters(chapters: list[ChapterInfo]) -> list[ChapterInfo]:
+    """Bij dubbele afleveringen er één kiezen.
+
+    Een bron kan dezelfde aflevering meerdere keren hebben, vertaald door
+    verschillende groepen — Oishinbo heeft 276 van zulke paren, met identiek
+    volume, nummer én paginatelling. Nummer of omvang helpt dus niet; wie het
+    vertaald heeft wel.
+
+    De keuze valt op **consistentie**: de groep die het grootste deel van de
+    reeks heeft gedaan wint overal. Je leest dan één vertaling in plaats van
+    een mengelmoes van stijl en naamgeving, en alleen waar die groep niets
+    heeft val je terug op een andere. Bij gelijke stand wint de nieuwste
+    upload, en anders de laagste ref — zodat een tweede ronde dezelfde keuze
+    maakt en er niets gaat wisselen.
+    """
+    per_group: dict[str | None, int] = {}
+    for chapter in chapters:
+        per_group[chapter.group_id] = per_group.get(chapter.group_id, 0) + 1
+
+    def is_better(candidate: ChapterInfo, current: ChapterInfo) -> bool:
+        candidate_group = per_group.get(candidate.group_id, 0)
+        current_group = per_group.get(current.group_id, 0)
+        if candidate_group != current_group:
+            return candidate_group > current_group
+        if (candidate.published_at or "") != (current.published_at or ""):
+            return (candidate.published_at or "") > (current.published_at or "")
+        # Laatste redmiddel: een vaste volgorde, zodat een tweede ronde
+        # dezelfde keuze maakt en er niets omwisselt.
+        return candidate.ref < current.ref
+
+    best: dict[tuple[str | None, str | None], ChapterInfo] = {}
+    for chapter in chapters:
+        key = (chapter.volume, chapter.number)
+        current = best.get(key)
+        if current is None or is_better(chapter, current):
+            best[key] = chapter
+
+    chosen = set(best.values())
+    return [chapter for chapter in chapters if chapter in chosen]
+
+
 def sync_chapters(
     session: Session, series: Series, chapters: list[ChapterInfo]
 ) -> tuple[int, int]:
@@ -115,12 +157,33 @@ def sync_chapters(
 
     Geeft (nieuw, ongewijzigd) terug. Bestaande boeken worden niet aangeraakt,
     ook niet als ze inmiddels een bestand hebben.
+
+    Dubbele afleveringen zijn er al uit voordat er iets wordt aangemaakt; zie
+    ``pick_best_chapters``. Eerder aangemaakte dubbelen worden opgeruimd, maar
+    alleen als ze niets kosten: een aflevering die al is opgehaald of waarin
+    gelezen is, blijft staan. Anders zou een verandering in de bron zomaar iets
+    weghalen wat je al had.
     """
+    chapters = pick_best_chapters(chapters)
+    keep = {chapter.ref for chapter in chapters}
+
     existing = {
         book.source_ref: book
         for book in session.scalars(select(Book).where(Book.series_id == series.id))
         if book.source_ref
     }
+
+    for ref, book in list(existing.items()):
+        if ref in keep or book.file_id is not None:
+            continue
+        has_progress = session.scalar(
+            select(Progress.id).where(Progress.book_id == book.id).limit(1)
+        )
+        if has_progress:
+            continue
+        session.delete(book)
+        del existing[ref]
+
     added = 0
     for chapter in chapters:
         if chapter.ref in existing:

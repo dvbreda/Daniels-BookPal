@@ -18,14 +18,17 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.models import (
     Book,
+    BookKind,
     File,
     OriginRegion,
     OriginSource,
+    Progress,
+    Series,
     Source,
     SubscriptionPolicy,
     utcnow,
 )
-from bookpal.sources import RateLimiter, SourceError
+from bookpal.sources import ChapterInfo, RateLimiter, SourceError
 from bookpal.sources import service as source_service
 from bookpal.sources.mangadex import MangaDexSource
 
@@ -418,6 +421,183 @@ class TestServiceLayer:
         file_row = session.get(File, book.file_id)
         assert file_row is not None
         assert str(settings.download_dir.resolve()) in file_row.path
+
+
+class TestPickBestChapters:
+    """Dezelfde aflevering kan meerdere keren voorkomen, vertaald door
+    verschillende groepen. Nummer, volume en paginatelling zijn dan gelijk."""
+
+    def _chapter(self, ref: str, number: str, group: str, **extra) -> ChapterInfo:
+        return ChapterInfo(
+            ref=ref,
+            number=number,
+            volume="1",
+            title=f"Deel {number}",
+            language="en",
+            group_id=group,
+            **extra,
+        )
+
+    def test_without_duplicates_nothing_changes(self):
+        chapters = [
+            self._chapter("a", "1", "groep-x"),
+            self._chapter("b", "2", "groep-x"),
+        ]
+        assert source_service.pick_best_chapters(chapters) == chapters
+
+    def test_the_group_that_did_the_most_wins(self):
+        """Consistentie: liever één vertaling dan een mengelmoes."""
+        chapters = [
+            self._chapter("a1", "1", "vlijtig"),
+            self._chapter("b1", "1", "eenmalig"),
+            self._chapter("a2", "2", "vlijtig"),
+            self._chapter("a3", "3", "vlijtig"),
+        ]
+        gekozen = source_service.pick_best_chapters(chapters)
+        assert [c.ref for c in gekozen] == ["a1", "a2", "a3"]
+
+    def test_falls_back_where_the_main_group_has_nothing(self):
+        chapters = [
+            self._chapter("a1", "1", "vlijtig"),
+            self._chapter("a2", "2", "vlijtig"),
+            self._chapter("b3", "3", "eenmalig"),
+        ]
+        gekozen = source_service.pick_best_chapters(chapters)
+        assert [c.ref for c in gekozen] == ["a1", "a2", "b3"]
+
+    def test_newest_upload_breaks_a_tie(self):
+        chapters = [
+            self._chapter("oud", "1", "groep-a", published_at="2020-01-01T00:00:00+00:00"),
+            self._chapter("nieuw", "1", "groep-b", published_at="2024-01-01T00:00:00+00:00"),
+        ]
+        assert [c.ref for c in source_service.pick_best_chapters(chapters)] == ["nieuw"]
+
+    def test_the_choice_is_stable(self):
+        """Een tweede ronde mag niet ineens de andere kiezen; dan zou een
+        download telkens verspringen."""
+        chapters = [
+            self._chapter("zzz", "1", "groep-a"),
+            self._chapter("aaa", "1", "groep-b"),
+        ]
+        eerste = source_service.pick_best_chapters(chapters)
+        tweede = source_service.pick_best_chapters(list(reversed(chapters)))
+        assert [c.ref for c in eerste] == [c.ref for c in tweede]
+
+    def test_volume_is_part_of_the_identity(self):
+        """Hoofdstuk 1 van deel 1 is niet hetzelfde als hoofdstuk 1 van deel 2."""
+        chapters = [
+            ChapterInfo(ref="a", number="1", volume="1", title=None, language="en"),
+            ChapterInfo(ref="b", number="1", volume="2", title=None, language="en"),
+        ]
+        assert len(source_service.pick_best_chapters(chapters)) == 2
+
+
+class TestSyncDeduplication:
+    def _series(self, session: Session) -> Series:
+        series = Series(title="Reeks", sort_title="reeks")
+        session.add(series)
+        session.flush()
+        return series
+
+    def test_duplicates_never_become_books(self, session: Session):
+        series = self._series(session)
+        chapters = [
+            ChapterInfo(ref="a", number="1", volume="1", title="A", language="en", group_id="x"),
+            ChapterInfo(ref="b", number="1", volume="1", title="B", language="en", group_id="y"),
+        ]
+        added, _ = source_service.sync_chapters(session, series, chapters)
+        assert added == 1
+
+    def test_an_earlier_duplicate_is_cleaned_up(self, session: Session):
+        series = self._series(session)
+        beide = [
+            ChapterInfo(ref="a", number="1", volume="1", title="A", language="en", group_id="x"),
+            ChapterInfo(ref="b", number="1", volume="1", title="B", language="en", group_id="y"),
+        ]
+        # Doe alsof een eerdere versie ze allebei had aangemaakt.
+        for chapter in beide:
+            session.add(
+                Book(
+                    series_id=series.id,
+                    kind=BookKind.COMIC,
+                    title=chapter.title or "",
+                    number=chapter.number,
+                    volume=chapter.volume,
+                    source_ref=chapter.ref,
+                )
+            )
+        session.flush()
+
+        source_service.sync_chapters(session, series, beide)
+        overgebleven = session.query(Book).filter_by(series_id=series.id).all()
+        assert len(overgebleven) == 1
+
+    def test_a_downloaded_duplicate_is_kept(self, session: Session, temp_settings: Path):
+        """Opruimen mag nooit iets weghalen wat je al hebt staan."""
+        from bookpal.models import LibraryRoot
+
+        series = self._series(session)
+        root = LibraryRoot(name="R", path="/tmp/r-dedupe")
+        session.add(root)
+        session.flush()
+        file_row = File(
+            library_root_id=root.id, path="/tmp/r-dedupe/a.cbz", size=1, mtime=0.0, extension=".cbz"
+        )
+        session.add(file_row)
+        session.flush()
+
+        verliezer = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Verliezer",
+            number="1",
+            volume="1",
+            source_ref="verliezer",
+            file_id=file_row.id,
+        )
+        session.add(verliezer)
+        session.flush()
+
+        source_service.sync_chapters(
+            session,
+            series,
+            [
+                ChapterInfo(
+                    ref="winnaar", number="1", volume="1", title="W", language="en", group_id="x"
+                )
+            ],
+        )
+        assert session.get(Book, verliezer.id) is not None
+
+    def test_a_duplicate_you_started_reading_is_kept(self, session: Session):
+        from bookpal.db import current_user
+
+        series = self._series(session)
+        gelezen = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Gelezen",
+            number="1",
+            volume="1",
+            source_ref="gelezen",
+        )
+        session.add(gelezen)
+        session.flush()
+        session.add(
+            Progress(user_id=current_user(session).id, book_id=gelezen.id, percent=30.0)
+        )
+        session.flush()
+
+        source_service.sync_chapters(
+            session,
+            series,
+            [
+                ChapterInfo(
+                    ref="winnaar", number="1", volume="1", title="W", language="en", group_id="x"
+                )
+            ],
+        )
+        assert session.get(Book, gelezen.id) is not None
 
 
 class TestChapterPath:

@@ -69,6 +69,15 @@ def _to_result(item: dict[str, Any]) -> SearchResult:
     )
 
 
+def _scanlation_group(item: dict[str, Any]) -> tuple[str | None, str | None]:
+    """Wie heeft dit hoofdstuk vertaald? Bepaalt bij dubbelen welke wint."""
+    for relation in item.get("relationships") or []:
+        if relation.get("type") == "scanlation_group":
+            attributes = relation.get("attributes") or {}
+            return str(relation.get("id")), attributes.get("name")
+    return None, None
+
+
 def _chapter_sort_key(chapter: ChapterInfo) -> tuple[float, float]:
     def as_number(value: str | None) -> float:
         try:
@@ -140,6 +149,9 @@ class MangaDexSource(Source):
                     "offset": offset,
                     "order[volume]": "asc",
                     "order[chapter]": "asc",
+                    # Nodig om dubbele afleveringen te kunnen wegen: zonder dit
+                    # geeft de feed alleen het id van de vertaalgroep.
+                    "includes[]": "scanlation_group",
                 },
             )
             batch = payload.get("data", [])
@@ -149,6 +161,7 @@ class MangaDexSource(Source):
                 # we niet ophalen, dus tonen we ze ook niet als beschikbaar.
                 if attributes.get("externalUrl") or attributes.get("isUnavailable"):
                     continue
+                group_id, group_name = _scanlation_group(item)
                 found.append(
                     ChapterInfo(
                         ref=str(item["id"]),
@@ -158,6 +171,8 @@ class MangaDexSource(Source):
                         language=attributes.get("translatedLanguage", language),
                         page_count=attributes.get("pages"),
                         published_at=attributes.get("publishAt"),
+                        group_id=group_id,
+                        group_name=group_name,
                     )
                 )
             total = int(payload.get("total", 0))
