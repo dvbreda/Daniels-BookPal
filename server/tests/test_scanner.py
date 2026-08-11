@@ -221,6 +221,39 @@ class TestSeriesGrouping:
         assert series is not None
         assert [book.number for book in series.books] == ["1", "2", "10"]
 
+    def test_a_folder_holds_one_series_even_with_messy_filenames(
+        self, session: Session, library_root: Path
+    ):
+        """De echte vorm waar dit op stukliep: de serietitel staat achteraan,
+        achter de hoofdstuktitel. Ontleden van de naam maakt er dan van elk
+        hoofdstuk een eigen reeks; de map weet het beter."""
+        folder = library_root / "Crayon Shin-Chan"
+        for stem in (
+            "Vol.15 Ch.005.002 - Part 002 - Complicated Cases! - Crayon Shin-chan",
+            "Vol.15 Ch.005.003 - Part 003 - Complicated Cases! - Crayon Shin-chan",
+            "Vol.16 Ch.006.001 - Part 001 - A Love Letter - Crayon Shin-chan",
+        ):
+            make_cbz(folder / f"{stem}.cbz", pages=1)
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalars(select(Series)).all()
+        assert len(series) == 1
+        assert series[0].title == "Crayon Shin-Chan"
+        assert len(series[0].books) == 3
+
+    def test_comicinfo_still_wins_over_the_folder(self, session: Session, library_root: Path):
+        make_cbz(
+            library_root / "Verkeerde Mapnaam" / "deel 1.cbz",
+            pages=1,
+            comicinfo=comicinfo_xml(series="De Echte Reeks", number="1"),
+        )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.title == "De Echte Reeks"
+
     def test_folder_becomes_series_as_last_resort(self, session: Session, library_root: Path):
         make_cbz(library_root / "Een Map" / "losse naam zonder nummer.cbz", pages=1)
         root = make_root(session, library_root)

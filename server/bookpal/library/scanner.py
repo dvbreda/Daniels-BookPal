@@ -80,15 +80,42 @@ def iter_book_files(root_path: Path) -> list[Path]:
     return found
 
 
-def _series_title(meta: BookMetadata, path: Path, root_path: Path) -> str:
+def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKind) -> str:
+    """De serie waar dit bestand bij hoort, van sterk naar zwak signaal.
+
+    Expliciete metadata wint altijd. Daarna loopt het uiteen per soort, en dat
+    verschil is wezenlijk:
+
+    * **Strips** — een eigen submap betekent een serie. Wie zijn bestanden in
+      ``Crayon Shin-Chan/`` zet, zegt daarmee dat het één reeks is; hetzelfde
+      uitgangspunt als Komga en Kavita. De bestandsnaam is hier het zwakste
+      signaal, want de titel staat er lang niet altijd vooraan:
+      ``Vol.15 Ch.005.002 - Part 002 - ... - Crayon Shin-chan.cbz`` levert bij
+      ontleden per hoofdstuk een eigen "serie" op, en één map wordt tachtig
+      reeksen.
+    * **Boeken** — een map is daar juist meestal een categorie ("boeken",
+      "sci-fi") en niet een reeks. Een epub of pdf is in zijn eentje een boek,
+      dus de eigen titel gaat vóór de map.
+    """
     if meta.series:
         return meta.series.strip()
+
+    parent = path.parent
+    in_subfolder = parent != root_path
+
+    if kind is BookKind.COMIC:
+        if in_subfolder:
+            return parent.name
+        parsed = parse_filename(path.stem)
+        return parsed.series or path.stem
+
+    # Boeken: eigen titel eerst, map als laatste redmiddel.
+    if meta.title:
+        return meta.title.strip()
     parsed = parse_filename(path.stem)
     if parsed.series:
         return parsed.series
-    # Laatste redmiddel: de map waar het bestand in zit, tenzij dat de root zelf is.
-    parent = path.parent
-    if parent != root_path:
+    if in_subfolder:
         return parent.name
     return path.stem
 
@@ -150,7 +177,7 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
 
     parsed = parse_filename(path.stem)
     root_path = Path(root.path)
-    series_title = _series_title(meta, path, root_path)
+    series_title = _series_title(meta, path, root_path, FORMAT_KINDS[fmt])
     folder = path.parent.relative_to(root_path) if path.parent != root_path else None
     series = _get_or_create_series(session, root, series_title, folder)
 
