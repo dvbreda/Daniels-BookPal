@@ -18,23 +18,46 @@ from PIL import Image, ImageDraw, ImageFont
 
 from bookpal.translate.base import Bubble
 
-# Marge rondom een tekstvlak, als fractie van de paginabreedte. Het model komt
-# soms een paar pixels tekort aan de onderkant; zonder deze marge piept er een
-# streepje van de oorspronkelijke tekst onderuit.
-_PADDING = 0.004
+# Kleine marge bovenop wat het model al zelf teruggeeft — de prompt vraagt
+# het model inmiddels om ruim te meten, dus dit hoeft alleen de laatste paar
+# pixels op te vangen, niet het hele werk te doen. Te veel hier stapelt op
+# de marge die het model al toepast en maakt elk vlak nodeloos een sticker.
+_PADDING = 0.006
 
 _MIN_FONT = 9
 _MAX_FONT = 40
 
-# DejaVu zit in Pillow's wheel, dus dit werkt zonder extra systeempakket.
-_FONT_CANDIDATES = (
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-)
+# Gemini kan geen font namaken — glyphs tekenen kan het niet — maar het ziet
+# wel of iets vet of cursief staat, en dat verdient een echt stripfont in
+# plaats van een systeemlettertype. Comic Neue (SIL OFL 1.1) is een vrij te
+# herdistribueren remake van Comic Sans; DejaVu is het vangnet als het pakket
+# een keer ontbreekt (bijv. buiten de Docker-image).
+_FONT_CANDIDATES: dict[tuple[bool, bool], tuple[str, ...]] = {
+    (False, False): (
+        "/usr/share/fonts/opentype/comic-neue/ComicNeue-Regular.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ),
+    (True, False): (
+        "/usr/share/fonts/opentype/comic-neue/ComicNeue-Bold.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ),
+    (False, True): (
+        "/usr/share/fonts/opentype/comic-neue/ComicNeue-Italic.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Oblique.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    ),
+    (True, True): (
+        "/usr/share/fonts/opentype/comic-neue/ComicNeue-BoldItalic.otf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-BoldOblique.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    ),
+}
 
 
-def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for candidate in _FONT_CANDIDATES:
+def _load_font(
+    size: int, *, bold: bool = False, italic: bool = False
+) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    for candidate in _FONT_CANDIDATES[(bold, italic)]:
         try:
             return ImageFont.truetype(candidate, size)
         except OSError:
@@ -106,7 +129,13 @@ def _break_long(
 
 
 def _fit(
-    draw: ImageDraw.ImageDraw, text: str, box_w: float, box_h: float
+    draw: ImageDraw.ImageDraw,
+    text: str,
+    box_w: float,
+    box_h: float,
+    *,
+    bold: bool = False,
+    italic: bool = False,
 ) -> tuple[ImageFont.FreeTypeFont | ImageFont.ImageFont, list[str], float]:
     """Zoek de grootste lettergrootte waarop de tekst nog in het vlak past.
 
@@ -120,7 +149,7 @@ def _fit(
     """
     for hard_break in (False, True):
         for size in range(_MAX_FONT, _MIN_FONT - 1, -1):
-            font = _load_font(size)
+            font = _load_font(size, bold=bold, italic=italic)
             lines = _wrap(draw, text, font, box_w, hard_break=hard_break)
             if not lines:
                 continue
@@ -135,7 +164,7 @@ def _fit(
                 continue
             return font, lines, line_height
 
-    font = _load_font(_MIN_FONT)
+    font = _load_font(_MIN_FONT, bold=bold, italic=italic)
     return font, _wrap(draw, text, font, box_w, hard_break=True), _MIN_FONT * 1.2
 
 
@@ -181,7 +210,13 @@ def _draw_onto(
 
         draw.rectangle((x0, y0, x1, y1), fill=white, outline=black, width=1)
 
-        font, lines, line_height = _fit(draw, bubble.translation, x1 - x0 - 4, y1 - y0 - 4)
+        # Striplettering staat traditioneel in kapitalen; een vertaling in
+        # onderkast daartussen valt meteen op als "ingeplakt". We vragen dit
+        # niet aan het model — het staat al in de brontekst.
+        text = bubble.translation.upper() if bubble.upper else bubble.translation
+        font, lines, line_height = _fit(
+            draw, text, x1 - x0 - 4, y1 - y0 - 4, bold=bubble.bold, italic=bubble.italic
+        )
         text_height = len(lines) * line_height
         cursor = y0 + max(2.0, (y1 - y0 - text_height) / 2)
         for line in lines:

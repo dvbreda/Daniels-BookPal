@@ -60,16 +60,25 @@ Vind ELK tekstvlak: tekstballonnen, gedachteballonnen, bijschriften en
 geluidseffecten. Sla tekst die in de tekening zelf hoort over (winkelborden op
 de achtergrond, logo's), tenzij die duidelijk verhaal draagt.
 
-box_2d moet ALLE regels van het tekstvlak omsluiten, van de bovenkant van de
-eerste regel tot de ONDERKANT van de laatste regel, en van de linkerrand van de
-breedste regel tot de rechterrand daarvan. Neem liever iets te veel mee dan te
-weinig: een afgekapte laatste regel is een fout.
+box_2d moet ALLE regels van het tekstvlak RUIM omsluiten, van boven de eerste
+regel tot ONDER de laatste regel, en van links van de breedste regel tot
+rechts daarvan. Reken met een marge van een paar procent van de paginamaat
+aan elke kant: een doos die net te klein is en een restje brontekst laat
+staan, is een grotere fout dan een doos die iets te ruim is.
 
 Geef per vlak:
 - box_2d: [ymin, xmin, ymax, xmax], genormaliseerd naar 0-1000
 - source: de tekst exact zoals hij er staat, op één regel
 - translation: de vertaling naar {language}, in dezelfde toon en registers
 - kind: "speech" | "thought" | "caption" of "sfx"
+- bold: true als (een deel van) de brontekst duidelijk dikker/zwaarder staat
+  dan de rest van diezelfde ballon — een nadruk binnen een zin, of een
+  uitroep. Niet zomaar aanzetten omdat het lettertype al vet oogt: het gaat
+  om een contrast BINNEN de pagina, niet om de stijl van het lettertype zelf.
+- italic: true als de tekst duidelijk schuin staat ten opzichte van de rest
+  van de lettering op deze pagina — een terzijde, een gedachte, een woord in
+  een vreemde taal. Niet aanzetten voor gewone striplettering die toevallig
+  wat handgeschreven of golvend oogt: dat is de norm, geen uitzondering.
 
 Vertaal met de hele pagina als context, niet elke ballon los: een losse ballon
 is vaak de tweede helft van een zin die in de vorige begon.
@@ -116,6 +125,8 @@ def _to_bubble(item: dict[str, Any]) -> Bubble | None:
         source=str(item.get("source") or "").strip(),
         translation=translation,
         kind=kind,
+        bold=bool(item.get("bold", False)),
+        italic=bool(item.get("italic", False)),
     )
 
 

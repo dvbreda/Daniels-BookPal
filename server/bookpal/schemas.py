@@ -371,6 +371,8 @@ class BubbleOut(BaseModel):
     source: str
     translation: str
     kind: str
+    bold: bool = False
+    italic: bool = False
 
 
 class PageTranslationOut(BaseModel):

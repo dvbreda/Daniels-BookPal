@@ -62,7 +62,10 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   om 'm aan of uit te zetten — dus ook op de Kobo, zonder JavaScript. Een
   achtergrondwachtrij loopt vooruit op je leespositie. Zet
   `BOOKPAL_GEMINI_API_KEY` om het aan te zetten — zonder sleutel blijft de knop
-  verborgen.
+  verborgen. Getekend met **Comic Neue** (vrij lettertype, geen Comic Sans) in
+  plaats van een systeemfont, en in kapitalen/vet/cursief als het origineel dat
+  ook was — Gemini kan geen font namaken, maar wel zien hoe de lettering
+  eruitziet.
 
 Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4)
 en de Kobo-app (M9/M10).

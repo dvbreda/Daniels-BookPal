@@ -60,6 +60,8 @@ def _to_out(book_id: int, page_index: int, target_lang: str, result: PageResult)
                 source=bubble.source,
                 translation=bubble.translation,
                 kind=str(bubble.kind),
+                bold=bubble.bold,
+                italic=bubble.italic,
             )
             for bubble in result.bubbles
         ],

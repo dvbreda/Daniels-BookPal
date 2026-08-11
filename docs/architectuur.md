@@ -334,6 +334,36 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
     uit elkaar kunnen gaan lopen. Het inbakken behoudt bovendien de geditherde grijswaarden — die
     naar RGB tillen zou precies het werk weggooien waar het Kobo-profiel voor bestaat.
 
+    **Lettering.** Gemini kan geen font namaken — het levert tekst, coördinaten en of het origineel
+    vet/cursief stond, geen glyphs. Beide kanten tekenen die tekst daarom met **Comic Neue** (SIL OFL
+    1.1, een vrij te herdistribueren remake van Comic Sans) in plaats van een systeemfont: de server
+    heeft het Debian-pakket `fonts-comic-neue`, de web-app dezelfde vier stijlen zelf gehost als
+    webfont (`web/src/vendor/comic-neue/`), zodat overlay en ingebakken versie er hetzelfde uitzien.
+    `Bubble.upper` zet de vertaling zelf in kapitalen als de brontekst dat ook was — striplettering
+    staat traditioneel vol in kapitalen, en een vertaling in onderkast daartussen valt op als
+    "ingeplakt". Dat vragen we niet aan het model; het staat al in de brontekst.
+
+    De prompt vraagt Gemini nu ook om `bold`/`italic` per vlak, met een expliciete waarschuwing dat
+    "italic" een écht schuine nadruk betekent en niet gewoon een golvend handlettering-lettertype —
+    zonder die waarschuwing markeerde het model bijna elke ballon als cursief. Zelfs met de
+    waarschuwing blijft dit een oordeel, geen meting: hetzelfde verzoek op dezelfde pagina gaf bij
+    herhaling een wisselende uitkomst. Bold bleef in alle metingen wel stabiel. Het effect van een
+    foutieve `italic` is bovendien mild — Comic Neue Italic blijft goed leesbaar — dus dit is
+    geaccepteerd als grens van wat een taalmodel betrouwbaar kan beoordelen aan een tekening, in
+    plaats van dat er tot in het oneindige aan de prompt gesleuteld is.
+
+    **Onderzocht en bewust niet gebouwd: Gemini de ballon zelf laten "schoonvegen" met
+    beeldgeneratie** (`gemini-2.5-flash-image`), zodat onze eigen tekst op een gepaste achtergrond
+    komt te staan in plaats van op een simpel wit vlak. Op een hele pagina werkt dit niet: het model
+    regenereert de compositie in zijn eigen canonieke resolutie, niet pixel-voor-pixel identiek —
+    getest op een echte pagina, en na terugschalen naar de oorspronkelijke afmeting stonden panelen
+    en ballonvormen meetbaar verschoven ten opzichte van de al bepaalde tekstvakken. Op een los
+    uitgeknipt ballonnetje werkt het schoonvegen zelf wél overtuigend, maar dat zou een aparte
+    beeldgeneratie-aanroep per tekstvlak vergen — bij acht vlakken op een pagina een veelvoud van de
+    tijd en kosten van de huidige aanpak. Zou dit ooit terugkomen, dan als aparte, expliciet
+    duurdere stand naast de huidige — nooit als vervanging, want de huidige aanpak is voor de meeste
+    pagina's al goed genoeg.
+
 ## Verificatie
 
 - `docker compose up` op de NAS; scan een echte root en controleer serie-groepering en covers.

@@ -248,6 +248,8 @@ export interface Bubble {
   source: string;
   translation: string;
   kind: BubbleKind;
+  bold: boolean;
+  italic: boolean;
 }
 
 export interface PageTranslation {

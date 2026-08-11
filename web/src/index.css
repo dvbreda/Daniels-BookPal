@@ -2,6 +2,38 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Zelfde stripfont als de server gebruikt om vertalingen in te bakken voor de
+ * Kobo (zie vendor/comic-neue/HERKOMST.md) — anders toont de web-overlay een
+ * systeemfont en de Kobo-versie iets heel anders. */
+@font-face {
+  font-family: "Comic Neue";
+  src: url("./vendor/comic-neue/ComicNeue-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Neue";
+  src: url("./vendor/comic-neue/ComicNeue-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Neue";
+  src: url("./vendor/comic-neue/ComicNeue-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Comic Neue";
+  src: url("./vendor/comic-neue/ComicNeue-BoldItalic.woff2") format("woff2");
+  font-weight: 700;
+  font-style: italic;
+  font-display: swap;
+}
+
 /*
  * Kleuren staan als CSS-variabelen zodat lichte en donkere modus dezelfde
  * klassen kunnen gebruiken. De alternatieven waren slechter: `dark:`-varianten

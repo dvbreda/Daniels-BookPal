@@ -47,13 +47,26 @@ export function TranslationOverlay({
   );
 }
 
+/**
+ * Stond het origineel in kapitalen? Dit vragen we niet aan het model — het
+ * staat al in de brontekst. Striplettering is traditioneel volledig in
+ * kapitalen; een vertaling in onderkast daartussen valt meteen op als
+ * "ingeplakt". Zelfde regel als `Bubble.upper` aan de serverkant (M8), zodat
+ * de web-overlay en de ingebakken Kobo-versie er hetzelfde uitzien.
+ */
+function isAllCaps(source: string): boolean {
+  const letters = [...source].filter((char) => /\p{L}/u.test(char));
+  return letters.length >= 2 && letters.every((char) => char === char.toUpperCase());
+}
+
 function BubbleBox({ bubble }: { bubble: Bubble }) {
   const [showSource, setShowSource] = useState(false);
   const [x0, y0, x1, y1] = bubble.box;
+  const upper = isAllCaps(bubble.source);
 
   return (
     <div
-      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-sm border border-black/40 bg-white px-0.5 text-center font-semibold leading-tight text-black"
+      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-sm border border-black/40 bg-white px-0.5 text-center leading-tight text-black"
       style={{
         left: `${x0 * 100}%`,
         top: `${y0 * 100}%`,
@@ -62,6 +75,10 @@ function BubbleBox({ bubble }: { bubble: Bubble }) {
         // Meeschalen met het vlak zelf: cqw is een procent van de breedte van
         // de pagina-container, dus de tekst blijft in verhouding bij zoomen.
         fontSize: `clamp(7px, ${Math.max(1.1, (x1 - x0) * 7)}cqw, 20px)`,
+        fontFamily: '"Comic Neue", sans-serif',
+        fontWeight: bubble.bold ? 700 : 400,
+        fontStyle: bubble.italic ? "italic" : "normal",
+        textTransform: upper && !showSource ? "uppercase" : "none",
       }}
       onClick={(event) => {
         event.stopPropagation();

@@ -17,7 +17,7 @@ from bookpal.config import settings as app_settings
 from bookpal.models import Book, BookKind, Series, Translation
 from bookpal.translate.base import Bubble, BubbleKind, PageResult, TranslationError
 from bookpal.translate.gemini import GeminiBubbleTranslator, _to_bubble
-from bookpal.translate.overlay import _fit, bake, draw_bubbles, render_layer
+from bookpal.translate.overlay import _fit, _load_font, bake, draw_bubbles, render_layer
 from bookpal.translate.queue import TranslationQueue
 from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
 
@@ -177,6 +177,16 @@ class TestOverlay:
         draw = ImageDraw.Draw(Image.new("RGB", (10, 10)))
         font, lines, _ = _fit(draw, "BEDRIJFSFILOSOFIE.", 60.0, 40.0)
         assert max(draw.textlength(line, font=font) for line in lines) <= 60.0
+
+    def test_bold_and_italic_select_different_font_files(self):
+        """Zonder dit ziet een nadruk in de brontekst er in de vertaling
+        precies hetzelfde uit als de rest van de ballon."""
+        regular = _load_font(24)
+        bold = _load_font(24, bold=True)
+        italic = _load_font(24, italic=True)
+        bold_italic = _load_font(24, bold=True, italic=True)
+        paths = {getattr(f, "path", None) for f in (regular, bold, italic, bold_italic)}
+        assert len(paths) == 4, paths
 
     def test_whole_words_are_preferred_over_hard_breaks(self):
         """Liever een maat kleiner dan "BESCHIKBA/AR." middenin een woord."""
@@ -410,7 +420,8 @@ class TestApi:
             target_lang="nl",
             provider="gemini",
             payload=PageResult(
-                bubbles=[Bubble(0.1, 0.2, 0.3, 0.4, "HI", "HOI")], model="test"
+                bubbles=[Bubble(0.1, 0.2, 0.3, 0.4, "HI", "HOI", bold=True, italic=True)],
+                model="test",
             ).to_payload(),
         )
         session.add(row)
@@ -418,6 +429,10 @@ class TestApi:
 
         body = scanned.get(f"/api/books/{book_id}/pages/0/translation").json()
         assert body["model"] == "test"
+        # Dit ging eerder mis: bold/italic werden wel opgeslagen maar
+        # BubbleOut liet ze onder de tafel vallen bij het teruggeven.
+        assert body["bubbles"][0]["bold"] is True
+        assert body["bubbles"][0]["italic"] is True
         assert body["bubbles"][0]["translation"] == "HOI"
         assert body["bubbles"][0]["box"] == [0.1, 0.2, 0.3, 0.4]
 
@@ -511,10 +526,43 @@ class TestApi:
         assert response.status_code == 409
 
 
+class TestBubbleStyle:
+    def test_all_caps_source_is_detected(self):
+        assert Bubble(0, 0, 1, 1, "IT LOOKS DELICIOUS!", "x").upper is True
+
+    def test_mixed_case_source_is_not_upper(self):
+        assert Bubble(0, 0, 1, 1, "It looks delicious!", "x").upper is False
+
+    def test_a_single_letter_is_not_enough_to_call_it_upper(self):
+        """'A' of een geluidseffect met één letter zegt niets over de lettering
+        van de rest van de ballon."""
+        assert Bubble(0, 0, 1, 1, "A!", "x").upper is False
+
+    def test_bold_and_italic_are_parsed_from_gemini(self):
+        bubble = _to_bubble(
+            {"box_2d": [0, 0, 10, 10], "translation": "X", "bold": True, "italic": True}
+        )
+        assert bubble is not None
+        assert bubble.bold is True
+        assert bubble.italic is True
+
+    def test_bold_and_italic_default_to_false(self):
+        bubble = _to_bubble({"box_2d": [0, 0, 10, 10], "translation": "X"})
+        assert bubble is not None
+        assert bubble.bold is False
+        assert bubble.italic is False
+
+
 class TestPayloadRoundTrip:
     def test_a_bubble_survives_storage(self):
         original = Bubble(0.1, 0.2, 0.3, 0.4, "HI", "HOI", BubbleKind.CAPTION)
         assert Bubble.from_payload(original.to_payload()) == original
+
+    def test_bold_and_italic_survive_storage(self):
+        original = Bubble(0.1, 0.2, 0.3, 0.4, "HI", "HOI", bold=True, italic=True)
+        restored = Bubble.from_payload(original.to_payload())
+        assert restored.bold is True
+        assert restored.italic is True
 
     def test_a_page_result_survives_storage(self):
         original = PageResult(

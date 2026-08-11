@@ -17,7 +17,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # M8: zonder een echte TrueType-font valt Pillow terug op een bitmapfont
         # van vaste grootte — dan staat elke ingebakken vertaling in hetzelfde
         # priegelformaat en verschijnt er een leeg blokje voor tekens als ¥.
+        # DejaVu is het vangnet; Comic Neue (SIL OFL) is de eerste keuze omdat
+        # striplettering er nu eenmaal niet uitziet als een systeemfont.
         fonts-dejavu-core \
+        fonts-comic-neue \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONUNBUFFERED=1 \

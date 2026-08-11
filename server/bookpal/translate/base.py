@@ -46,6 +46,23 @@ class Bubble:
     source: str
     translation: str
     kind: BubbleKind = BubbleKind.SPEECH
+    # Hoe de lettering eruitziet in het origineel. Het model kan geen font
+    # namaken — glyphs tekenen kan het niet — maar het kan wél zien dat iets
+    # vet of schuin staat, en daar hebben we echte striplettering voor.
+    bold: bool = False
+    italic: bool = False
+
+    @property
+    def upper(self) -> bool:
+        """Stond het origineel in kapitalen?
+
+        Dit vragen we niet aan het model: het staat gewoon in de brontekst, en
+        een controle die je zelf kunt doen hoort niet in een prompt. Striplettering
+        is traditioneel volledig in kapitalen, en een vertaling in onderkast
+        daartussen valt meteen op als 'ingeplakt'.
+        """
+        letters = [character for character in self.source if character.isalpha()]
+        return len(letters) >= 2 and all(character.isupper() for character in letters)
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -53,6 +70,8 @@ class Bubble:
             "source": self.source,
             "translation": self.translation,
             "kind": str(self.kind),
+            "bold": self.bold,
+            "italic": self.italic,
         }
 
     @classmethod
@@ -70,6 +89,8 @@ class Bubble:
             source=str(data.get("source", "")),
             translation=str(data.get("translation", "")),
             kind=kind,
+            bold=bool(data.get("bold", False)),
+            italic=bool(data.get("italic", False)),
         )
 
 
