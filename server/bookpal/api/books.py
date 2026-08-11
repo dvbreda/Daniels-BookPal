@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
@@ -17,7 +17,13 @@ from bookpal.images import (
     source_id_for,
 )
 from bookpal.models import Book, BookKind, File, Series
-from bookpal.schemas import BookDetailOut, BookOut, Paginated, TocEntryOut
+from bookpal.schemas import (
+    BookDetailOut,
+    BookOut,
+    NextChapterOut,
+    Paginated,
+    TocEntryOut,
+)
 from bookpal.translate import service as translation_service
 from bookpal.translate.base import PageResult
 from bookpal.translate.overlay import bake
@@ -100,6 +106,37 @@ def get_book(book_id: int, session: Session = Depends(get_session)) -> BookDetai
         except (OSError, UnsupportedOperation):
             pass
     return detail
+
+
+@router.get("/{book_id}/next", response_model=NextChapterOut)
+def next_chapter(book_id: int, session: Session = Depends(get_session)) -> NextChapterOut:
+    """Wat er na dit hoofdstuk komt in leesvolgorde.
+
+    Inclusief hoofdstukken die nog opgehaald moeten worden: juist als je er een
+    uit hebt wil je weten dat het volgende bestaat, ook al staat het nog niet
+    op schijf. De client biedt dan "ophalen en lezen" aan in plaats van niets.
+    """
+    book = deps.get_book(session, book_id)
+    later = session.scalars(
+        select(Book)
+        .where(
+            Book.series_id == book.series_id,
+            tuple_(Book.sort_volume, Book.sort_number, Book.id)
+            > (book.sort_volume, book.sort_number, book.id),
+        )
+        .order_by(Book.sort_volume, Book.sort_number, Book.id)
+        .limit(1)
+    ).first()
+    if later is None:
+        raise HTTPException(status_code=404, detail="dit was het laatste hoofdstuk")
+
+    return NextChapterOut(
+        book_id=later.id,
+        title=later.title,
+        number=later.number,
+        volume=later.volume,
+        has_file=later.file_id is not None,
+    )
 
 
 @router.get("/{book_id}/pages/{index}")

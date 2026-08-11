@@ -15,6 +15,7 @@ from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 from bookpal.sources import Source as SourceImpl
 from bookpal.sources import SourceError, get_source
+from bookpal.sources import ahead as readahead
 from bookpal.trackers import scheduler as trackers_scheduler
 from bookpal.translate.queue import queue as translate_queue
 
@@ -117,6 +118,11 @@ def upsert_progress(
     # M7: gedebounced, dus dit is een goedkope aanroep — geen netwerk, alleen
     # een timer resetten.
     trackers_scheduler.notify_progress(series_id)
+
+    # Vooruit downloaden terwijl je leest: de ronde op een interval is te traag
+    # om achter je aan te lopen als je een paar hoofdstukken achter elkaar
+    # omslaat. Gedebounced, dus dit is een goedkope aanroep.
+    readahead.notify_progress(series_id)
 
     # M8: nu we weten waar je bent, kan de vertaalwachtrij vooruitlopen op wat
     # je zo omslaat. Alleen zinvol voor een strip met paginanummers.

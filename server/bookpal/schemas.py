@@ -162,6 +162,18 @@ class MarkReadBeforeOut(BaseModel):
     marked: int
 
 
+class NextChapterOut(BaseModel):
+    """Het volgende hoofdstuk, om aan te bieden als je er een uit hebt."""
+
+    book_id: int
+    title: str
+    number: str | None
+    volume: str | None
+    # Al binnen, of moet het nog opgehaald worden? Bepaalt of de knop meteen
+    # opent of eerst downloadt.
+    has_file: bool
+
+
 class TocEntryOut(BaseModel):
     title: str
     target: str

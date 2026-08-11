@@ -16,6 +16,7 @@ from bookpal.api import router
 from bookpal.config import settings
 from bookpal.db import init_db
 from bookpal.formats import book_cache
+from bookpal.sources.ahead import stop_all as stop_readahead
 from bookpal.sources.worker import start_worker, stop_worker
 from bookpal.trackers.scheduler import stop_all as stop_tracker_scheduler
 from bookpal.translate.queue import queue as translate_queue
@@ -36,6 +37,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     translate_queue.start()
     yield
     stop_worker()
+    stop_readahead()
     stop_tracker_scheduler()
     translate_queue.stop()
     book_cache.clear()

@@ -264,3 +264,45 @@ class TestMarkReadBefore:
         body = client.get(f"/api/series/{series.id}/continue").json()
         assert body["book_id"] == books[2].id
         assert body["unread_before"] == 0
+
+
+class TestNextChapter:
+    def test_it_gives_the_following_chapter(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 3, naam="Volgende")
+        books = _books(session, series)
+        session.commit()
+
+        body = client.get(f"/api/books/{books[0].id}/next").json()
+        assert body["book_id"] == books[1].id
+        assert body["has_file"] is True
+
+    def test_the_last_chapter_has_no_next(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 2, naam="Laatste")
+        books = _books(session, series)
+        session.commit()
+
+        assert client.get(f"/api/books/{books[-1].id}/next").status_code == 404
+
+    def test_a_chapter_still_to_download_is_offered_too(
+        self, client: TestClient, session: Session
+    ):
+        """Juist als je er een uit hebt wil je weten dat het volgende bestaat,
+        ook al staat het nog niet op schijf."""
+        series = _series_with_chapters(session, 1, naam="Ophalen")
+        books = _books(session, series)
+        session.add(
+            Book(
+                series_id=series.id,
+                kind=BookKind.COMIC,
+                title="Nog op te halen",
+                number="2",
+                sort_number=2.0,
+                file_id=None,
+                source_ref="abc",
+            )
+        )
+        session.commit()
+
+        body = client.get(f"/api/books/{books[0].id}/next").json()
+        assert body["title"] == "Nog op te halen"
+        assert body["has_file"] is False

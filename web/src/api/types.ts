@@ -81,6 +81,15 @@ export interface SeriesDetail extends Series {
   books: Book[];
 }
 
+export interface NextChapter {
+  book_id: number;
+  title: string;
+  number: string | null;
+  volume: string | null;
+  /** Al binnen, of moet het nog opgehaald worden? */
+  has_file: boolean;
+}
+
 export interface ContinueInfo {
   book_id: number;
   title: string;

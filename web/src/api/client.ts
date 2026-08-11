@@ -6,6 +6,7 @@ import type {
   Health,
   ImageProfile,
   LibraryRoot,
+  NextChapter,
   PageTranslation,
   Paginated,
   Progress,
@@ -116,6 +117,7 @@ export const api = {
     }),
 
   book: (id: number) => request<BookDetail>(`/api/books/${id}`),
+  nextChapter: (id: number) => request<NextChapter>(`/api/books/${id}/next`),
 
   progress: () => request<Progress[]>("/api/progress"),
   setProgress: (body: {

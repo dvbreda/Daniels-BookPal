@@ -28,6 +28,9 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     # Geen achtergrondthread die naar een bron zou kunnen praten; de worker
     # wordt apart getest met run_once().
     monkeypatch.setattr(settings, "subscriptions_enabled", False)
+    # En het vooruit downloaden tijdens het lezen, dat aan diezelfde vlag hangt
+    # maar een eigen timer heeft.
+    monkeypatch.setattr(settings, "readahead_debounce_seconds", 0.0)
     # Idem voor de gedebouncede tracker-push: anders overleeft een timer de
     # teardown van deze test en raakt hij de database van de volgende.
     monkeypatch.setattr(settings, "trackers_enabled", False)

@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     # je liever zelf bepaalt wanneer er verkeer naar een bron gaat.
     subscriptions_enabled: bool = True
     subscriptions_interval_minutes: int = 60
+    # Vooruit downloaden terwijl je leest, gedebounced per serie. De ronde op
+    # een interval houdt een serie bij; deze loopt achter je aan zodra je een
+    # paar hoofdstukken achter elkaar omslaat. 0 zet het uit.
+    readahead_debounce_seconds: float = 15.0
 
     # M7: gedebouncede tracker-push na een voortgangsupdate. Uit in tests
     # (elders uitgezet via monkeypatch), anders blijft er een echte

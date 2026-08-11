@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, imageUrl } from "../api/client";
+import { useNavigate } from "react-router-dom";
+
+import { ApiError, api, imageUrl } from "../api/client";
 import type { BookDetail, TranslateMode } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
@@ -55,6 +57,7 @@ export function ComicReader({ book, onClose }: Props) {
   const [zoom, setZoom] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
   const [translated, setTranslated] = useStoredState("reader.translated", false);
+  const [dismissedNext, setDismissedNext] = useState(false);
 
   const spreads = useMemo(
     () => buildSpreads(pageCount, viewMode === "paged" && doublePage, { aspects }),
@@ -205,6 +208,11 @@ export function ComicReader({ book, onClose }: Props) {
     );
   }
 
+  // Op de laatste spread: aanbieden om door te gaan. Niet pas bij "uitgelezen",
+  // want die vlag gaat pas om als de voortgang is weggeschreven — dan sta je al
+  // een tel te wachten op iets wat je nu wilt.
+  const atEnd = spreads.length > 0 && spreadIndex === spreads.length - 1;
+
   const fitClass =
     fit === "width"
       ? "w-full h-auto"
@@ -250,6 +258,10 @@ export function ComicReader({ book, onClose }: Props) {
             ))}
           </div>
         </div>
+      )}
+
+      {atEnd && !dismissedNext && (
+        <NextChapterPrompt bookId={book.id} onDismiss={() => setDismissedNext(true)} />
       )}
 
       {showChrome && (
@@ -508,6 +520,64 @@ function Chrome(props: ChromeProps) {
         </div>
       </div>
     </>
+  );
+}
+
+/**
+ * "Volgende hoofdstuk?" als je aan het eind bent.
+ *
+ * Staat het nog niet op schijf, dan haalt de knop het eerst op — bij een
+ * abonnement is het volgende hoofdstuk vaak nog een verwijzing, en dan is
+ * "bestaat niet" het verkeerde antwoord.
+ */
+function NextChapterPrompt({ bookId, onDismiss }: { bookId: number; onDismiss: () => void }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const { data } = useQuery({
+    queryKey: ["next-chapter", bookId],
+    queryFn: () => api.nextChapter(bookId),
+    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
+    staleTime: Infinity,
+  });
+
+  if (!data) return null;
+
+  const label = [data.volume ? `Deel ${data.volume}` : null, data.number ? `#${data.number}` : null]
+    .filter(Boolean)
+    .join(" ");
+
+  async function go() {
+    if (data!.has_file) {
+      navigate(`/lezen/${data!.book_id}`);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.downloadChapter(data!.book_id);
+      navigate(`/lezen/${data!.book_id}`);
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="absolute inset-x-0 bottom-24 z-10 mx-auto w-fit max-w-[90%] rounded-lg bg-ink-800/95 p-3 text-sm shadow-lg backdrop-blur">
+      <p className="text-slate-300">
+        Volgende: <span className="text-slate-100">{label || data.title}</span>
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={() => void go()}
+          disabled={busy}
+          className="rounded bg-accent px-3 py-1.5 text-ink-900 disabled:opacity-50"
+        >
+          {busy ? "Ophalen…" : data.has_file ? "Lezen" : "Ophalen en lezen"}
+        </button>
+        <button onClick={onDismiss} className="rounded bg-ink-700 px-3 py-1.5 text-slate-300">
+          Later
+        </button>
+      </div>
+    </div>
   );
 }
 
