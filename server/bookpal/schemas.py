@@ -74,6 +74,8 @@ class BookOut(BaseModel):
     # geeft dat de drie toestanden die een client wil tonen: eigen bestand,
     # opgehaald van een bron, en nog op te halen.
     from_source: bool = False
+    # Wie heeft dit vertaald? Alleen gevuld bij bronnen die dat meegeven.
+    source_group_name: str | None = None
     # Bij een tijdelijke (readahead-)download: wanneer mag het bestand weg?
     expires_at: datetime | None = None
     extension: str | None
@@ -232,6 +234,14 @@ class SubscribeIn(BaseModel):
     language: str = Field(default="en", max_length=8)
 
 
+class GroupOut(BaseModel):
+    """Een vertaalgroep die deze reeks (deels) heeft gedaan."""
+
+    id: str
+    name: str
+    chapters: int
+
+
 class SubscriptionOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -242,9 +252,23 @@ class SubscriptionOut(BaseModel):
     readahead_n: int
     ttl_days: int
     last_checked_at: datetime | None
+    preferred_group_id: str | None = None
+    available_groups: list[GroupOut] = Field(default_factory=list)
     series_title: str = ""
     chapters_total: int = 0
     chapters_local: int = 0
+
+
+class SubscriptionPatch(BaseModel):
+    """Wat je aan een lopend abonnement kunt bijstellen.
+
+    ``preferred_group_id`` op ``null`` zet hem terug op automatisch kiezen.
+    """
+
+    preferred_group_id: str | None = Field(default=None, max_length=200)
+    policy: str | None = Field(default=None, pattern="^(permanent|readahead)$")
+    readahead_n: int | None = Field(default=None, ge=0, le=50)
+    ttl_days: int | None = Field(default=None, ge=1, le=365)
 
 
 class SubscribeResultOut(BaseModel):

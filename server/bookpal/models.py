@@ -36,6 +36,7 @@ class Base(DeclarativeBase):
     type_annotation_map: ClassVar[dict[object, object]] = {
         dict[str, Any]: JSON,
         list[str]: JSON,
+        list[dict[str, Any]]: JSON,
     }
 
 
@@ -230,6 +231,10 @@ class Book(Base):
         ForeignKey("source.id", ondelete="SET NULL"), default=None
     )
     source_ref: Mapped[str | None] = mapped_column(String(200), default=None)
+    # Wie heeft dit vertaald? Bij bronnen met meerdere vertalingen van dezelfde
+    # aflevering is dit het enige onderscheid — nummer en omvang zijn gelijk.
+    source_group_id: Mapped[str | None] = mapped_column(String(200), default=None)
+    source_group_name: Mapped[str | None] = mapped_column(String(200), default=None)
     # Bij een readahead-download: wanneer mag dit bestand weer weg?
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
@@ -331,6 +336,16 @@ class Subscription(Base):
     readahead_n: Mapped[int] = mapped_column(Integer, default=3)
     ttl_days: Mapped[int] = mapped_column(Integer, default=14)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    # Welke vertaalgroep je wilt lezen. Leeg = automatisch kiezen (de groep die
+    # het grootste deel van de reeks heeft gedaan). Zelf kiezen is nodig omdat
+    # "de meeste hoofdstukken" niet hetzelfde is als "de mooiste vertaling".
+    preferred_group_id: Mapped[str | None] = mapped_column(String(200), default=None)
+    # Wat er bij de laatste ronde te kiezen viel: [{"id", "name", "chapters"}].
+    # Opgeslagen zodat de UI een keuzelijst kan tonen zonder de bron te
+    # bevragen — na het ontdubbelen bestaan de afgevallen hoofdstukken hier
+    # namelijk niet meer als boek.
+    available_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class DownloadJob(Base):

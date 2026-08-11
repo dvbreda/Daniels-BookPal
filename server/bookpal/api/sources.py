@@ -22,6 +22,7 @@ from bookpal.schemas import (
     SubscribeIn,
     SubscribeResultOut,
     SubscriptionOut,
+    SubscriptionPatch,
 )
 from bookpal.sources import REGISTRY, SourceError, get_source, worker
 from bookpal.sources import service as source_service
@@ -170,6 +171,22 @@ def list_subscriptions(session: Session = Depends(get_session)) -> list[Subscrip
     return [_subscription_out(session, row) for row in rows]
 
 
+@router.get("/subscriptions/by-series/{series_id}", response_model=SubscriptionOut)
+def subscription_for_series(
+    series_id: int, session: Session = Depends(get_session)
+) -> SubscriptionOut:
+    """Het abonnement van deze serie, als die er een heeft.
+
+    De seriepagina gebruikt dit om de keuze van vertaalgroep te tonen.
+    """
+    subscription = session.scalar(
+        select(Subscription).where(Subscription.series_id == series_id)
+    )
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="deze serie heeft geen abonnement")
+    return _subscription_out(session, subscription)
+
+
 @router.post("/subscriptions/{subscription_id}/refresh", response_model=SubscribeResultOut)
 def refresh_subscription(
     subscription_id: int,
@@ -191,12 +208,66 @@ def refresh_subscription(
     except SourceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    added, _ = source_service.sync_chapters(session, series, chapters)
+    added, _ = source_service.sync_chapters(
+        session, series, chapters, subscription=subscription
+    )
     subscription.last_checked_at = utcnow()
     session.commit()
     return SubscribeResultOut(
         subscription=_subscription_out(session, subscription),
         series_id=series.id,
+        chapters_added=added,
+    )
+
+
+@router.patch("/subscriptions/{subscription_id}", response_model=SubscribeResultOut)
+def update_subscription(
+    subscription_id: int,
+    payload: SubscriptionPatch,
+    language: str = Query(default="en", max_length=8),
+    session: Session = Depends(get_session),
+) -> SubscribeResultOut:
+    """Instellingen van een abonnement bijstellen.
+
+    Bij een andere voorkeursgroep wordt meteen opnieuw gesynchroniseerd: de
+    hoofdstukken van die groep bestaan nog niet als boek, want die vielen bij
+    het ontdubbelen af. Al opgehaalde afleveringen blijven staan.
+    """
+    subscription = session.get(Subscription, subscription_id)
+    if subscription is None:
+        raise HTTPException(status_code=404, detail="abonnement niet gevonden")
+
+    group_changed = (
+        "preferred_group_id" in payload.model_fields_set
+        and payload.preferred_group_id != subscription.preferred_group_id
+    )
+    if "preferred_group_id" in payload.model_fields_set:
+        subscription.preferred_group_id = payload.preferred_group_id
+    if payload.policy is not None:
+        subscription.policy = SubscriptionPolicy(payload.policy)
+    if payload.readahead_n is not None:
+        subscription.readahead_n = payload.readahead_n
+    if payload.ttl_days is not None:
+        subscription.ttl_days = payload.ttl_days
+
+    added = 0
+    series = session.get(Series, subscription.series_id)
+    if group_changed and series is not None and series.source_ref:
+        source = _get_source_row(session, subscription.source_id)
+        implementation = _implementation(source)
+        try:
+            chapters = implementation.chapters(series.source_ref, language=language)
+        except SourceError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        added, _ = source_service.sync_chapters(
+            session, series, chapters, subscription=subscription
+        )
+        subscription.last_checked_at = utcnow()
+
+    session.commit()
+    return SubscribeResultOut(
+        subscription=_subscription_out(session, subscription),
+        series_id=subscription.series_id,
         chapters_added=added,
     )
 

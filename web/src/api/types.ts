@@ -33,6 +33,8 @@ export interface Book {
   has_file: boolean;
   /** Van een abonnement (bron) in plaats van uit je eigen mappen. */
   from_source: boolean;
+  /** Wie dit vertaald heeft, als de bron dat meegeeft. */
+  source_group_name: string | null;
   /** Gezet bij een tijdelijke readahead-download. */
   expires_at: string | null;
   extension: string | null;
@@ -193,6 +195,13 @@ export interface SearchHit {
 
 export type SubscriptionPolicy = "permanent" | "readahead";
 
+/** Een vertaalgroep die deze reeks (deels) heeft gedaan. */
+export interface TranslationGroup {
+  id: string;
+  name: string;
+  chapters: number;
+}
+
 export interface SubscriptionRow {
   id: number;
   source_id: number;
@@ -201,6 +210,9 @@ export interface SubscriptionRow {
   readahead_n: number;
   ttl_days: number;
   last_checked_at: string | null;
+  /** Leeg = automatisch kiezen. */
+  preferred_group_id: string | null;
+  available_groups: TranslationGroup[];
   series_title: string;
   chapters_total: number;
   chapters_local: number;

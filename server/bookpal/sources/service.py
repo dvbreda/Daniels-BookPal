@@ -13,6 +13,7 @@ import logging
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -109,7 +110,28 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
     return series
 
 
-def pick_best_chapters(chapters: list[ChapterInfo]) -> list[ChapterInfo]:
+def group_summary(chapters: list[ChapterInfo]) -> list[dict[str, Any]]:
+    """Welke vertaalgroepen zitten er in deze reeks, en hoeveel doen ze?
+
+    Wordt op het abonnement bewaard zodat de UI een keuzelijst kan tonen: na
+    het ontdubbelen bestaan de afgevallen hoofdstukken niet meer als boek, dus
+    daar valt niet meer uit af te leiden wat er te kiezen viel.
+    """
+    counts: dict[str | None, dict[str, Any]] = {}
+    for chapter in chapters:
+        if chapter.group_id is None:
+            continue
+        entry = counts.setdefault(
+            chapter.group_id,
+            {"id": chapter.group_id, "name": chapter.group_name or chapter.group_id, "chapters": 0},
+        )
+        entry["chapters"] = int(entry["chapters"]) + 1
+    return sorted(counts.values(), key=lambda item: -int(item["chapters"]))
+
+
+def pick_best_chapters(
+    chapters: list[ChapterInfo], preferred_group_id: str | None = None
+) -> list[ChapterInfo]:
     """Bij dubbele afleveringen er één kiezen.
 
     Een bron kan dezelfde aflevering meerdere keren hebben, vertaald door
@@ -117,10 +139,14 @@ def pick_best_chapters(chapters: list[ChapterInfo]) -> list[ChapterInfo]:
     volume, nummer én paginatelling. Nummer of omvang helpt dus niet; wie het
     vertaald heeft wel.
 
-    De keuze valt op **consistentie**: de groep die het grootste deel van de
-    reeks heeft gedaan wint overal. Je leest dan één vertaling in plaats van
-    een mengelmoes van stijl en naamgeving, en alleen waar die groep niets
-    heeft val je terug op een andere. Bij gelijke stand wint de nieuwste
+    Met ``preferred_group_id`` wint die groep overal waar hij iets heeft. Dat
+    is er omdat "de meeste hoofdstukken" niet hetzelfde is als "de mooiste
+    vertaling"; die afweging kan alleen de lezer maken.
+
+    Zonder voorkeur valt de keuze op **consistentie**: de groep die het
+    grootste deel van de reeks heeft gedaan wint. Je leest dan één vertaling in
+    plaats van een mengelmoes van stijl en naamgeving, en alleen waar die groep
+    niets heeft val je terug op een andere. Bij gelijke stand wint de nieuwste
     upload, en anders de laagste ref — zodat een tweede ronde dezelfde keuze
     maakt en er niets gaat wisselen.
     """
@@ -128,9 +154,16 @@ def pick_best_chapters(chapters: list[ChapterInfo]) -> list[ChapterInfo]:
     for chapter in chapters:
         per_group[chapter.group_id] = per_group.get(chapter.group_id, 0) + 1
 
+    def weight(chapter: ChapterInfo) -> int:
+        # De voorkeur telt zwaarder dan welke telling ook, maar alleen voor de
+        # afleveringen die die groep daadwerkelijk heeft.
+        if preferred_group_id is not None and chapter.group_id == preferred_group_id:
+            return len(chapters) + 1
+        return per_group.get(chapter.group_id, 0)
+
     def is_better(candidate: ChapterInfo, current: ChapterInfo) -> bool:
-        candidate_group = per_group.get(candidate.group_id, 0)
-        current_group = per_group.get(current.group_id, 0)
+        candidate_group = weight(candidate)
+        current_group = weight(current)
         if candidate_group != current_group:
             return candidate_group > current_group
         if (candidate.published_at or "") != (current.published_at or ""):
@@ -151,7 +184,11 @@ def pick_best_chapters(chapters: list[ChapterInfo]) -> list[ChapterInfo]:
 
 
 def sync_chapters(
-    session: Session, series: Series, chapters: list[ChapterInfo]
+    session: Session,
+    series: Series,
+    chapters: list[ChapterInfo],
+    *,
+    subscription: Subscription | None = None,
 ) -> tuple[int, int]:
     """Zet de hoofdstukkenlijst van een bron om in boeken zonder bestand.
 
@@ -159,12 +196,19 @@ def sync_chapters(
     ook niet als ze inmiddels een bestand hebben.
 
     Dubbele afleveringen zijn er al uit voordat er iets wordt aangemaakt; zie
-    ``pick_best_chapters``. Eerder aangemaakte dubbelen worden opgeruimd, maar
-    alleen als ze niets kosten: een aflevering die al is opgehaald of waarin
-    gelezen is, blijft staan. Anders zou een verandering in de bron zomaar iets
-    weghalen wat je al had.
+    ``pick_best_chapters``. Staat er een voorkeursgroep op het abonnement, dan
+    wint die. Eerder aangemaakte dubbelen worden opgeruimd, maar alleen als ze
+    niets kosten: een aflevering die al is opgehaald of waarin gelezen is,
+    blijft staan. Anders zou een verandering in de bron — of het omzetten van
+    je voorkeur — zomaar iets weghalen wat je al had.
     """
-    chapters = pick_best_chapters(chapters)
+    if subscription is not None:
+        # Vastleggen wat er te kiezen viel, vóór het ontdubbelen: daarna
+        # bestaan de afgevallen hoofdstukken niet meer.
+        subscription.available_groups = group_summary(chapters)
+
+    preferred = subscription.preferred_group_id if subscription is not None else None
+    chapters = pick_best_chapters(chapters, preferred)
     keep = {chapter.ref for chapter in chapters}
 
     existing = {
@@ -186,7 +230,12 @@ def sync_chapters(
 
     added = 0
     for chapter in chapters:
-        if chapter.ref in existing:
+        known = existing.get(chapter.ref)
+        if known is not None:
+            # Groep bijwerken op wat er al stond: bestaande boeken van vóór
+            # deze kolommen weten nog niet wie ze vertaald heeft.
+            known.source_group_id = known.source_group_id or chapter.group_id
+            known.source_group_name = known.source_group_name or chapter.group_name
             continue
         session.add(
             Book(
@@ -202,6 +251,8 @@ def sync_chapters(
                 right_to_left=True,
                 source_id=series.source_id,
                 source_ref=chapter.ref,
+                source_group_id=chapter.group_id,
+                source_group_name=chapter.group_name,
             )
         )
         added += 1
@@ -239,9 +290,9 @@ def subscribe(
     """Volg een serie: serie + hoofdstukken aanmaken en het abonnement vastleggen."""
     detail = implementation.detail(ref)
     series = upsert_series(session, source_row, detail)
-    chapters = implementation.chapters(ref, language=language)
-    added, _ = sync_chapters(session, series, chapters)
 
+    # Het abonnement moet er zijn vóór het synchroniseren: daar staat de
+    # voorkeursgroep op, en die bepaalt welke vertaling er wordt aangemaakt.
     subscription = session.scalar(
         select(Subscription).where(
             Subscription.source_id == source_row.id, Subscription.series_id == series.id
@@ -254,6 +305,10 @@ def subscribe(
     subscription.readahead_n = readahead_n
     subscription.ttl_days = ttl_days
     subscription.last_checked_at = utcnow()
+    session.flush()
+
+    chapters = implementation.chapters(ref, language=language)
+    added, _ = sync_chapters(session, series, chapters, subscription=subscription)
     session.flush()
     return series, subscription, added
 

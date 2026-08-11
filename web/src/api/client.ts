@@ -143,6 +143,21 @@ export const api = {
       body: JSON.stringify(body),
     }),
   subscriptions: () => request<SubscriptionRow[]>("/api/sources/subscriptions/all"),
+  subscriptionForSeries: (seriesId: number) =>
+    request<SubscriptionRow>(`/api/sources/subscriptions/by-series/${seriesId}`),
+  updateSubscription: (
+    id: number,
+    body: {
+      preferred_group_id?: string | null;
+      policy?: SubscriptionPolicy;
+      readahead_n?: number;
+      ttl_days?: number;
+    },
+  ) =>
+    request<SubscribeResult>(`/api/sources/subscriptions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
   refreshSubscription: (id: number) =>
     request<SubscribeResult>(`/api/sources/subscriptions/${id}/refresh`, { method: "POST" }),
   unsubscribe: (id: number) =>

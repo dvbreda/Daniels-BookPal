@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { ApiError, api, imageUrl } from "../api/client";
 import type { Book, OriginRegion } from "../api/types";
 import { SourceBadge } from "../components/SourceBadge";
+import { TranslationPicker } from "../components/TranslationPicker";
 
 const REGIONS: [OriginRegion, string][] = [
   ["europe", "Europa"],
@@ -85,6 +86,8 @@ export function SeriesPage() {
         </div>
       </section>
 
+      <TranslationPicker seriesId={seriesId} />
+
       <div className="mt-6 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4">
         {data.books.map((book) => (
           <BookCard key={book.id} book={book} seriesId={seriesId} />
@@ -142,6 +145,11 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
           {book.page_count ?? "?"} {book.kind === "epub" ? "hoofdstukken" : "pagina's"}
           {percent > 0 && ` · ${Math.round(percent)}%`}
         </p>
+        {book.source_group_name && (
+          <p className="truncate text-xs text-slate-600" title="Vertaald door">
+            {book.source_group_name}
+          </p>
+        )}
       </div>
     </>
   );

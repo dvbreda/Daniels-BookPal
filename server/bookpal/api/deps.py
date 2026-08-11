@@ -115,6 +115,7 @@ def to_book_out(book: Book, progress: Progress | None, extension: str | None) ->
         right_to_left=book.right_to_left,
         has_file=book.file_id is not None,
         from_source=book.source_id is not None,
+        source_group_name=book.source_group_name,
         expires_at=book.expires_at,
         extension=extension,
         added_at=book.added_at,

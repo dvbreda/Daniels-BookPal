@@ -128,7 +128,9 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
         if refresh and series.source_ref:
             try:
                 chapters = implementation.chapters(series.source_ref)
-                added, _ = source_service.sync_chapters(session, series, chapters)
+                added, _ = source_service.sync_chapters(
+                    session, series, chapters, subscription=subscription
+                )
                 report.chapters_added += added
                 subscription.last_checked_at = utcnow()
                 session.commit()

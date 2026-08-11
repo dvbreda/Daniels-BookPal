@@ -483,6 +483,71 @@ class TestPickBestChapters:
         tweede = source_service.pick_best_chapters(list(reversed(chapters)))
         assert [c.ref for c in eerste] == [c.ref for c in tweede]
 
+    def test_a_preferred_group_beats_the_bigger_one(self):
+        """"De meeste hoofdstukken" is niet hetzelfde als "de mooiste
+        vertaling"; die keuze hoort bij de lezer."""
+        chapters = [
+            self._chapter("a1", "1", "vlijtig"),
+            self._chapter("b1", "1", "mooier"),
+            self._chapter("a2", "2", "vlijtig"),
+            self._chapter("a3", "3", "vlijtig"),
+        ]
+        gekozen = source_service.pick_best_chapters(chapters, preferred_group_id="mooier")
+        assert [c.ref for c in gekozen] == ["b1", "a2", "a3"]
+
+    def test_the_preference_only_applies_where_that_group_delivered(self):
+        chapters = [
+            self._chapter("a1", "1", "vlijtig"),
+            self._chapter("b1", "1", "mooier"),
+            self._chapter("a2", "2", "vlijtig"),
+        ]
+        gekozen = source_service.pick_best_chapters(chapters, preferred_group_id="mooier")
+        # Deel 2 heeft "mooier" niet gedaan; dan blijft de ander staan.
+        assert [c.ref for c in gekozen] == ["b1", "a2"]
+
+    def test_an_unknown_preference_falls_back_to_automatic(self):
+        chapters = [
+            self._chapter("a1", "1", "vlijtig"),
+            self._chapter("b1", "1", "eenmalig"),
+            self._chapter("a2", "2", "vlijtig"),
+        ]
+        gekozen = source_service.pick_best_chapters(chapters, preferred_group_id="bestaat-niet")
+        assert [c.ref for c in gekozen] == ["a1", "a2"]
+
+
+class TestGroupSummary:
+    def test_lists_groups_with_their_share(self):
+        chapters = [
+            ChapterInfo(
+                ref="a", number="1", volume="1", title=None, language="en",
+                group_id="g1", group_name="Vlijtig",
+            ),
+            ChapterInfo(
+                ref="b", number="2", volume="1", title=None, language="en",
+                group_id="g1", group_name="Vlijtig",
+            ),
+            ChapterInfo(
+                ref="c", number="1", volume="1", title=None, language="en",
+                group_id="g2", group_name="Mooier",
+            ),
+        ]
+        samenvatting = source_service.group_summary(chapters)
+        assert samenvatting == [
+            {"id": "g1", "name": "Vlijtig", "chapters": 2},
+            {"id": "g2", "name": "Mooier", "chapters": 1},
+        ]
+
+    def test_chapters_without_a_group_are_skipped(self):
+        chapters = [ChapterInfo(ref="a", number="1", volume="1", title=None, language="en")]
+        assert source_service.group_summary(chapters) == []
+
+
+class TestPickBestChaptersMore:
+    def _chapter(self, ref: str, number: str, group: str, **extra) -> ChapterInfo:
+        return ChapterInfo(
+            ref=ref, number=number, volume="1", title=None, language="en", group_id=group, **extra
+        )
+
     def test_volume_is_part_of_the_identity(self):
         """Hoofdstuk 1 van deel 1 is niet hetzelfde als hoofdstuk 1 van deel 2."""
         chapters = [
@@ -490,6 +555,19 @@ class TestPickBestChapters:
             ChapterInfo(ref="b", number="1", volume="2", title=None, language="en"),
         ]
         assert len(source_service.pick_best_chapters(chapters)) == 2
+
+
+class TestSubscriptionPreferenceApi:
+    def _subscribed(self, client):
+        client.post("/api/sources", json={"type": "mangadex", "name": "MangaDex"})
+        return client
+
+    def test_by_series_is_404_without_a_subscription(self, scanned):
+        assert scanned.get("/api/sources/subscriptions/by-series/1").status_code == 404
+
+    def test_patching_an_unknown_subscription_is_404(self, client):
+        response = client.patch("/api/sources/subscriptions/999", json={"readahead_n": 5})
+        assert response.status_code == 404
 
 
 class TestSyncDeduplication:
