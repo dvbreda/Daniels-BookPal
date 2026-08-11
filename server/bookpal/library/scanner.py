@@ -195,6 +195,18 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
         book = Book(series_id=series.id, file_id=file_row.id, kind=FORMAT_KINDS[fmt], title="")
         session.add(book)
 
+    if book.source_ref is not None:
+        # Dit hoofdstuk komt van een abonnement (M5) en is daar al ingedeeld en
+        # benoemd. De scanner weet hier minder dan de bron: de bestandsnaam van
+        # een download zegt niets over volgorde of titel, en het boek staat in
+        # de serie van het abonnement. Alleen wat de scanner écht als enige
+        # weet — dat het bestand er is en hoeveel pagina's het heeft — mag hij
+        # bijwerken. Zonder deze uitzondering trok elke scan zulke hoofdstukken
+        # uit hun abonnement en in een serie die op de mapnaam was verzonnen.
+        book.page_count = page_count
+        session.flush()
+        return
+
     book.series_id = series.id
     book.kind = FORMAT_KINDS[fmt]
     book.title = meta.title or parsed.title or path.stem

@@ -200,13 +200,22 @@ def chapter_path(series: Series, book: Book) -> Path:
 
     Absoluut, want ``File.path`` is elders in de app ook absoluut en
     ``download_root`` legt de root met een opgelost pad vast.
+
+    Volume en nummer alleen zijn níét uniek: een bron kan meerdere vertalingen
+    van hetzelfde hoofdstuk hebben (Oishinbo heeft er honderden, "Tofu & Water"
+    naast "Tofu and Water"). Die kregen dan hetzelfde pad, en omdat ``file_id``
+    uniek is per boek liep de tweede download stuk op de database. Daarom staat
+    de bron-referentie in de naam — kort, maar genoeg om te onderscheiden, en
+    deterministisch zodat opnieuw ophalen op hetzelfde pad uitkomt.
     """
     parts = []
     if book.volume:
         parts.append(f"v{book.volume}")
     if book.number:
         parts.append(f"c{book.number}")
-    stem = " ".join(parts) or (book.source_ref or str(book.id))
+    if book.source_ref:
+        parts.append(f"[{book.source_ref[:8]}]")
+    stem = " ".join(parts) or str(book.id)
     return settings.download_dir.resolve() / safe_name(series.title) / f"{safe_name(stem)}.cbz"
 
 
@@ -246,6 +255,16 @@ def download_book(
 
     stat = target.stat()
     file_row = session.scalar(select(File).where(File.path == str(target)))
+    if file_row is not None:
+        # Eén bestand hoort bij één boek (``Book.file_id`` is uniek). Als een
+        # ander boek dit pad al claimt, klopt de padberekening niet — zeg dat
+        # dan hardop in plaats van de database er tegenaan te laten lopen.
+        claimed_by = session.scalar(select(Book).where(Book.file_id == file_row.id))
+        if claimed_by is not None and claimed_by.id != book.id:
+            raise SourceError(
+                f"pad {target.name} hoort al bij hoofdstuk {claimed_by.id}; "
+                "twee hoofdstukken leveren dezelfde bestandsnaam op"
+            )
     if file_row is None:
         file_row = File(
             library_root_id=download_root(session).id,

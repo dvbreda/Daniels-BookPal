@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, imageUrl } from "../api/client";
 import type { BookDetail } from "../api/types";
 import { useStoredState } from "../lib/useStoredState";
+import { asEpubFile } from "./epubFile";
 
 // Zelfde ritme als de stripleer: niet elke paginawissel meteen wegschrijven.
 const PROGRESS_DEBOUNCE_MS = 1200;
@@ -73,7 +74,9 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
 
         const response = await fetch(imageUrl.file(book.id));
         if (!response.ok) throw new Error(`kon het bestand niet ophalen (${response.status})`);
-        const blob = await response.blob();
+        // Als File, niet als Blob: foliate kijkt naar de bestandsnaam om het
+        // formaat te bepalen. Zie epubFile.ts.
+        const file = asEpubFile(await response.blob(), book.id);
         if (cancelled) return;
 
         const view = document.createElement("foliate-view") as FoliateView;
@@ -88,7 +91,7 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
           pending.current = { cfi: detail.cfi, percent: nextPercent };
         });
 
-        await view.open(blob);
+        await view.open(file);
         if (cancelled) return;
 
         // Verder waar je gebleven was. Een CFI van een ander apparaat werkt

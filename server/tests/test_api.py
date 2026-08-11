@@ -222,6 +222,20 @@ class TestPages:
         )
         assert scanned.get(f"/api/books/{book_id}/cover").status_code == 200
 
+    def test_file_has_a_real_media_type(self, scanned: TestClient):
+        """Clients bepalen het formaat mede op het mediatype; octet-stream
+        zegt niets."""
+        epub_id = next(
+            book["id"]
+            for book in scanned.get("/api/books", params={"kind": "epub"}).json()["items"]
+        )
+        response = scanned.get(f"/api/books/{epub_id}/file")
+        assert response.headers["content-type"] == "application/epub+zip"
+
+        comic_id = self._comic_book_id(scanned)
+        comic = scanned.get(f"/api/books/{comic_id}/file")
+        assert comic.headers["content-type"] == "application/vnd.comicbook+zip"
+
     def test_original_file_download(self, scanned: TestClient):
         book_id = next(
             book["id"]

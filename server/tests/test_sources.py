@@ -383,6 +383,31 @@ class TestServiceLayer:
         assert book.file_id is None
         assert book.source_ref is not None
 
+    def test_a_scan_does_not_steal_a_downloaded_chapter(
+        self, session: Session, temp_settings: Path
+    ):
+        """De scanner komt gedownloade hoofdstukken tegen in de downloadmap.
+        Die horen bij hun abonnement te blijven, niet in een serie te belanden
+        die op de mapnaam is verzonnen."""
+        from bookpal.library.scanner import scan_root
+
+        source_row = self._source_row(session)
+        series, _, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
+        book = session.query(Book).filter_by(series_id=series.id).first()
+        assert book is not None
+        source_service.download_book(session, make_source(), book)
+        original_title = book.title
+
+        root = source_service.download_root(session)
+        scan_root(session, root, force=True)
+        session.flush()
+
+        assert book.series_id == series.id
+        assert book.title == original_title
+        assert book.source_ref is not None
+        # Wat de scanner wél mag bijwerken.
+        assert book.page_count == 2
+
     def test_downloads_land_in_the_download_root(self, session: Session, temp_settings: Path):
         source_row = self._source_row(session)
         series, _, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
@@ -393,6 +418,62 @@ class TestServiceLayer:
         file_row = session.get(File, book.file_id)
         assert file_row is not None
         assert str(settings.download_dir.resolve()) in file_row.path
+
+
+class TestChapterPath:
+    def test_two_translations_of_one_chapter_get_different_paths(self, session: Session):
+        """Een bron kan meerdere vertalingen van hetzelfde hoofdstuk hebben.
+        Zonder onderscheid claimen die hetzelfde bestand, en Book.file_id is
+        uniek — dan loopt de tweede download stuk op de database."""
+        from bookpal.models import BookKind, Series
+
+        series = Series(title="Oishinbo", sort_title="oishinbo")
+        session.add(series)
+        session.flush()
+
+        eerste = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Tofu & Water",
+            volume="1",
+            number="1",
+            source_ref="aaaaaaaa-1111-2222-3333-444444444444",
+        )
+        tweede = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Tofu and Water",
+            volume="1",
+            number="1",
+            source_ref="bbbbbbbb-5555-6666-7777-888888888888",
+        )
+        session.add_all([eerste, tweede])
+        session.flush()
+
+        assert source_service.chapter_path(series, eerste) != source_service.chapter_path(
+            series, tweede
+        )
+
+    def test_the_path_is_stable_for_the_same_chapter(self, session: Session):
+        from bookpal.models import BookKind, Series
+
+        series = Series(title="Reeks", sort_title="reeks")
+        session.add(series)
+        session.flush()
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Deel",
+            volume="2",
+            number="3",
+            source_ref="cccccccc-9999-0000-1111-222222222222",
+        )
+        session.add(book)
+        session.flush()
+        # Opnieuw ophalen moet op hetzelfde pad uitkomen.
+        assert source_service.chapter_path(series, book) == source_service.chapter_path(
+            series, book
+        )
 
 
 class TestSafeName:

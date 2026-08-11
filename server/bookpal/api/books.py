@@ -156,6 +156,18 @@ def get_cover(
     )
 
 
+# Python's mimetypes kent cbz/cbr/cb7 niet en geeft voor epub op sommige
+# systemen niets terug; dan valt FileResponse terug op octet-stream. Clients
+# die op het mediatype afgaan zien zo'n bestand niet voor wat het is.
+FILE_MEDIA_TYPES = {
+    ".epub": "application/epub+zip",
+    ".pdf": "application/pdf",
+    ".cbz": "application/vnd.comicbook+zip",
+    ".cbr": "application/vnd.comicbook-rar",
+    ".cb7": "application/x-cb7",
+}
+
+
 @router.get("/{book_id}/file")
 def get_file(book_id: int, session: Session = Depends(get_session)) -> FileResponse:
     """Het originele bestand.
@@ -166,4 +178,8 @@ def get_file(book_id: int, session: Session = Depends(get_session)) -> FileRespo
     """
     book = deps.get_book(session, book_id)
     path = deps.book_file_path(session, book)
-    return FileResponse(path, filename=path.name)
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type=FILE_MEDIA_TYPES.get(path.suffix.lower()),
+    )
