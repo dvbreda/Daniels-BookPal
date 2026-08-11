@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from bookpal.models import Series
+from bookpal.config import settings
+from bookpal.models import Series, Translation
+from bookpal.translate.base import Bubble, PageResult
 
 
 class TestLiteBrowsing:
@@ -132,3 +134,71 @@ class TestLiteReading:
         response = client.get("/lite")
         assert "<script>alert(1)</script>" not in response.text
         assert "&lt;script&gt;alert(1)&lt;/script&gt;" in response.text
+
+
+class TestLiteTranslation:
+    """De vertaallaag als losse doorzichtige PNG (M8).
+
+    Lite heeft geen JavaScript, dus aan- en uitzetten is een gewone link en de
+    laag ligt er met CSS overheen. Dat werkt in de Kobo-browser.
+    """
+
+    def _comic_book_id(self, client: TestClient) -> int:
+        series_id = next(
+            item["id"]
+            for item in client.get("/api/series").json()["items"]
+            if item["title"] == "Storm"
+        )
+        return int(client.get(f"/api/series/{series_id}").json()["books"][0]["id"])
+
+    def _translate(self, session: Session, book_id: int, page: int = 0) -> None:
+        session.add(
+            Translation(
+                book_id=book_id,
+                page_index=page,
+                target_lang=settings.translate_lang,
+                provider="gemini",
+                payload=PageResult(
+                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.4, "HI", "HOI")]
+                ).to_payload(),
+            )
+        )
+        session.commit()
+
+    def test_no_toggle_when_the_page_is_not_translated(self, scanned: TestClient):
+        """Een link naar een vertaling die niet bestaat, levert een lege laag
+        en een verwarde lezer op."""
+        book_id = self._comic_book_id(scanned)
+        response = scanned.get(f"/lite/books/{book_id}/read/0")
+        assert "vertaal=1" not in response.text
+        assert "/overlay" not in response.text
+
+    def test_a_translated_page_offers_the_toggle(self, scanned: TestClient, session: Session):
+        book_id = self._comic_book_id(scanned)
+        self._translate(session, book_id)
+        response = scanned.get(f"/lite/books/{book_id}/read/0")
+        assert "vertaal=1" in response.text
+        assert "/overlay" not in response.text  # nog niet aangezet
+
+    def test_switching_it_on_stacks_the_layer(self, scanned: TestClient, session: Session):
+        book_id = self._comic_book_id(scanned)
+        self._translate(session, book_id)
+        response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
+        assert f'/api/books/{book_id}/pages/0/overlay' in response.text
+        assert 'class="stack"' in response.text
+        assert "Origineel" in response.text
+
+    def test_the_setting_survives_turning_the_page(self, scanned: TestClient, session: Session):
+        """Je zet het één keer aan en bladert daarna gewoon door."""
+        book_id = self._comic_book_id(scanned)
+        self._translate(session, book_id)
+        response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
+        assert f'/lite/books/{book_id}/read/1?vertaal=1' in response.text
+
+    def test_the_page_image_itself_is_not_baked(self, scanned: TestClient, session: Session):
+        """De pagina blijft één gedeelde afbeelding; alleen de laag komt erbij.
+        Anders staat dezelfde pagina twee keer in de cache en over de lijn."""
+        book_id = self._comic_book_id(scanned)
+        self._translate(session, book_id)
+        response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
+        assert "translate=" not in response.text

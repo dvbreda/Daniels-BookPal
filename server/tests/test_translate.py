@@ -17,7 +17,7 @@ from bookpal.config import settings as app_settings
 from bookpal.models import Book, BookKind, Series, Translation
 from bookpal.translate.base import Bubble, BubbleKind, PageResult, TranslationError
 from bookpal.translate.gemini import GeminiBubbleTranslator, _to_bubble
-from bookpal.translate.overlay import _fit, bake, draw_bubbles
+from bookpal.translate.overlay import _fit, bake, draw_bubbles, render_layer
 from bookpal.translate.queue import TranslationQueue
 from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
 
@@ -196,6 +196,32 @@ class TestOverlay:
         page = Image.new("L", (100, 100), 200)
         result = draw_bubbles(page, [Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")])
         assert result.mode == "L"
+
+    def test_the_layer_is_transparent_where_there_is_no_bubble(self):
+        """Het hele punt van een losse laag: de pagina eronder moet zichtbaar
+        blijven waar geen tekst staat."""
+        data = render_layer((60, 60), [Bubble(0.0, 0.0, 0.4, 0.4, "HI", "HOI")])
+        with Image.open(BytesIO(data)) as layer:
+            assert layer.mode == "RGBA"
+            assert layer.getpixel((55, 55))[3] == 0  # rechtsonder: niets getekend
+            assert layer.getpixel((5, 5))[3] == 255  # in de ballon: dekkend
+
+    def test_the_layer_has_the_size_it_was_asked_for(self):
+        data = render_layer((123, 45), [])
+        with Image.open(BytesIO(data)) as layer:
+            assert layer.size == (123, 45)
+
+    def test_a_layer_without_bubbles_is_fully_transparent(self):
+        data = render_layer((20, 20), [])
+        with Image.open(BytesIO(data)) as layer:
+            assert layer.getextrema()[3] == (0, 0)
+
+    def test_the_layer_is_much_smaller_than_the_page(self):
+        """De reden om een laag te sturen in plaats van de pagina opnieuw: hij
+        kost een fractie van de bytes."""
+        page = _png(800, 1200)
+        layer = render_layer((800, 1200), [Bubble(0.1, 0.1, 0.4, 0.2, "HI", "HOI")])
+        assert len(layer) < len(page)
 
     def test_baking_keeps_the_format(self):
         data = bake(_png(), [Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")], media_type="image/png")
@@ -426,6 +452,58 @@ class TestApi:
         baked = scanned.get(f"/api/books/{book_id}/pages/0", params={"translate": "nl"})
         assert baked.status_code == 200
         assert baked.content != plain.content
+
+    def test_the_overlay_is_a_png_the_size_of_the_page(
+        self, scanned: TestClient, session: Session
+    ):
+        book_id = _comic_id(scanned)
+        session.add(
+            Translation(
+                book_id=book_id,
+                page_index=0,
+                target_lang="nl",
+                provider="gemini",
+                payload=PageResult(
+                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]
+                ).to_payload(),
+            )
+        )
+        session.commit()
+
+        page = scanned.get(f"/api/books/{book_id}/pages/0")
+        overlay = scanned.get(f"/api/books/{book_id}/pages/0/overlay")
+        assert overlay.status_code == 200
+        assert overlay.headers["content-type"] == "image/png"
+        with Image.open(BytesIO(page.content)) as a, Image.open(BytesIO(overlay.content)) as b:
+            assert a.size == b.size
+            assert b.mode == "RGBA"
+
+    def test_an_untranslated_overlay_is_a_404(self, scanned: TestClient):
+        """Niet een lege laag: de client moet weten dat er niets te tonen is."""
+        book_id = _comic_id(scanned)
+        assert scanned.get(f"/api/books/{book_id}/pages/0/overlay").status_code == 404
+
+    def test_the_overlay_follows_the_profile(self, scanned: TestClient, session: Session):
+        """Anders past de laag niet over een Kobo-pagina van een andere maat."""
+        book_id = _comic_id(scanned)
+        session.add(
+            Translation(
+                book_id=book_id,
+                page_index=0,
+                target_lang="nl",
+                provider="gemini",
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "A", "B")]).to_payload(),
+            )
+        )
+        session.commit()
+
+        for profile in ("web", "thumb"):
+            page = scanned.get(f"/api/books/{book_id}/pages/0", params={"profile": profile})
+            overlay = scanned.get(
+                f"/api/books/{book_id}/pages/0/overlay", params={"profile": profile}
+            )
+            with Image.open(BytesIO(page.content)) as a, Image.open(BytesIO(overlay.content)) as b:
+                assert a.size == b.size, profile
 
     def test_queueing_a_book_without_a_key_is_refused(self, scanned: TestClient):
         book_id = _comic_id(scanned)

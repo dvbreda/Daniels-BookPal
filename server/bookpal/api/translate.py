@@ -10,11 +10,12 @@ Twee manieren om aan een vertaalde pagina te komen:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
 from bookpal.db import get_session
+from bookpal.images import ImageProfile
 from bookpal.schemas import (
     BubbleOut,
     PageTranslationOut,
@@ -25,7 +26,13 @@ from bookpal.schemas import (
 from bookpal.translate import get_translator, is_configured
 from bookpal.translate.base import PageResult, TranslationError
 from bookpal.translate.queue import queue
-from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
+from bookpal.translate.service import (
+    find,
+    plan_pages,
+    render_layer_for,
+    translate_page,
+    translated_pages,
+)
 
 from . import deps
 
@@ -105,6 +112,43 @@ def make_page_translation(
     # Nu we tóch weten waar je zit: zet vast klaar wat eraan komt.
     queue.notify_reading(book.id, page_index + 1, target_lang)
     return _to_out(book.id, page_index, target_lang, result)
+
+
+@router.get("/{book_id}/pages/{page_index}/overlay")
+def get_page_overlay(
+    book_id: int,
+    page_index: int,
+    profile: ImageProfile = deps.ProfileDep,
+    lang: str | None = Query(default=None, max_length=8),
+    session: Session = Depends(get_session),
+) -> Response:
+    """De vertaallaag als doorzichtige PNG, op de maat van deze pagina.
+
+    Naast de ingebakken variant (``/pages/{n}?translate=nl``), en voor de meeste
+    clients de betere: de pagina zelf blijft één gedeelde afbeelding, de laag is
+    een fractie van die bytes, en aan- of uitzetten is een laag tonen of
+    verbergen in plaats van de pagina opnieuw ophalen. Werkt ook zonder
+    JavaScript — twee gestapelde ``img``'s met CSS doen het in de Kobo-browser.
+    """
+    book = deps.get_book(session, book_id)
+    target_lang = _lang(lang)
+    row = find(session, book.id, page_index, target_lang, PROVIDER)
+    if row is None:
+        raise HTTPException(status_code=404, detail="deze pagina is nog niet vertaald")
+
+    try:
+        data = render_layer_for(session, book, page_index, profile, row)
+    except TranslationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return Response(
+        content=data,
+        media_type="image/png",
+        # Dezelfde sleutel als de cache: de vertaling zit in het pad verwerkt,
+        # dus opnieuw vertalen levert een andere URL-inhoud op en mag de
+        # browser deze lang vasthouden.
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
 
 
 @router.post("/{book_id}/translate", response_model=TranslateBookOut)

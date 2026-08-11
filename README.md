@@ -57,10 +57,12 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
 - **Tekstwolkjes vertalen** (in de stripleer): één Gemini-aanroep per pagina
   doet detectie, uitlezen en vertalen tegelijk — het model ziet de hele
   pagina, dus een ballon wordt niet los van zijn context vertaald. De web-lezer
-  legt er een overlay overheen (tik op een ballon voor het origineel); voor de
-  Kobo bakt de server de vertaling in het beeld. Een achtergrondwachtrij loopt
-  vooruit op je leespositie. Zet `BOOKPAL_GEMINI_API_KEY` om het aan te
-  zetten — zonder sleutel blijft de knop verborgen.
+  legt er een overlay overheen (tik op een ballon voor het origineel); **BookPal
+  Lite** krijgt de vertaling als doorzichtige PNG over de pagina, met een link
+  om 'm aan of uit te zetten — dus ook op de Kobo, zonder JavaScript. Een
+  achtergrondwachtrij loopt vooruit op je leespositie. Zet
+  `BOOKPAL_GEMINI_API_KEY` om het aan te zetten — zonder sleutel blijft de knop
+  verborgen.
 
 Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4)
 en de Kobo-app (M9/M10).

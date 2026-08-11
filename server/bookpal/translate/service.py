@@ -8,16 +8,22 @@ Kobo-versie, iOS later — leest dezelfde rij.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import threading
+from io import BytesIO
 from pathlib import Path
 
+from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
-from bookpal.images import get_profile, open_source, render_page, source_id_for
+from bookpal.images import ImageProfile, get_profile, open_source, render_page, source_id_for
 from bookpal.models import Book, File, Translation
 from bookpal.translate.base import BubbleTranslator, PageResult, TranslationError
+from bookpal.translate.overlay import render_layer
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +49,14 @@ def find(
 
 def render_for_translation(session: Session, book: Book, page_index: int) -> tuple[bytes, str]:
     """De pagina als bytes, in hetzelfde profiel dat de browser toont."""
+    return render_for_translation_profile(
+        session, book, page_index, get_profile(TRANSLATE_PROFILE)
+    )
+
+
+def render_for_translation_profile(
+    session: Session, book: Book, page_index: int, profile: ImageProfile
+) -> tuple[bytes, str]:
     if book.file_id is None:
         raise TranslationError("dit boek heeft nog geen lokaal bestand")
     file_row = session.get(File, book.file_id)
@@ -53,7 +67,6 @@ def render_for_translation(session: Session, book: Book, page_index: int) -> tup
     if not path.is_file():
         raise TranslationError("bestand niet gevonden")
 
-    profile = get_profile(TRANSLATE_PROFILE)
     source = open_source(path)
     try:
         rendered = render_page(source, page_index, profile, source_id=source_id_for(path))
@@ -94,6 +107,38 @@ def translate_page(
     existing.payload = result.to_payload()
     session.commit()
     return result
+
+
+def render_layer_for(
+    session: Session, book: Book, page_index: int, profile: ImageProfile, row: Translation
+) -> bytes:
+    """De vertaallaag als doorzichtige PNG, op de maat van deze pagina in dit
+    profiel — en gecached, want tekst zetten is niet gratis op een N100.
+
+    De cachesleutel bevat de opgeslagen vertaling zelf, dus opnieuw vertalen
+    (``force``) levert vanzelf een nieuwe sleutel op in plaats van de oude laag
+    te blijven tonen.
+    """
+    image, _media_type = render_for_translation_profile(session, book, page_index, profile)
+    with Image.open(BytesIO(image)) as page:
+        size = page.size
+
+    stamp = hashlib.sha256(
+        json.dumps(row.payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:16]
+    key = hashlib.sha256(
+        f"overlay|{book.id}|{page_index}|{profile.name}|{size[0]}x{size[1]}|{stamp}".encode()
+    ).hexdigest()
+    path = settings.cache_dir / "overlay" / key[:2] / key[2:4] / f"{key}.png"
+    if path.exists():
+        return path.read_bytes()
+
+    data = render_layer(size, PageResult.from_payload(row.payload).bubbles)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_suffix(f".{threading.get_ident()}.tmp")
+    temp.write_bytes(data)
+    temp.replace(path)
+    return data
 
 
 def translated_pages(session: Session, book_id: int, target_lang: str, provider: str) -> set[int]:

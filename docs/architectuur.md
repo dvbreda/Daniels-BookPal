@@ -312,10 +312,27 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 
     `queue.py` is geen FIFO maar een gesorteerde wachtrij: een voortgangsupdate zet de pagina's vlak
     vóór je uit vooraan, zodat de NAS vooruitloopt op wat je leest. Eén thread, want op een N100
-    telt het uitserveren van beeld zwaarder dan snel vertalen. De web-lezer tekent een HTML-overlay
-    (tik op een ballon en je ziet het origineel); voor de Kobo en BookPal Lite bakt
-    `overlay.py` de vertaling in het beeld, met behoud van de geditherde grijswaarden — die naar RGB
-    tillen zou precies het werk weggooien waar het Kobo-profiel voor bestaat.
+    telt het uitserveren van beeld zwaarder dan snel vertalen.
+
+    Er zijn **drie** manieren om de vertaling te tonen, en welke de beste is hangt af van de client:
+
+    | Vorm | Endpoint | Voor wie |
+    |---|---|---|
+    | JSON-vlakken | `/pages/{n}/translation` | Web-lezer: tekent een HTML-overlay, blijft scherp bij zoomen en je kunt op een ballon tikken voor het origineel |
+    | Doorzichtige PNG | `/pages/{n}/overlay` | BookPal Lite, Kobo, straks iOS: een laag over de pagina, met CSS te stapelen zonder JavaScript |
+    | Ingebakken pagina | `/pages/{n}?translate=nl` | Clients die maar één plat plaatje aankunnen, zoals de eigen Kobo-app van M9 |
+
+    De losse laag is voor de meeste clients de betere: de pagina zelf blijft **één gedeelde
+    afbeelding**, dus aan- en uitzetten hoeft die pagina niet opnieuw op te halen. Op een echte
+    pagina uit de bibliotheek gemeten: de laag is 43 kB tegen 249 kB voor de pagina (17 %), en hij
+    komt in 6 ms uit de cache waar inbakken 328 ms kost — élke aanvraag opnieuw, want een ingebakken
+    pagina is niet te cachen zonder van elke pagina twee volledige varianten te bewaren. De
+    cachesleutel van de laag bevat de opgeslagen vertaling zelf, dus opnieuw vertalen levert vanzelf
+    een nieuwe laag op in plaats van de oude te blijven tonen.
+
+    Alle drie de vormen delen hetzelfde tekenwerk (`_draw_onto`), zodat de Kobo en de web-app niet
+    uit elkaar kunnen gaan lopen. Het inbakken behoudt bovendien de geditherde grijswaarden — die
+    naar RGB tillen zou precies het werk weggooien waar het Kobo-profiel voor bestaat.
 
 ## Verificatie
 

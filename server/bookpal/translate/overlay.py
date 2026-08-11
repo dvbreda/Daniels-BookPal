@@ -150,10 +150,23 @@ def draw_bubbles(image: Image.Image, bubbles: list[Bubble]) -> Image.Image:
         return image
 
     canvas = image if image.mode in ("RGB", "L") else image.convert("RGB")
-    white: int | tuple[int, int, int] = 255 if canvas.mode == "L" else (255, 255, 255)
-    black: int | tuple[int, int, int] = 0 if canvas.mode == "L" else (0, 0, 0)
-    draw = ImageDraw.Draw(canvas)
-    width, height = canvas.size
+    white: int | tuple[int, ...] = 255 if canvas.mode == "L" else (255, 255, 255)
+    black: int | tuple[int, ...] = 0 if canvas.mode == "L" else (0, 0, 0)
+    _draw_onto(ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black)
+    return canvas
+
+
+def _draw_onto(
+    draw: ImageDraw.ImageDraw,
+    size: tuple[int, int],
+    bubbles: list[Bubble],
+    *,
+    white: int | tuple[int, ...],
+    black: int | tuple[int, ...],
+) -> None:
+    """Het tekenwerk zelf, gedeeld door de ingebakken pagina en de losse laag —
+    zodat de Kobo en de web-app niet uit elkaar kunnen gaan lopen."""
+    width, height = size
     pad = _PADDING * width
 
     for bubble in bubbles:
@@ -181,7 +194,34 @@ def draw_bubbles(image: Image.Image, bubbles: list[Bubble]) -> Image.Image:
             )
             cursor += line_height
 
-    return canvas
+
+def render_layer(size: tuple[int, int], bubbles: list[Bubble]) -> bytes:
+    """Alleen de tekstvlakken, op een doorzichtige achtergrond (PNG).
+
+    Waarom naast ``bake``: zo blijft de pagina zelf één gedeelde afbeelding.
+    Inbakken maakt van elke pagina twee volledige plaatjes — één met en één
+    zonder vertaling — die allebei apart door de cache en over de lijn moeten,
+    en het hercodeert die pagina bij elke aanvraag opnieuw. Een losse laag is
+    een fractie van die bytes, is één keer te renderen, en de client zet 'm er
+    met gewone CSS overheen. Aan- en uitzetten is dan een kwestie van een laag
+    tonen of verbergen in plaats van de pagina opnieuw ophalen.
+
+    Ook zonder JavaScript te gebruiken: BookPal Lite stapelt twee ``img``'s met
+    ``position: absolute``, en dat doet de Kobo-browser gewoon.
+    """
+    layer = Image.new("RGBA", size, (0, 0, 0, 0))
+    if not bubbles:
+        return _to_png(layer)
+
+    draw = ImageDraw.Draw(layer)
+    _draw_onto(draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255))
+    return _to_png(layer)
+
+
+def _to_png(image: Image.Image) -> bytes:
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def bake(data: bytes, bubbles: list[Bubble], *, media_type: str) -> bytes:

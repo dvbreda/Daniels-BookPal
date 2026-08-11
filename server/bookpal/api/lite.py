@@ -20,9 +20,11 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from bookpal.config import settings
 from bookpal.db import current_user, get_session
 from bookpal.images import get_profile
 from bookpal.models import BookKind, Series
+from bookpal.translate import service as translation_service
 
 from . import deps
 
@@ -40,6 +42,11 @@ a { display: block; padding: 0.9em 0.2em; color: #000; text-decoration: none; }
 .nav a { flex: 1; text-align: center; border: 1px solid #888; margin: 0 0.3em; }
 .page { text-align: center; }
 .page img { max-width: 100%; height: auto; }
+/* De vertaallaag is een doorzichtige PNG op exact dezelfde maat, dus hij hoeft
+   alleen over de pagina gelegd te worden. Geen JavaScript: aan- en uitzetten is
+   een gewone link naar dezelfde pagina zonder ?vertaal. */
+.stack { position: relative; display: inline-block; max-width: 100%; }
+.stack .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .back { display: inline-block; margin-bottom: 0.5em; }
 """
 
@@ -73,8 +80,13 @@ def _profile_param(
 ProfileParam = Depends(_profile_param)
 
 
-def _qs(profile: str | None) -> str:
-    return f"?profile={profile}" if profile else ""
+def _qs(profile: str | None, translated: bool = False) -> str:
+    parts = []
+    if profile:
+        parts.append(f"profile={profile}")
+    if translated:
+        parts.append("vertaal=1")
+    return f"?{'&'.join(parts)}" if parts else ""
 
 
 @router.get("", response_class=HTMLResponse)
@@ -175,6 +187,7 @@ def lite_read(
     book_id: int,
     page: int,
     profile: str | None = ProfileParam,
+    vertaal: bool = Query(default=False),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     book = deps.get_book(session, book_id)
@@ -196,8 +209,11 @@ def lite_read(
         finished=finished,
     )
 
-    query = _qs(profile)
-    img_src = f"/api/books/{book.id}/pages/{page}{query}"
+    # De leeslinks houden de vertaalstand vast, zodat je 'm één keer aanzet en
+    # daarna gewoon doorbladert.
+    query = _qs(profile, vertaal)
+    img_query = _qs(profile)
+    img_src = f"/api/books/{book.id}/pages/{page}{img_query}"
 
     nav_class = "nav rtl" if book.right_to_left else "nav"
     links = []
@@ -210,12 +226,34 @@ def lite_read(
     else:
         links.append("<span></span>")
 
+    # Alleen aanbieden als er iets te tonen valt: een link naar een vertaling
+    # die nog niet bestaat, levert een lege laag en een verwarde lezer op.
+    has_translation = (
+        translation_service.find(session, book.id, page, settings.translate_lang, "gemini")
+        is not None
+    )
+    layer = ""
+    toggle = ""
+    if has_translation:
+        if vertaal:
+            layer = (
+                f'<img class="layer" src="/api/books/{book.id}/pages/{page}/overlay'
+                f'{img_query}" alt="vertaling">'
+            )
+            toggle = f'<a href="/lite/books/{book.id}/read/{page}{_qs(profile)}">Origineel</a>'
+        else:
+            toggle = (
+                f'<a href="/lite/books/{book.id}/read/{page}{_qs(profile, True)}">Vertaling</a>'
+            )
+
     back_href = f"/lite/series/{book.series_id}{query}"
     body = (
         f'<a class="back" href="{back_href}">&laquo; {escape(book.title)}</a>'
         f'<div class="{nav_class}">{"".join(links)}</div>'
-        f'<div class="page"><img src="{img_src}" alt="pagina {page + 1}">'
-        f"<div class=\"meta\">pagina {page + 1} / {book.page_count}</div></div>"
+        f'<div class="page"><span class="stack">'
+        f'<img src="{img_src}" alt="pagina {page + 1}">{layer}</span>'
+        f"<div class=\"meta\">pagina {page + 1} / {book.page_count}{' · ' if toggle else ''}"
+        f"{toggle}</div></div>"
         f'<div class="{nav_class}">{"".join(links)}</div>'
     )
     return _page(f"{book.title} — {page + 1}/{book.page_count}", body)
