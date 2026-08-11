@@ -2,8 +2,9 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router-dom";
 
-import { api, imageUrl } from "../api/client";
-import type { BookKind, OriginRegion, Series } from "../api/types";
+import { api } from "../api/client";
+import type { BookKind, OriginRegion } from "../api/types";
+import { SeriesCard } from "../components/SeriesCard";
 import { KIND_LABELS, REGION_LABELS } from "../lib/labels";
 import { pickCoverProfile } from "../lib/profile";
 
@@ -73,6 +74,9 @@ export function LibraryPage() {
           ))}
         <Link to="/tabs" className="ml-auto text-xs text-slate-500 hover:text-slate-300">
           Tabs beheren
+        </Link>
+        <Link to="/collecties" className="text-xs text-slate-500 hover:text-slate-300">
+          Collecties
         </Link>
       </div>
 
@@ -154,44 +158,3 @@ function FilterGroup<T extends string>({
   );
 }
 
-function SeriesCard({ series, coverProfile }: { series: Series; coverProfile: string }) {
-  return (
-    <Link
-      to={`/serie/${series.id}`}
-      className="group overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent"
-    >
-      <div className="aspect-[2/3] bg-ink-700">
-        <CoverImage seriesId={series.id} profile={coverProfile} />
-      </div>
-      <div className="p-2">
-        <p className="truncate text-sm font-medium text-slate-100">{series.title}</p>
-        <p className="text-xs text-slate-400">
-          {series.book_count} {series.book_count === 1 ? "deel" : "delen"}
-          {series.origin_region !== "unknown" && ` · ${REGION_LABELS[series.origin_region]}`}
-        </p>
-      </div>
-    </Link>
-  );
-}
-
-/** De omslag van een serie is die van het eerste deel. */
-function CoverImage({ seriesId, profile }: { seriesId: number; profile: string }) {
-  const { data } = useQuery({
-    queryKey: ["series-detail", seriesId],
-    queryFn: () => api.seriesDetail(seriesId),
-    staleTime: 5 * 60 * 1000,
-  });
-  const first = data?.books[0];
-  if (!first) return <div className="h-full w-full bg-ink-700" />;
-  return (
-    <img
-      src={imageUrl.cover(first.id, profile)}
-      alt=""
-      loading="lazy"
-      className="h-full w-full object-cover"
-      onError={(event) => {
-        event.currentTarget.style.visibility = "hidden";
-      }}
-    />
-  );
-}

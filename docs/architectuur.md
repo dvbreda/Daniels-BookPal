@@ -13,9 +13,8 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0 en M1 zijn gebouwd, M2 en M3 zijn
-deels gebouwd** (M2: voortgang-sync, Kobo-beeldprofiel, BookPal Lite en OPDS, niet de
-Nickel-integratie; M3: de regel-engine met tabs-UI, nog geen UI voor slimme collecties); de latere
+Dit document legt de architectuur en het datamodel vast. **M0, M1 en M3 zijn gebouwd, M2 deels**
+(voortgang-sync, Kobo-beeldprofiel, BookPal Lite en OPDS wel, de Nickel-integratie niet); de latere
 milestones staan erin zodat de vroege keuzes ze niet blokkeren.
 
 ## Vastgelegde keuzes
@@ -205,7 +204,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 | **M9** | `bookpal-kobo`: FBInk, touch, tabs, comics, offline, NickelMenu-installer | Eigen native comic-lezer op de Kobo |
 | **M10** | `bookpal-kobo`: epub + pdf via crengine en MuPDF | Volwaardige eigen lezer op de Kobo |
 
-## M0 + M1 — gebouwd, M2 + M3 gedeeltelijk
+## M0 + M1 + M3 — gebouwd, M2 gedeeltelijk
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
    libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
@@ -232,15 +231,16 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    beeldprofielen (`images/profiles.py`) waren al vanaf M1 aanwezig. Nog open: Laag B, de
    Nickel-integratie in de instellingen — die leunt op reverse-engineering van
    `KoboReader.sqlite` en is dus alleen te bouwen/testen met een echt apparaat erbij.
-7. **M3, deels** — `bookpal/tabs/rules.py` compileert een regelboom naar een SQLAlchemy-expressie
+7. **M3** — `bookpal/tabs/rules.py` compileert een regelboom naar een SQLAlchemy-expressie
    op `Series`: `and`/`or`/`not` plus condities op `extension`, `kind`, `origin_region`, `root`,
    `publisher`, `tag`, `series`, `source` en `reading_status`. Tags gaan via het gedocumenteerde
    `json_each`-idioom voor SQLite; `reading_status` via een dubbele `NOT EXISTS` (de ORM kent geen
    `relationship.all()`). `/api/tabs` en `/api/collections` delen die ene engine. De web-app heeft
-   een tabbalk en een beheerscherm (`/tabs`) met een voorwaarden-bouwer voor het gangbare geval
-   (platte "en") en een JSON-modus voor geneste `and`/`or`/`not`. Slimme collecties hebben de
-   API al, maar nog geen beheerscherm; `group_by` wordt opgeslagen maar de server groepeert de
-   uitkomst nog niet — dat komt zodra "submappen als collectie" er echt toe doet.
+   een tabbalk plus beheerschermen voor tabs (`/tabs`) en collecties (`/collecties`), met een
+   gedeelde `RuleEditor`: een voorwaarden-bouwer voor het gangbare geval (platte "en") en een
+   JSON-modus voor geneste `and`/`or`/`not`. Groeperen (`group_by`) gebeurt voorlopig client-side
+   in `CollectionViewPage`; server-side groepering komt terug zodra "submappen als collectie"
+   op grote mappen gaat knellen.
 
 ## Verificatie
 

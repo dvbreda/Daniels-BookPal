@@ -26,14 +26,18 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   bijgewerkt zonder dat het apparaat iets hoeft uit te voeren.
 - **OPDS** (`/opds`): catalogfeed voor apps die dat al spreken, zoals Chunky of
   KyBook.
-- **Tabs** (`/tabs` in de web-app): opslaanbare regels — combinaties van
-  soort, bestandstype, herkomst, uitgever, label, map, bron en leesstatus —
-  die naar een SQLAlchemy-query compileren. Slimme collecties (`/api/collections`)
-  delen dezelfde regel-engine; die hebben nog geen eigen beheerscherm.
+- **Tabs en slimme collecties** (`/tabs` en `/collecties` in de web-app):
+  opslaanbare regels — combinaties van soort, bestandstype, herkomst, uitgever,
+  label, map, bron en leesstatus — die naar een SQLAlchemy-query compileren.
+  Eén engine voor allebei; collecties groeperen hun uitkomst bovendien op
+  uitgever of map.
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), UI voor slimme
-collecties (rest van M3), iOS (M4), MangaDex (M5), vertaling (M6/M8),
-trackers (M7) en de Kobo-app (M9/M10).
+Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4),
+MangaDex (M5), vertaling (M6/M8), trackers (M7) en de Kobo-app (M9/M10).
+
+Let op: **epub gaat nu nog als download**, niet als lezer in de browser —
+herschikbare tekst heeft een client-side lezer nodig (foliate-js, gepland in
+M6). Strips en pdf lezen wel gewoon in de web-app.
 
 ## Draaien op de NAS
 

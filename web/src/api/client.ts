@@ -105,12 +105,15 @@ export const api = {
     request<Paginated<Series>>(`/api/tabs/${id}/series${queryString({ ...query })}`),
 
   collections: () => request<Collection[]>("/api/collections"),
+  collection: (id: number) => request<Collection>(`/api/collections/${id}`),
   createCollection: (body: CollectionIn) =>
     request<Collection>("/api/collections", { method: "POST", body: JSON.stringify(body) }),
   updateCollection: (id: number, body: CollectionIn) =>
     request<Collection>(`/api/collections/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteCollection: (id: number) =>
     request<void>(`/api/collections/${id}`, { method: "DELETE" }),
+  collectionSeries: (id: number, query: { offset?: number; limit?: number } = {}) =>
+    request<Paginated<Series>>(`/api/collections/${id}/series${queryString({ ...query })}`),
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */

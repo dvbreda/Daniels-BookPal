@@ -1,6 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Route, Routes } from "react-router-dom";
 
+import { CollectionsPage } from "./pages/CollectionsPage";
+import { CollectionViewPage } from "./pages/CollectionViewPage";
 import { LibraryPage } from "./pages/LibraryPage";
 import { ReaderPage } from "./pages/ReaderPage";
 import { SeriesPage } from "./pages/SeriesPage";
@@ -29,6 +31,8 @@ export function App() {
           <Route path="/lezen/:id" element={<ReaderPage />} />
           <Route path="/instellingen" element={<SettingsPage />} />
           <Route path="/tabs" element={<TabsPage />} />
+          <Route path="/collecties" element={<CollectionsPage />} />
+          <Route path="/collectie/:id" element={<CollectionViewPage />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
