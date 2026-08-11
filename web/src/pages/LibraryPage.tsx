@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { BookKind, OriginRegion } from "../api/types";
 import { SeriesCard } from "../components/SeriesCard";
+import { ThemeToggle } from "../components/ThemeToggle";
 import { KIND_LABELS, REGION_LABELS } from "../lib/labels";
 import { pickCoverProfile } from "../lib/profile";
 
@@ -44,6 +45,7 @@ export function LibraryPage() {
           placeholder="Zoek een serie…"
           className="ml-auto w-64 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
         />
+        <ThemeToggle />
         <Link to="/instellingen" className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-200">
           Instellingen
         </Link>
@@ -105,7 +107,7 @@ export function LibraryPage() {
       )}
 
       {isLoading && <p className="text-slate-400">Laden…</p>}
-      {error && <p className="text-red-400">Kon de bibliotheek niet laden.</p>}
+      {error && <p className="text-danger">Kon de bibliotheek niet laden.</p>}
       {data && data.items.length === 0 && (
         <div className="rounded border border-ink-600 p-8 text-center text-slate-400">
           <p>Niets gevonden.</p>

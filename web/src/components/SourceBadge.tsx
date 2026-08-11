@@ -35,7 +35,7 @@ export function SourceBadge({
     const days = Math.max(0, Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000));
     return (
       <Badge
-        className={`bg-ink-900/80 text-amber-300 ${className}`}
+        className={`bg-ink-900/80 text-warning ${className}`}
         title={`Tijdelijk opgehaald; wordt over ${days} dagen weer opgeruimd`}
       >
         ⏳ {days}d

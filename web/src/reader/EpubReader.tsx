@@ -36,6 +36,12 @@ const THEMES = {
 
 type ThemeName = keyof typeof THEMES;
 
+/** Volg de app: licht als die licht staat, anders donker. */
+function defaultReaderTheme(): ThemeName {
+  if (typeof document === "undefined") return "donker";
+  return document.documentElement.getAttribute("data-theme") === "light" ? "licht" : "donker";
+}
+
 /**
  * Epub lezen in de browser met foliate-js (M6).
  *
@@ -56,7 +62,9 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
   const [percent, setPercent] = useState<number>(book.progress?.percent ?? 0);
 
   const [fontSize, setFontSize] = useStoredState("epub.fontSize", 100);
-  const [theme, setTheme] = useStoredState<ThemeName>("epub.theme", "donker");
+  // Begin bij wat de app doet: wie overdag licht leest wil niet dat elk boek
+  // eerst zwart opent. Daarna is het een eigen keuze die blijft staan.
+  const [theme, setTheme] = useStoredState<ThemeName>("epub.theme", defaultReaderTheme());
 
   const pending = useRef<{ cfi: string; percent: number } | null>(null);
 

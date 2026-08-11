@@ -44,7 +44,7 @@ export function SeriesPage() {
   });
 
   if (isLoading) return <p className="p-6 text-slate-400">Laden…</p>;
-  if (!data) return <p className="p-6 text-red-400">Serie niet gevonden.</p>;
+  if (!data) return <p className="p-6 text-danger">Serie niet gevonden.</p>;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6">
@@ -172,7 +172,7 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             {download.isPending ? "Ophalen…" : "Ophalen"}
           </button>
           {download.isError && (
-            <p className="mt-1 text-xs text-red-400">
+            <p className="mt-1 text-xs text-danger">
               {download.error instanceof ApiError ? download.error.message : "Ophalen mislukt."}
             </p>
           )}

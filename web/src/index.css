@@ -2,6 +2,70 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Kleuren staan als CSS-variabelen zodat lichte en donkere modus dezelfde
+ * klassen kunnen gebruiken. De alternatieven waren slechter: `dark:`-varianten
+ * zouden op honderden plekken moeten, en de app is donker begonnen, dus die
+ * varianten zouden juist de lichte modus moeten beschrijven.
+ *
+ * Let op de betekenis van de getallen: die zeggen hoe sterk iets afsteekt
+ * tegen de achtergrond, niet hoe licht de kleur is. `ink-900` is altijd de
+ * pagina zelf en `slate-100` altijd de best leesbare tekst — in beide modi.
+ * Anders zou elke klasse in de app omgedraaid moeten worden.
+ *
+ * Waarden zijn losse RGB-kanalen, want Tailwind heeft dat nodig om opacity
+ * (`bg-ink-900/70`) te kunnen toepassen.
+ */
+:root {
+  /* Vlakken, van de pagina naar de voorgrond. */
+  --ink-900: 11 13 18;
+  --ink-800: 20 24 33;
+  --ink-700: 30 36 48;
+  --ink-600: 43 51 66;
+
+  /* Tekst, van sterkst naar zwakst. */
+  --slate-100: 241 245 249;
+  --slate-200: 226 232 240;
+  --slate-300: 203 213 225;
+  --slate-400: 148 163 184;
+  --slate-500: 100 116 139;
+  --slate-600: 71 85 105;
+
+  --accent: 224 164 88;
+
+  /* Meldingen. Ook deze moeten mee, anders staat er een donkerrood vlak op
+     een lichte pagina. */
+  --danger: 248 113 113;
+  --danger-bg: 69 10 10;
+  --warning: 251 191 36;
+
+  color-scheme: dark;
+}
+
+[data-theme="light"] {
+  --ink-900: 250 250 249;
+  --ink-800: 255 255 255;
+  --ink-700: 231 229 228;
+  --ink-600: 214 211 209;
+
+  --slate-100: 28 25 23;
+  --slate-200: 41 37 36;
+  --slate-300: 68 64 60;
+  --slate-400: 87 83 78;
+  --slate-500: 120 113 108;
+  --slate-600: 168 162 158;
+
+  /* Donkerder dan in de donkere modus: hetzelfde oranje op wit haalt geen
+     leesbaar contrast, en op accent-knoppen staat tekst in ink-900. */
+  --accent: 180 111 22;
+
+  --danger: 185 28 28;
+  --danger-bg: 254 226 226;
+  --warning: 146 64 14;
+
+  color-scheme: light;
+}
+
 @layer base {
   html,
   body,

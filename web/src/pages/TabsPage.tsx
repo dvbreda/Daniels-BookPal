@@ -119,7 +119,7 @@ export function TabsPage() {
           onCancel={() => setEditingId(null)}
         />
       )}
-      {message && <p className="mt-3 rounded bg-red-950 p-3 text-sm text-red-300">{message}</p>}
+      {message && <p className="mt-3 rounded bg-danger-bg p-3 text-sm text-danger">{message}</p>}
     </div>
   );
 }

@@ -38,7 +38,7 @@ export function CollectionViewPage() {
       </h1>
 
       {isLoading && <p className="mt-4 text-slate-400">Laden…</p>}
-      {error && <p className="mt-4 text-red-400">Kon de collectie niet laden.</p>}
+      {error && <p className="mt-4 text-danger">Kon de collectie niet laden.</p>}
       {data && data.items.length === 0 && (
         <p className="mt-4 text-slate-400">Deze collectie is nog leeg.</p>
       )}

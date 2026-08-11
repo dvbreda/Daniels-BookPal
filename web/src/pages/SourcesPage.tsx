@@ -181,7 +181,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
 
       {isFetching && <p className="mt-3 text-sm text-slate-400">Zoeken…</p>}
       {error && (
-        <p className="mt-3 text-sm text-red-400">
+        <p className="mt-3 text-sm text-danger">
           {error instanceof ApiError ? error.message : "Zoeken mislukt."}
         </p>
       )}

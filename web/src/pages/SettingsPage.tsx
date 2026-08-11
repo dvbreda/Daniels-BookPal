@@ -155,7 +155,7 @@ export function SettingsPage() {
           wint van allebei.
         </p>
 
-        {message && <p className="mt-3 rounded bg-red-950 p-3 text-sm text-red-300">{message}</p>}
+        {message && <p className="mt-3 rounded bg-danger-bg p-3 text-sm text-danger">{message}</p>}
         {lastScan && (
           <div className="mt-3 rounded bg-ink-800 p-3 text-sm text-slate-300">
             <p>
@@ -163,7 +163,7 @@ export function SettingsPage() {
               {lastScan.unchanged} ongewijzigd, {lastScan.removed} verwijderd.
             </p>
             {lastScan.errors.length > 0 && (
-              <ul className="mt-2 list-inside list-disc text-xs text-amber-400">
+              <ul className="mt-2 list-inside list-disc text-xs text-warning">
                 {lastScan.errors.map((error) => (
                   <li key={error}>{error}</li>
                 ))}
