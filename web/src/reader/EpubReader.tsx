@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, imageUrl } from "../api/client";
 import type { BookDetail } from "../api/types";
 import { useStoredState } from "../lib/useStoredState";
+import { type DownloadProgress, downloadWithProgress } from "./downloadWithProgress";
 import { asEpubFile } from "./epubFile";
 
 // Zelfde ritme als de stripleer: niet elke paginawissel meteen wegschrijven.
@@ -42,6 +43,17 @@ function defaultReaderTheme(): ThemeName {
   return document.documentElement.getAttribute("data-theme") === "light" ? "licht" : "donker";
 }
 
+function formatMB(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(0)} MB`;
+}
+
+export function loadingLabel(progress: { loaded: number; total: number | null } | null): string {
+  if (!progress || progress.loaded === 0) return "Laden…";
+  if (!progress.total) return `${formatMB(progress.loaded)} opgehaald…`;
+  const percent = Math.min(100, Math.round((progress.loaded / progress.total) * 100));
+  return `${percent}% (${formatMB(progress.loaded)} van ${formatMB(progress.total)})`;
+}
+
 /**
  * Epub lezen in de browser met foliate-js (M6).
  *
@@ -58,6 +70,10 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [showChrome, setShowChrome] = useState(true);
+  // Voor grote epubs (een geïllustreerd boek kan honderden MB zijn) telt een
+  // kale spinner niet als feedback — die is niet te onderscheiden van een
+  // hang. Dit maakt zichtbaar dat er wél iets gebeurt.
+  const [downloadProgress, setDownloadProgress] = useState<DownloadProgress | null>(null);
   const [label, setLabel] = useState<string>("");
   const [percent, setPercent] = useState<number>(book.progress?.percent ?? 0);
 
@@ -80,12 +96,13 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
         await import("../vendor/foliate/view.js");
         if (cancelled || !host) return;
 
-        const response = await fetch(imageUrl.file(book.id));
-        if (!response.ok) throw new Error(`kon het bestand niet ophalen (${response.status})`);
+        const blob = await downloadWithProgress(imageUrl.file(book.id), (progress) => {
+          if (!cancelled) setDownloadProgress(progress);
+        });
+        if (cancelled) return;
         // Als File, niet als Blob: foliate kijkt naar de bestandsnaam om het
         // formaat te bepalen. Zie epubFile.ts.
-        const file = asEpubFile(await response.blob(), book.id);
-        if (cancelled) return;
+        const file = asEpubFile(blob, book.id);
 
         const view = document.createElement("foliate-view") as FoliateView;
         host.replaceChildren(view);
@@ -204,8 +221,18 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
       <div ref={hostRef} className="h-full w-full" onClick={() => setShowChrome((v) => !v)} />
 
       {!ready && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-slate-400">
-          Laden…
+        <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-slate-400">
+          <span>{loadingLabel(downloadProgress)}</span>
+          {downloadProgress?.total && (
+            <div className="h-1 w-48 overflow-hidden rounded bg-ink-700">
+              <div
+                className="h-full bg-accent transition-[width]"
+                style={{
+                  width: `${Math.min(100, (downloadProgress.loaded / downloadProgress.total) * 100)}%`,
+                }}
+              />
+            </div>
+          )}
         </div>
       )}
 
