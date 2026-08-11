@@ -49,7 +49,7 @@ ARG UID=1000
 ARG GID=1000
 RUN (getent group ${GID} || groupadd -g ${GID} bookpal) && \
     useradd --create-home --uid ${UID} --gid ${GID} bookpal && \
-    mkdir -p /data && chown -R ${UID}:${GID} /data /app
+    mkdir -p /data/vertalingen && chown -R ${UID}:${GID} /data /app
 USER bookpal
 
 WORKDIR /app/server

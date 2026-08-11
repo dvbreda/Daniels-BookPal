@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
-import type { ScanResult } from "../api/types";
+import type { ScanResult, TranslateMode } from "../api/types";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -68,6 +68,8 @@ export function SettingsPage() {
           {health.series} series · {health.books} boeken · {health.cache_mb} MB beeldcache
         </p>
       )}
+
+      <TranslateModePanel />
 
       <section className="mt-6 rounded border border-ink-600 p-4">
         <h2 className="font-medium text-slate-200">Mappen op de NAS</h2>
@@ -173,5 +175,98 @@ export function SettingsPage() {
         )}
       </section>
     </div>
+  );
+}
+
+
+const MODE_LABELS: Record<TranslateMode, { naam: string; uitleg: string }> = {
+  text: {
+    naam: "Tekst (goedkoop)",
+    uitleg:
+      "Het taalmodel leest de pagina, wij zetten de vertaling zelf in een vlakje. " +
+      "Voorspelbaar correct, raakt de tekening nooit aan, en je kunt op een ballon " +
+      "tikken voor het origineel.",
+  },
+  image_fast: {
+    naam: "Beeldmodel (snel)",
+    uitleg:
+      "Het beeldmodel hertekent de hele pagina mét vertaling. Mooi ingepast, maar " +
+      "liet in onze tests op 3 van de 4 pagina's iets liggen — waaronder één keer " +
+      "een gewijzigd bedrag, en dat valt niet op.",
+  },
+  image_pro: {
+    naam: "Beeldmodel (zwaar)",
+    uitleg:
+      "Hetzelfde met het zware model. Kwam in alle vier onze tests goed door, maar " +
+      "is veruit het duurst.",
+  },
+};
+
+const MODE_ORDER: TranslateMode[] = ["text", "image_fast", "image_pro"];
+
+/**
+ * De vertaalstand (M8).
+ *
+ * Bewust met de prijs erbij: het verschil tussen de goedkoopste en de duurste
+ * stand is een factor zestig, en dat hoor je te zien vóór je kiest in plaats
+ * van achteraf op een rekening.
+ */
+function TranslateModePanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["translate-mode"], queryFn: api.translateMode });
+  const change = useMutation({
+    mutationFn: (mode: TranslateMode) => api.setTranslateMode(mode),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["translate-mode"] }),
+  });
+
+  if (!data) return null;
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Vertaling van tekstwolkjes</h2>
+      {!data.configured ? (
+        <p className="mt-1 text-sm text-slate-500">
+          Er is geen Gemini-sleutel ingesteld (<code>BOOKPAL_GEMINI_API_KEY</code>), dus
+          vertalen staat uit.
+        </p>
+      ) : (
+        <>
+          <p className="mt-1 text-xs text-slate-500">
+            Geldt voor de vertaalknop en de wachtrij die vooruitleest. Los daarvan kun je in
+            de lezer altijd één pagina met een duurder model doen — dat wordt bewaard, dus
+            een tweede keer kost niets.
+          </p>
+          <div className="mt-3 space-y-2">
+            {MODE_ORDER.map((mode) => (
+              <label
+                key={mode}
+                className={`flex cursor-pointer gap-3 rounded p-3 ${
+                  data.mode === mode ? "bg-ink-700" : "bg-ink-800"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="vertaalstand"
+                  className="mt-1"
+                  checked={data.mode === mode}
+                  onChange={() => change.mutate(mode)}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex flex-wrap items-baseline gap-2">
+                    <span className="text-slate-100">{MODE_LABELS[mode].naam}</span>
+                    <span className="tabular-nums text-xs text-slate-500">
+                      ± ${(data.costs[mode] ?? 0).toFixed(3)} per pagina
+                    </span>
+                  </span>
+                  <span className="mt-1 block text-xs text-slate-500">
+                    {MODE_LABELS[mode].uitleg}
+                  </span>
+                </span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </section>
   );
 }

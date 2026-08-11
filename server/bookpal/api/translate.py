@@ -21,22 +21,34 @@ from bookpal.schemas import (
     PageTranslationOut,
     TranslateBookIn,
     TranslateBookOut,
+    TranslateModeIn,
+    TranslateModeOut,
+    TranslatePageIn,
     TranslationStatusOut,
 )
-from bookpal.translate import get_translator, is_configured
+from bookpal.translate import get_translator, is_configured, sidecar
 from bookpal.translate.base import PageResult, TranslationError
+from bookpal.translate.imagepage import GeminiPageTranslator
+from bookpal.translate.modes import TranslateMode
+from bookpal.translate.preferences import get_mode, set_mode
 from bookpal.translate.queue import queue
 from bookpal.translate.service import (
+    best_available,
+    bubbles_for,
     find,
     plan_pages,
+    read_page_image,
     render_layer_for,
     translate_page,
+    translate_page_as_image,
     translated_pages,
 )
 
 from . import deps
 
 router = APIRouter(prefix="/api/books", tags=["translate"])
+# De schakelaar hoort niet bij één boek, dus een eigen pad.
+settings_router = APIRouter(prefix="/api/translate", tags=["translate"])
 
 PROVIDER = "gemini"
 
@@ -45,14 +57,39 @@ def _lang(value: str | None) -> str:
     return value or settings.translate_lang
 
 
-def _to_out(book_id: int, page_index: int, target_lang: str, result: PageResult) -> (
-    PageTranslationOut
-):
+def _parse_mode(value: str) -> TranslateMode:
+    try:
+        return TranslateMode(value)
+    except ValueError as exc:
+        allowed = ", ".join(str(mode) for mode in TranslateMode)
+        raise HTTPException(
+            status_code=400, detail=f"onbekende vertaalstand {value!r}; kies uit: {allowed}"
+        ) from exc
+
+
+# Ruwe richtprijzen per pagina in dollar, zodat de keuze in de instellingen niet
+# blind is. Gemeten aan de gepubliceerde tarieven en het tokengebruik van een
+# echte pagina; bedoeld als orde van grootte, niet als factuur.
+_COSTS = {
+    str(TranslateMode.TEXT): 0.002,
+    str(TranslateMode.IMAGE_FAST): 0.067,
+    str(TranslateMode.IMAGE_PRO): 0.134,
+}
+
+
+def _to_out(
+    book_id: int,
+    page_index: int,
+    target_lang: str,
+    result: PageResult,
+    mode: TranslateMode = TranslateMode.TEXT,
+) -> PageTranslationOut:
     return PageTranslationOut(
         book_id=book_id,
         page_index=page_index,
         target_lang=target_lang,
-        provider=PROVIDER,
+        provider=mode.provider,
+        mode=str(mode),
         model=result.model,
         bubbles=[
             BubbleOut(
@@ -75,12 +112,31 @@ def get_page_translation(
     lang: str | None = Query(default=None, max_length=8),
     session: Session = Depends(get_session),
 ) -> PageTranslationOut:
+    """Wat er voor deze pagina klaarligt, in de beste stand die beschikbaar is.
+
+    "Beste" en niet "de ingestelde stand": als je één pagina met de hand door
+    het dure model hebt gehaald, wil je díe zien — ook als de schakelaar daarna
+    weer op goedkoop staat. Er is immers al voor betaald.
+    """
     book = deps.get_book(session, book_id)
     target_lang = _lang(lang)
-    row = find(session, book.id, page_index, target_lang, PROVIDER)
-    if row is None:
+    found = best_available(session, book, page_index, target_lang)
+    if found is None:
         raise HTTPException(status_code=404, detail="deze pagina is nog niet vertaald")
-    return _to_out(book.id, page_index, target_lang, PageResult.from_payload(row.payload))
+
+    mode, row = found
+    if mode.is_image:
+        # De hybride krijgt onze eigen tekstvlakken mee: het beeldmodel heeft
+        # de ballonnen alleen leeggeveegd, de vertaling zetten wij eroverheen.
+        result = (
+            bubbles_for(session, book, page_index, target_lang)
+            if mode.needs_bubbles
+            else PageResult(model=str(row.payload.get("model", "")))
+        )
+        out = _to_out(book.id, page_index, target_lang, result, mode)
+        out.full_page = True
+        return out
+    return _to_out(book.id, page_index, target_lang, PageResult.from_payload(row.payload), mode)
 
 
 @router.post("/{book_id}/pages/{page_index}/translation", response_model=PageTranslationOut)
@@ -114,6 +170,90 @@ def make_page_translation(
     # Nu we tóch weten waar je zit: zet vast klaar wat eraan komt.
     queue.notify_reading(book.id, page_index + 1, target_lang)
     return _to_out(book.id, page_index, target_lang, result)
+
+
+@router.post("/{book_id}/pages/{page_index}/full", response_model=PageTranslationOut)
+def make_full_page_translation(
+    book_id: int,
+    page_index: int,
+    payload: TranslatePageIn,
+    session: Session = Depends(get_session),
+) -> PageTranslationOut:
+    """Laat een beeldmodel deze ene pagina helemaal hertekenen mét vertaling.
+
+    Altijd een expliciete keuze per aanroep, ook als de schakelaar in de
+    instellingen op de goedkope stand staat: deze standen kosten tientallen
+    centen per pagina, dus ze horen nooit vanzelf te lopen. De uitkomst wordt
+    naast de collectie bewaard, dus een tweede keer kost niets.
+    """
+    book = deps.get_book(session, book_id)
+    target_lang = _lang(payload.lang)
+    mode = _parse_mode(payload.mode)
+    if not mode.is_image:
+        raise HTTPException(
+            status_code=400,
+            detail="deze knop is voor de beeldstanden; gebruik .../translation voor de tekststand",
+        )
+    if not is_configured():
+        raise HTTPException(
+            status_code=409,
+            detail="er is geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)",
+        )
+
+    translator = GeminiPageTranslator(settings.gemini_api_key, mode.model)
+    try:
+        translate_page_as_image(
+            session,
+            translator,
+            book,
+            page_index,
+            target_lang=target_lang,
+            mode=mode,
+            force=payload.force,
+        )
+    except TranslationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        translator.close()
+
+    return PageTranslationOut(
+        book_id=book.id,
+        page_index=page_index,
+        target_lang=target_lang,
+        provider=mode.provider,
+        mode=str(mode),
+        model=translator.model,
+        full_page=True,
+    )
+
+
+@router.get("/{book_id}/pages/{page_index}/full")
+def get_full_page_translation(
+    book_id: int,
+    page_index: int,
+    lang: str | None = Query(default=None, max_length=8),
+    mode: str | None = Query(default=None, max_length=20),
+    session: Session = Depends(get_session),
+) -> Response:
+    """De hertekende pagina zelf. Zonder ``mode`` wint de duurste die er ligt."""
+    book = deps.get_book(session, book_id)
+    target_lang = _lang(lang)
+
+    wanted = _parse_mode(mode) if mode else None
+    if wanted is None:
+        found = best_available(session, book, page_index, target_lang)
+        if found is None or not found[0].is_image:
+            raise HTTPException(status_code=404, detail="deze pagina is nog niet volledig vertaald")
+        wanted = found[0]
+
+    data = read_page_image(session, book, page_index, target_lang, wanted)
+    if data is None:
+        raise HTTPException(status_code=404, detail="deze pagina is nog niet volledig vertaald")
+    return Response(
+        content=data,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
 
 
 @router.get("/{book_id}/pages/{page_index}/overlay")
@@ -198,4 +338,35 @@ def translation_status(
         page_count=book.page_count,
         translated=len(translated_pages(session, book.id, target_lang, PROVIDER)),
         queued=queue.pending_for(book.id),
+    )
+
+
+@settings_router.get("/mode", response_model=TranslateModeOut)
+def read_mode(session: Session = Depends(get_session)) -> TranslateModeOut:
+    return TranslateModeOut(
+        mode=str(get_mode(session)),
+        configured=is_configured(),
+        costs=_COSTS,
+        sidecar_dir=str(settings.sidecar_dir),
+        sidecar_writable=sidecar.is_writable(),
+    )
+
+
+@settings_router.put("/mode", response_model=TranslateModeOut)
+def write_mode(
+    payload: TranslateModeIn, session: Session = Depends(get_session)
+) -> TranslateModeOut:
+    """De stand waarin de wachtrij en de gewone vertaalknop werken.
+
+    De dure standen mogen hier gekozen worden, maar de wachtrij die vooruit
+    leest blijft altijd de goedkope gebruiken — anders zou wegdommelen tijdens
+    het lezen een rekening opleveren.
+    """
+    mode = set_mode(session, _parse_mode(payload.mode))
+    return TranslateModeOut(
+        mode=str(mode),
+        configured=is_configured(),
+        costs=_COSTS,
+        sidecar_dir=str(settings.sidecar_dir),
+        sidecar_writable=sidecar.is_writable(),
     )

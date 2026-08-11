@@ -2,10 +2,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { api, imageUrl } from "../api/client";
-import type { BookDetail } from "../api/types";
+import type { BookDetail, TranslateMode } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
 import { TranslationOverlay } from "./TranslationOverlay";
+import { usePageTranslation } from "./usePageTranslation";
 import {
   buildSpreads,
   orderForDisplay,
@@ -237,22 +238,15 @@ export function ComicReader({ book, onClose }: Props) {
             {orderForDisplay(currentSpread, rightToLeft).map((page) => (
               // De overlay staat absoluut binnen dit vlak, dus het moet net zo
               // groot zijn als de afbeelding zelf — vandaar w-fit en relative.
-              <div key={page} className="relative w-fit [container-type:inline-size]">
-                <img
-                  src={imageUrl.page(book.id, page, profile)}
-                  alt={`Pagina ${page + 1}`}
-                  className={`object-contain ${fitClass}`}
-                  draggable={false}
-                  onLoad={(event) =>
-                    noteAspect(
-                      page,
-                      event.currentTarget.naturalWidth,
-                      event.currentTarget.naturalHeight,
-                    )
-                  }
-                />
-                <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
-              </div>
+              <TranslatablePage
+                key={page}
+                book={book}
+                page={page}
+                profile={profile}
+                fitClass={fitClass}
+                translated={translated}
+                onAspect={noteAspect}
+              />
             ))}
           </div>
         </div>
@@ -518,6 +512,54 @@ function Chrome(props: ChromeProps) {
 }
 
 /**
+ * Eén pagina met wat er aan vertaling voor klaarligt (M8).
+ *
+ * In de tekststand komt er een overlay overheen; in de beeldstanden is de hele
+ * pagina hertekend en wordt de afbeelding zelf vervangen. Welke van de twee het
+ * wordt, weet alleen de server — vandaar dat de vertaalquery hier bepaalt welke
+ * bron de img krijgt.
+ */
+function TranslatablePage({
+  book,
+  page,
+  profile,
+  fitClass,
+  translated,
+  onAspect,
+}: {
+  book: BookDetail;
+  page: number;
+  profile: string;
+  fitClass: string;
+  translated: boolean;
+  onAspect: (index: number, width: number, height: number) => void;
+}) {
+  const { data } = usePageTranslation(book.id, page, translated);
+  const useFullPage = translated && data?.full_page === true;
+
+  return (
+    // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
+    // als de afbeelding zelf — vandaar w-fit en relative.
+    <div className="relative w-fit [container-type:inline-size]">
+      <img
+        src={
+          useFullPage
+            ? imageUrl.fullTranslation(book.id, page)
+            : imageUrl.page(book.id, page, profile)
+        }
+        alt={`Pagina ${page + 1}`}
+        className={`object-contain ${fitClass}`}
+        draggable={false}
+        onLoad={(event) =>
+          onAspect(page, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+        }
+      />
+      <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
+    </div>
+  );
+}
+
+/**
  * Vertaalknop met voortgang (M8).
  *
  * Verschijnt alleen als er een Gemini-sleutel is: zonder sleutel zou hij je op
@@ -545,24 +587,44 @@ function TranslateControl({
     refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 4000 : false),
   });
 
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
 
   if (!status?.configured) return null;
 
   const total = status.page_count ?? 0;
   const done = status.translated;
 
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
+    void queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] });
+  }
+
   async function translateThisPage() {
-    setBusy(true);
+    setBusy("tekst");
     try {
       await api.makePageTranslation(bookId, currentPage);
       setActive(true);
-      void queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
-      void queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] });
+      refresh();
     } catch {
       /* zacht falen: de lezer toont gewoon het origineel */
     } finally {
-      setBusy(false);
+      setBusy(null);
+    }
+  }
+
+  // De dure standen: altijd een bewuste keuze per pagina, ook als de
+  // schakelaar in de instellingen op goedkoop staat. Ze kosten tientallen
+  // centen per pagina, dus ze horen nooit vanzelf te lopen.
+  async function translateFully(mode: TranslateMode) {
+    setBusy(mode);
+    try {
+      await api.translatePageFully(bookId, currentPage, { mode });
+      setActive(true);
+      refresh();
+    } catch {
+      /* zacht falen */
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -571,12 +633,32 @@ function TranslateControl({
       <Toggle active={active} onClick={() => setActive(!active)}>
         Vertaling
       </Toggle>
-      <Toggle active={false} disabled={busy} onClick={() => void translateThisPage()}>
-        {busy ? "Bezig…" : "Deze pagina"}
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void translateThisPage()}
+      >
+        {busy === "tekst" ? "Bezig…" : "Deze pagina"}
       </Toggle>
       <Toggle
         active={false}
-        disabled={status.queued > 0}
+        disabled={busy !== null}
+        onClick={() => void translateFully("image_fast")}
+        title="Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)"
+      >
+        {busy === "image_fast" ? "Bezig…" : "Volledig"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void translateFully("image_pro")}
+        title="Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)"
+      >
+        {busy === "image_pro" ? "Bezig…" : "Volledig+"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={status.queued > 0 || busy !== null}
         onClick={() => {
           void api
             .translateBook(bookId, { from_page: currentPage })
@@ -601,17 +683,20 @@ function Toggle({
   active,
   disabled,
   onClick,
+  title,
   children,
 }: {
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       disabled={disabled}
       onClick={onClick}
+      title={title}
       className={`rounded px-2 py-1 transition ${
         active ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-200 hover:bg-ink-600"
       } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}

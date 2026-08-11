@@ -28,8 +28,15 @@ services:
       BOOKPAL_GEMINI_API_KEY: "${BOOKPAL_GEMINI_API_KEY:-}"
       BOOKPAL_GEMINI_MODEL: "${BOOKPAL_GEMINI_MODEL:-gemini-3-flash-preview}"
       BOOKPAL_TRANSLATE_LANG: "${BOOKPAL_TRANSLATE_LANG:-nl}"
+      BOOKPAL_SIDECAR_DIR: /data/vertalingen
     volumes:
       - bookpal-data:/data
+      # Vertalingen kosten geld, dus ze staan buiten de database: in mappen op
+      # naam van serie en hoofdstuk, zodat ze een herbouwde database overleven.
+      # Standaard in het data-volume. Wil je er zelf in kunnen bladeren, zet dan
+      # een absoluut NAS-pad in .env — bijvoorbeeld:
+      #   BOOKPAL_VERTALINGEN=/volume1/_vertalingen
+      - "${BOOKPAL_VERTALINGEN:-bookpal-vertalingen}:/data/vertalingen"
       # Links het pad op de NAS, rechts het pad in de container. Die rechterkant
       # vul je in bij Instellingen — dus /library/strips, niet /volume1/_strips.
       - "${BOOKPAL_BOEKEN:-/volume1/_boeken}:/library/boeken:ro"
@@ -60,3 +67,4 @@ services:
 
 volumes:
   bookpal-data:
+  bookpal-vertalingen:

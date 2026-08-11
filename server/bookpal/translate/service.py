@@ -14,6 +14,7 @@ import logging
 import threading
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
 from PIL import Image
 from sqlalchemy import select
@@ -21,8 +22,11 @@ from sqlalchemy.orm import Session
 
 from bookpal.config import settings
 from bookpal.images import ImageProfile, get_profile, open_source, render_page, source_id_for
-from bookpal.models import Book, File, Translation
+from bookpal.models import Book, File, Series, Translation
+from bookpal.translate import sidecar
 from bookpal.translate.base import BubbleTranslator, PageResult, TranslationError
+from bookpal.translate.imagepage import GeminiPageTranslator
+from bookpal.translate.modes import BEST_FIRST, TranslateMode
 from bookpal.translate.overlay import render_layer
 
 logger = logging.getLogger(__name__)
@@ -90,23 +94,133 @@ def translate_page(
     je van model wisselt en wilt zien of het beter wordt.
     """
     existing = find(session, book.id, page_index, target_lang, translator.provider)
+    series = session.get(Series, book.series_id)
+    path = sidecar.json_path(series, book, page_index, target_lang)
+
     if existing is not None and not force:
+        # Zelfherstellend: staat het wel in de database maar niet op schijf
+        # (vertaald toen de sidecar-map nog niet schrijfbaar was), dan zetten
+        # we 'm er alsnog neer. Kost niets — de vertaling is al betaald.
+        if not path.is_file():
+            sidecar.write_json(path, existing.payload)
         return PageResult.from_payload(existing.payload)
+
+    # Eerst op schijf kijken. Een vertaling die er al ligt opnieuw laten maken
+    # is weggegooid geld — en na een herbouwde database ligt hij er wél nog.
+    if not force:
+        stored = sidecar.read_json(path)
+        if stored is not None:
+            result = PageResult.from_payload(stored)
+            _record(session, book, page_index, target_lang, translator.provider, stored)
+            return result
 
     image, media_type = render_for_translation(session, book, page_index)
     result = translator.translate_page(image, media_type=media_type, target_lang=target_lang)
 
-    if existing is None:
-        existing = Translation(
+    payload = result.to_payload()
+    sidecar.write_json(path, payload)
+    _record(session, book, page_index, target_lang, translator.provider, payload)
+    return result
+
+
+def _record(
+    session: Session,
+    book: Book,
+    page_index: int,
+    target_lang: str,
+    provider: str,
+    payload: dict[str, Any],
+) -> Translation:
+    row = find(session, book.id, page_index, target_lang, provider)
+    if row is None:
+        row = Translation(
             book_id=book.id,
             page_index=page_index,
             target_lang=target_lang,
-            provider=translator.provider,
+            provider=provider,
         )
-        session.add(existing)
-    existing.payload = result.to_payload()
+        session.add(row)
+    row.payload = payload
     session.commit()
-    return result
+    return row
+
+
+def translate_page_as_image(
+    session: Session,
+    translator: GeminiPageTranslator,
+    book: Book,
+    page_index: int,
+    *,
+    target_lang: str,
+    mode: TranslateMode,
+    force: bool = False,
+) -> bytes:
+    """Laat het beeldmodel de hele pagina hertekenen mét vertaling.
+
+    Duur per pagina, dus de volgorde is: eerst kijken of hij er al ligt, en pas
+    dan betalen. Het resultaat gaat naar de sidecar-map, want dát is wat je bij
+    een herbouwde database niet opnieuw wilt aanschaffen.
+    """
+    series = session.get(Series, book.series_id)
+    path = sidecar.image_path(series, book, page_index, target_lang, mode)
+
+    if not force:
+        stored = sidecar.read_bytes(path)
+        if stored is not None:
+            _record(
+                session,
+                book,
+                page_index,
+                target_lang,
+                mode.provider,
+                {"full_page": True, "model": translator.model},
+            )
+            return stored
+
+    image, media_type = render_for_translation(session, book, page_index)
+    produced = translator.translate_page(image, media_type=media_type, target_lang=target_lang)
+
+    sidecar.write_bytes(path, produced)
+    _record(
+        session,
+        book,
+        page_index,
+        target_lang,
+        mode.provider,
+        {"full_page": True, "model": translator.model},
+    )
+    return produced
+
+
+def read_page_image(
+    session: Session, book: Book, page_index: int, target_lang: str, mode: TranslateMode
+) -> bytes | None:
+    """Een al gemaakte hele-pagina-vertaling van schijf, of None."""
+    series = session.get(Series, book.series_id)
+    return sidecar.read_bytes(sidecar.image_path(series, book, page_index, target_lang, mode))
+
+
+def best_available(
+    session: Session, book: Book, page_index: int, target_lang: str
+) -> tuple[TranslateMode, Translation] | None:
+    """Wat er voor deze pagina klaarstaat, duurste eerst.
+
+    Als je één pagina met de hand door het dure model hebt gehaald, wil je díe
+    zien — ook als de schakelaar op de goedkope stand staat. Er is immers al
+    voor betaald.
+    """
+    for mode in BEST_FIRST:
+        row = find(session, book.id, page_index, target_lang, mode.provider)
+        if row is None:
+            continue
+        return mode, row
+    return None
+
+
+def bubbles_for(session: Session, book: Book, page_index: int, target_lang: str) -> PageResult:
+    """De tekstvlakken uit de goedkope stand — ook wat de hybride gebruikt."""
+    row = find(session, book.id, page_index, target_lang, TranslateMode.TEXT.provider)
+    return PageResult.from_payload(row.payload) if row is not None else PageResult()
 
 
 def render_layer_for(

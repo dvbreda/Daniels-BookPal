@@ -382,6 +382,37 @@ class PageTranslationOut(BaseModel):
     provider: str
     model: str = ""
     bubbles: list[BubbleOut] = Field(default_factory=list)
+    # In de beeldstanden is de hele pagina hertekend in plaats van dat er
+    # tekstvlakken over het origineel gaan. De lezer moet dat weten: hij toont
+    # dan een andere afbeelding in plaats van een overlay, en er valt niet op
+    # een losse ballon te tikken voor het origineel.
+    mode: str = "text"
+    full_page: bool = False
+
+
+class TranslateModeOut(BaseModel):
+    mode: str
+    # Zonder sleutel kan er niets; de client verbergt de keuze dan.
+    configured: bool
+    # Waar vertalingen bewaard worden, en of dat ook echt lukt. Een vertaling
+    # kost geld; stilzwijgend niet kunnen bewaren is duur.
+    sidecar_dir: str = ""
+    sidecar_writable: bool = True
+    # Ruwe richtprijs per pagina in dollar, zodat de keuze niet blind is.
+    costs: dict[str, float] = Field(default_factory=dict)
+
+
+class TranslateModeIn(BaseModel):
+    mode: str = Field(max_length=20)
+
+
+class TranslatePageIn(BaseModel):
+    """De knop "vertaal deze pagina volledig". Bewust een expliciete keuze per
+    aanroep: deze standen kosten geld, dus ze horen nooit vanzelf te lopen."""
+
+    mode: str = Field(max_length=20)
+    lang: str | None = Field(default=None, max_length=8)
+    force: bool = False
 
 
 class TranslationStatusOut(BaseModel):

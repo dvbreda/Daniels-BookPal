@@ -22,6 +22,9 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     monkeypatch.setattr(settings, "cache_dir", data_dir / "cache")
     # Ook downloads omleiden, anders schrijft een test in de echte projectmap.
     monkeypatch.setattr(settings, "download_dir", data_dir / "downloads")
+    # En de sidecar-map met bewaarde vertalingen, om dezelfde reden — die lekte
+    # anders tussen tests door en liet ze elkaars vertalingen zien.
+    monkeypatch.setattr(settings, "sidecar_dir", data_dir / "vertalingen")
     # Geen achtergrondthread die naar een bron zou kunnen praten; de worker
     # wordt apart getest met run_once().
     monkeypatch.setattr(settings, "subscriptions_enabled", False)

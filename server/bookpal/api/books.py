@@ -137,16 +137,37 @@ def get_page(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     data = rendered.data
+    media_type = rendered.media_type
     if translate:
-        row = translation_service.find(session, book.id, index, translate, "gemini")
-        if row is not None:
-            bubbles = PageResult.from_payload(row.payload).bubbles
-            if bubbles:
-                data = bake(data, bubbles, media_type=rendered.media_type)
+        found = translation_service.best_available(session, book, index, translate)
+        if found is not None:
+            mode, row = found
+            if mode.is_image:
+                # De hele pagina is al hertekend; die vervangt het origineel in
+                # zijn geheel. Kan ontbreken als de sidecar-map is opgeruimd —
+                # dan gewoon het origineel, want blokkeren helpt de lezer niet.
+                replacement = translation_service.read_page_image(
+                    session, book, index, translate, mode
+                )
+                if replacement is not None:
+                    data, media_type = replacement, "image/webp"
+                    if mode.needs_bubbles:
+                        # Hybride: het model heeft alleen leeggeveegd, dus onze
+                        # eigen tekst moet er nog overheen — zonder wit vlakje,
+                        # want er valt niets meer af te dekken.
+                        ours = translation_service.bubbles_for(
+                            session, book, index, translate
+                        ).bubbles
+                        if ours:
+                            data = bake(data, ours, media_type=media_type, boxes=False)
+            else:
+                bubbles = PageResult.from_payload(row.payload).bubbles
+                if bubbles:
+                    data = bake(data, bubbles, media_type=media_type)
 
     return Response(
         content=data,
-        media_type=rendered.media_type,
+        media_type=media_type,
         headers={
             "Cache-Control": PAGE_CACHE_CONTROL,
             "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",

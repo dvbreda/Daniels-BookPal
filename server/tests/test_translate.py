@@ -15,9 +15,12 @@ from sqlalchemy.orm import Session
 
 from bookpal.config import settings as app_settings
 from bookpal.models import Book, BookKind, Series, Translation
+from bookpal.translate import sidecar
 from bookpal.translate.base import Bubble, BubbleKind, PageResult, TranslationError
 from bookpal.translate.gemini import GeminiBubbleTranslator, _to_bubble
+from bookpal.translate.modes import BEST_FIRST, TranslateMode, from_provider
 from bookpal.translate.overlay import _fit, _load_font, bake, draw_bubbles, render_layer
+from bookpal.translate.preferences import get_mode, set_mode
 from bookpal.translate.queue import TranslationQueue
 from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
 
@@ -580,3 +583,175 @@ def test_the_translation_is_found_by_its_own_language(session: Session, tmp_path
     _store(session, book, 0, "nl")
     assert find(session, book.id, 0, "nl", "gemini") is not None
     assert find(session, book.id, 0, "de", "gemini") is None
+
+
+class TestModes:
+    def test_each_mode_has_its_own_storage_key(self):
+        """Een pagina die met het goedkope beeldmodel is gedaan mag niet
+        doorgaan voor een pagina die met het dure model is gedaan."""
+        providers = {mode.provider for mode in TranslateMode}
+        assert len(providers) == len(list(TranslateMode))
+
+    def test_only_the_image_modes_are_image(self):
+        assert TranslateMode.TEXT.is_image is False
+        assert TranslateMode.IMAGE_FAST.is_image is True
+        assert TranslateMode.IMAGE_PRO.is_image is True
+
+    def test_provider_round_trips(self):
+        for mode in TranslateMode:
+            assert from_provider(mode.provider) is mode
+
+    def test_best_first_prefers_the_expensive_one(self):
+        """Er is al voor betaald, dus die hoort te winnen."""
+        assert BEST_FIRST[0] is TranslateMode.IMAGE_PRO
+        assert BEST_FIRST[-1] is TranslateMode.TEXT
+        assert set(BEST_FIRST) == set(TranslateMode)
+
+    def test_only_the_text_mode_uses_our_own_bubbles(self):
+        assert TranslateMode.TEXT.needs_bubbles is True
+        assert TranslateMode.IMAGE_FAST.needs_bubbles is False
+        assert TranslateMode.IMAGE_PRO.needs_bubbles is False
+
+
+class TestModePreference:
+    def test_the_default_is_the_cheap_mode(self, session: Session):
+        """Een dure stand hoort nooit de standaard te zijn die je per ongeluk
+        aan laat staan."""
+        assert get_mode(session) is TranslateMode.TEXT
+
+    def test_a_chosen_mode_survives(self, session: Session):
+        set_mode(session, TranslateMode.IMAGE_PRO)
+        assert get_mode(session) is TranslateMode.IMAGE_PRO
+
+    def test_a_corrupt_setting_falls_back_to_cheap(self, session: Session):
+        from bookpal.models import Setting
+
+        session.add(Setting(key="translate", value={"mode": "onzin"}))
+        session.commit()
+        assert get_mode(session) is TranslateMode.TEXT
+
+
+class TestSidecar:
+    def test_the_path_is_named_after_series_and_chapter(self, session: Session):
+        series = Series(title="Shinya Shokudo", sort_title="shinya")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, title="Deel", number="03")
+        session.add(book)
+        session.flush()
+
+        path = sidecar.json_path(series, book, 7, "nl")
+        assert "Shinya Shokudo" in str(path)
+        assert "03 Deel" in str(path)
+        assert path.name == "p0007-nl.json"
+
+    def test_unsafe_characters_are_stripped(self, session: Session):
+        series = Series(title='Hij/Zij: "raar"', sort_title="x")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, title="a/b")
+        session.add(book)
+        session.flush()
+
+        path = sidecar.json_path(series, book, 0, "nl")
+        assert "/" not in path.parent.name
+        assert '"' not in str(path)
+
+    def test_image_paths_differ_per_mode(self, session: Session):
+        series = Series(title="S", sort_title="s")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, title="H")
+        session.add(book)
+        session.flush()
+
+        fast = sidecar.image_path(series, book, 1, "nl", TranslateMode.IMAGE_FAST)
+        pro = sidecar.image_path(series, book, 1, "nl", TranslateMode.IMAGE_PRO)
+        assert fast != pro
+
+    def test_a_written_payload_comes_back(self, tmp_path: Path):
+        path = tmp_path / "diep" / "p0001-nl.json"
+        sidecar.write_json(path, {"bubbles": [], "model": "m"})
+        assert sidecar.read_json(path) == {"bubbles": [], "model": "m"}
+
+    def test_a_corrupt_sidecar_is_ignored_not_fatal(self, tmp_path: Path):
+        path = tmp_path / "stuk.json"
+        path.write_text("{ dit is geen json", encoding="utf-8")
+        assert sidecar.read_json(path) is None
+
+    def test_a_missing_sidecar_is_none(self, tmp_path: Path):
+        assert sidecar.read_json(tmp_path / "bestaat-niet.json") is None
+        assert sidecar.read_bytes(tmp_path / "bestaat-niet.webp") is None
+
+
+class TestSidecarPersistence:
+    def _book_with_page(self, session: Session) -> Book:
+        series = Series(title="Reeks", sort_title="reeks")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, title="Deel", page_count=3)
+        session.add(book)
+        session.flush()
+        return book
+
+    def test_a_database_hit_backfills_a_missing_sidecar(
+        self, session: Session, temp_settings: Path
+    ):
+        """Pagina's die vertaald zijn toen de sidecar-map nog niet schrijfbaar
+        was, horen er alsnog te komen: de vertaling is al betaald."""
+        book = self._book_with_page(session)
+        payload = PageResult(bubbles=[Bubble(0.1, 0.1, 0.5, 0.5, "HI", "HOI")]).to_payload()
+        session.add(
+            Translation(
+                book_id=book.id,
+                page_index=0,
+                target_lang="nl",
+                provider="gemini",
+                payload=payload,
+            )
+        )
+        session.commit()
+
+        series = session.get(Series, book.series_id)
+        path = sidecar.json_path(series, book, 0, "nl")
+        assert not path.is_file()
+
+        calls: list[int] = []
+
+        class Counting(GeminiBubbleTranslator):
+            def translate_page(self, image, *, media_type, target_lang):  # type: ignore[override]
+                calls.append(1)
+                return PageResult()
+
+        translator = Counting("sleutel", client=httpx.Client(base_url="https://test"))
+        translate_page(session, translator, book, 0, target_lang="nl")
+
+        assert calls == []  # niet opnieuw betaald
+        assert path.is_file()  # wel alsnog bewaard
+
+    def test_a_sidecar_is_used_instead_of_calling_again(
+        self, session: Session, temp_settings: Path
+    ):
+        """Na een herbouwde database staat het nog op schijf; dan mag er geen
+        nieuwe aanroep uitgaan."""
+        book = self._book_with_page(session)
+        series = session.get(Series, book.series_id)
+        path = sidecar.json_path(series, book, 1, "nl")
+        sidecar.write_json(
+            path, PageResult(bubbles=[Bubble(0.2, 0.2, 0.6, 0.6, "A", "B")]).to_payload()
+        )
+
+        calls: list[int] = []
+
+        class Counting(GeminiBubbleTranslator):
+            def translate_page(self, image, *, media_type, target_lang):  # type: ignore[override]
+                calls.append(1)
+                return PageResult()
+
+        translator = Counting("sleutel", client=httpx.Client(base_url="https://test"))
+        result = translate_page(session, translator, book, 1, target_lang="nl")
+
+        assert calls == []
+        assert [b.translation for b in result.bubbles] == ["B"]
+        # En de database is bijgewerkt, zodat de statusteller weer klopt.
+        assert find(session, book.id, 1, "nl", "gemini") is not None

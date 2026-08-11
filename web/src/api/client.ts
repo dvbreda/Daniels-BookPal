@@ -23,6 +23,8 @@ import type {
   TabIn,
   TrackerAccountRow,
   TranslateBookResult,
+  TranslateMode,
+  TranslateModeInfo,
   TranslationStatus,
 } from "./types";
 
@@ -221,6 +223,21 @@ export const api = {
     request<TranslationStatus>(
       `/api/books/${bookId}/translation-status${queryString({ lang })}`,
     ),
+  translateMode: () => request<TranslateModeInfo>("/api/translate/mode"),
+  setTranslateMode: (mode: TranslateMode) =>
+    request<TranslateModeInfo>("/api/translate/mode", {
+      method: "PUT",
+      body: JSON.stringify({ mode }),
+    }),
+  translatePageFully: (
+    bookId: number,
+    index: number,
+    body: { mode: TranslateMode; lang?: string; force?: boolean },
+  ) =>
+    request<PageTranslation>(`/api/books/${bookId}/pages/${index}/full`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */
@@ -233,4 +250,7 @@ export const imageUrl = {
   page: (bookId: number, index: number, profile: string) =>
     `/api/books/${bookId}/pages/${index}${queryString({ profile })}`,
   file: (bookId: number) => `/api/books/${bookId}/file`,
+  /** De hele pagina hertekend mét vertaling (beeldstanden, M8). */
+  fullTranslation: (bookId: number, index: number, lang?: string) =>
+    `/api/books/${bookId}/pages/${index}/full${queryString({ lang })}`,
 };

@@ -168,7 +168,9 @@ def _fit(
     return font, _wrap(draw, text, font, box_w, hard_break=True), _MIN_FONT * 1.2
 
 
-def draw_bubbles(image: Image.Image, bubbles: list[Bubble]) -> Image.Image:
+def draw_bubbles(
+    image: Image.Image, bubbles: list[Bubble], *, boxes: bool = True
+) -> Image.Image:
     """Teken de vertalingen over een pagina heen.
 
     De modus blijft wat hij was. Dat is niet vrijblijvend: een Kobo-profiel
@@ -181,7 +183,9 @@ def draw_bubbles(image: Image.Image, bubbles: list[Bubble]) -> Image.Image:
     canvas = image if image.mode in ("RGB", "L") else image.convert("RGB")
     white: int | tuple[int, ...] = 255 if canvas.mode == "L" else (255, 255, 255)
     black: int | tuple[int, ...] = 0 if canvas.mode == "L" else (0, 0, 0)
-    _draw_onto(ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black)
+    _draw_onto(
+        ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black, boxes=boxes
+    )
     return canvas
 
 
@@ -192,11 +196,17 @@ def _draw_onto(
     *,
     white: int | tuple[int, ...],
     black: int | tuple[int, ...],
+    boxes: bool = True,
 ) -> None:
     """Het tekenwerk zelf, gedeeld door de ingebakken pagina en de losse laag —
-    zodat de Kobo en de web-app niet uit elkaar kunnen gaan lopen."""
+    zodat de Kobo en de web-app niet uit elkaar kunnen gaan lopen.
+
+    ``boxes=False`` laat het dekkende vlakje weg: dat is voor de hybride stand,
+    waar het beeldmodel de ballon al heeft leeggeveegd en er dus niets meer
+    afgedekt hoeft te worden.
+    """
     width, height = size
-    pad = _PADDING * width
+    pad = _PADDING * width if boxes else 0.0
 
     for bubble in bubbles:
         if not bubble.translation.strip():
@@ -208,7 +218,8 @@ def _draw_onto(
         if x1 - x0 < 4 or y1 - y0 < 4:
             continue
 
-        draw.rectangle((x0, y0, x1, y1), fill=white, outline=black, width=1)
+        if boxes:
+            draw.rectangle((x0, y0, x1, y1), fill=white, outline=black, width=1)
 
         # Striplettering staat traditioneel in kapitalen; een vertaling in
         # onderkast daartussen valt meteen op als "ingeplakt". We vragen dit
@@ -230,7 +241,7 @@ def _draw_onto(
             cursor += line_height
 
 
-def render_layer(size: tuple[int, int], bubbles: list[Bubble]) -> bytes:
+def render_layer(size: tuple[int, int], bubbles: list[Bubble], *, boxes: bool = True) -> bytes:
     """Alleen de tekstvlakken, op een doorzichtige achtergrond (PNG).
 
     Waarom naast ``bake``: zo blijft de pagina zelf één gedeelde afbeelding.
@@ -249,7 +260,9 @@ def render_layer(size: tuple[int, int], bubbles: list[Bubble]) -> bytes:
         return _to_png(layer)
 
     draw = ImageDraw.Draw(layer)
-    _draw_onto(draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255))
+    _draw_onto(
+        draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255), boxes=boxes
+    )
     return _to_png(layer)
 
 
@@ -259,11 +272,13 @@ def _to_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def bake(data: bytes, bubbles: list[Bubble], *, media_type: str) -> bytes:
+def bake(
+    data: bytes, bubbles: list[Bubble], *, media_type: str, boxes: bool = True
+) -> bytes:
     """Zelfde bytes in, bytes met vertaling eruit — in hetzelfde formaat."""
     with Image.open(BytesIO(data)) as source:
         source.load()
-        baked = draw_bubbles(source, bubbles)
+        baked = draw_bubbles(source, bubbles, boxes=boxes)
 
     buffer = BytesIO()
     baked.save(buffer, format=_format_for(media_type))

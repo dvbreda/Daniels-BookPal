@@ -252,6 +252,8 @@ export interface Bubble {
   italic: boolean;
 }
 
+export type TranslateMode = "text" | "image_fast" | "image_pro";
+
 export interface PageTranslation {
   book_id: number;
   page_index: number;
@@ -259,6 +261,18 @@ export interface PageTranslation {
   provider: string;
   model: string;
   bubbles: Bubble[];
+  mode: TranslateMode;
+  /** In de beeldstanden is de hele pagina hertekend; dan is er geen overlay
+   * maar een vervangende afbeelding, en valt er niet op een ballon te tikken. */
+  full_page: boolean;
+}
+
+export interface TranslateModeInfo {
+  mode: TranslateMode;
+  /** Zonder Gemini-sleutel is er niets te kiezen. */
+  configured: boolean;
+  /** Ruwe richtprijs per pagina in dollar, per stand. */
+  costs: Record<string, number>;
 }
 
 export interface TranslationStatus {

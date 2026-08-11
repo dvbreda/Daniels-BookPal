@@ -53,6 +53,18 @@ class Settings(BaseSettings):
     # de NAS loopt vast op wat je zo gaat lezen. 0 zet het uit.
     translate_readahead_pages: int = 3
 
+    # De twee beeldmodellen die een hele pagina hertekenen mét vertaling. Duur
+    # per pagina, dus nooit vanzelf: alleen via de knop of een bewuste keuze in
+    # de instellingen. Zie docs/architectuur.md voor de gemeten kwaliteit.
+    gemini_image_model_fast: str = "gemini-3.1-flash-image"
+    gemini_image_model_pro: str = "gemini-3-pro-image"
+
+    # Waar vertalingen blijvend bewaard worden, buiten de database om. Een
+    # vertaling kost geld; die mag niet verdwijnen als de database opnieuw
+    # wordt opgebouwd. De collectie zelf is read-only aangekoppeld, dus dit
+    # kan niet naast de strips staan — vandaar een eigen map.
+    sidecar_dir: Path = Path("./data/vertalingen")
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'bookpal.db').resolve()}"
@@ -61,6 +73,7 @@ class Settings(BaseSettings):
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.download_dir.mkdir(parents=True, exist_ok=True)
+        self.sidecar_dir.mkdir(parents=True, exist_ok=True)
 
 
 settings = Settings()

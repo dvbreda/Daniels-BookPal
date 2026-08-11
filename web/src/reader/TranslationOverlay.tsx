@@ -1,8 +1,7 @@
-import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { ApiError, api } from "../api/client";
 import type { Bubble } from "../api/types";
+import { usePageTranslation } from "./usePageTranslation";
 
 /**
  * De vertaalde tekstwolkjes over een pagina heen (M8).
@@ -26,17 +25,11 @@ export function TranslationOverlay({
   pageIndex: number;
   enabled: boolean;
 }) {
-  const { data } = useQuery({
-    queryKey: ["translation", bookId, pageIndex],
-    queryFn: () => api.pageTranslation(bookId, pageIndex),
-    enabled,
-    // 404 = nog niet vertaald. Dat is een normale toestand, geen storing, dus
-    // niet opnieuw proberen: de wachtrij komt er vanzelf aan toe.
-    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
-    staleTime: Infinity,
-  });
+  const { data } = usePageTranslation(bookId, pageIndex, enabled);
 
-  if (!enabled || !data || data.bubbles.length === 0) return null;
+  // In de beeldstanden is de hele pagina al hertekend; dan hoort hier niets
+  // overheen te komen, anders staat er tekst dubbel.
+  if (!enabled || !data || data.full_page || data.bubbles.length === 0) return null;
 
   return (
     <div className="pointer-events-none absolute inset-0">
