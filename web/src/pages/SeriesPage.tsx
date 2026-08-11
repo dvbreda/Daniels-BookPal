@@ -97,10 +97,9 @@ export function SeriesPage() {
 function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   const queryClient = useQueryClient();
   const percent = book.progress?.percent ?? 0;
-  // Een epub of pdf gaat niet naar de stripleer maar naar het bestand zelf;
-  // die formaten rendert de client, niet de server.
-  const isComic = book.kind === "comic" || book.kind === "pdf";
-  const target = isComic ? `/lezen/${book.id}` : imageUrl.file(book.id);
+  // Alles leest nu in de app: strips en pdf als beeld van de server, epub met
+  // foliate-js in de browser (M6).
+  const target = `/lezen/${book.id}`;
 
   const download = useMutation({
     mutationFn: () => api.downloadChapter(book.id),
@@ -174,13 +173,9 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
     );
   }
 
-  return isComic ? (
+  return (
     <Link to={target} className={className}>
       {inner}
     </Link>
-  ) : (
-    <a href={target} className={className} download>
-      {inner}
-    </a>
   );
 }
