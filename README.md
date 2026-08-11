@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1 + M3 + M5 + deels M2)
+## Wat er nu werkt (M0 + M1 + M3 + M5 + M6 + M7 + deels M2)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -44,12 +44,18 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   het hoofdstuk blijft staan. Uit te zetten met `BOOKPAL_SUBSCRIPTIONS_ENABLED=false`,
   of handmatig te draaien via de knop "Nu bijwerken".
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4),
-vertaling (M6/M8), trackers (M7) en de Kobo-app (M9/M10).
+- **Epub-lezer** (foliate-js, herschikbare tekst met eigen instellingen voor
+  lettergrootte en thema): downloads tonen nu een voortgangsbalk in plaats van
+  stil te lijken hangen bij een groot bestand.
+- **Trackers** (`/trackers` in de web-app): eenrichtingssync naar MyAnimeList
+  na een voortgangsupdate, gedebounced per serie zodat niet elke paginawissel
+  een eigen aanroep wordt. Nieuw gekoppelde accounts staan standaard op
+  dry-run. Goodreads heeft geen live koppeling meer (de publieke API is dood
+  sinds eind 2020) — daarvoor is er een CSV-export voor My Books → Import and
+  Export. Uit te zetten met `BOOKPAL_TRACKERS_ENABLED=false`.
 
-Let op: **epub gaat nu nog als download**, niet als lezer in de browser —
-herschikbare tekst heeft een client-side lezer nodig (foliate-js, gepland in
-M6). Strips en pdf lezen wel gewoon in de web-app.
+Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4),
+bubble-vertaling voor manga (M8) en de Kobo-app (M9/M10).
 
 ## Draaien op de NAS
 

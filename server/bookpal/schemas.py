@@ -311,6 +311,56 @@ class RunReportOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class TrackerAccountOut(BaseModel):
+    """Nooit ``credentials`` hierin — dat zijn client-secrets en tokens."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: str
+    enabled: bool
+    dry_run: bool
+    last_sync_at: datetime | None
+    # Voor MAL: heeft dit account al een access token, of moet er nog
+    # gekoppeld worden? De UI kan dit tonen zonder de credentials te kennen.
+    connected: bool = False
+
+
+class TrackerAccountIn(BaseModel):
+    provider: str = Field(max_length=50)
+    # Alleen voor MAL nodig: je eigen app-registratie bij MyAnimeList.
+    client_id: str | None = Field(default=None, max_length=200)
+    client_secret: str | None = Field(default=None, max_length=200)
+
+
+class TrackerAccountPatch(BaseModel):
+    enabled: bool | None = None
+    dry_run: bool | None = None
+
+
+class MalAuthorizeOut(BaseModel):
+    url: str
+
+
+class MalCallbackIn(BaseModel):
+    code: str = Field(max_length=2000)
+
+
+class PushResultOut(BaseModel):
+    series_id: int
+    title: str
+    pushed: bool
+    dry_run: bool
+    detail: str = ""
+
+
+class PushReportOut(BaseModel):
+    provider: str
+    pushed: int
+    results: list[PushResultOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class DownloadIn(BaseModel):
     """Tijdelijk downloaden is het 'vooruitlezen' uit het datamodel: het
     bestand krijgt een vervaldatum, de bron-referentie blijft."""

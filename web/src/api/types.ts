@@ -238,3 +238,28 @@ export interface RunReport {
   expired: number;
   errors: string[];
 }
+
+export interface TrackerAccountRow {
+  id: number;
+  provider: string;
+  enabled: boolean;
+  dry_run: boolean;
+  last_sync_at: string | null;
+  /** True zodra de OAuth-uitwisseling een access_token heeft opgeleverd. */
+  connected: boolean;
+}
+
+export interface PushResultRow {
+  series_id: number;
+  title: string;
+  pushed: boolean;
+  dry_run: boolean;
+  detail: string;
+}
+
+export interface PushReport {
+  provider: string;
+  pushed: number;
+  results: PushResultRow[];
+  errors: string[];
+}

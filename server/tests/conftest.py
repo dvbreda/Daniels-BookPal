@@ -25,6 +25,9 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     # Geen achtergrondthread die naar een bron zou kunnen praten; de worker
     # wordt apart getest met run_once().
     monkeypatch.setattr(settings, "subscriptions_enabled", False)
+    # Idem voor de gedebouncede tracker-push: anders overleeft een timer de
+    # teardown van deze test en raakt hij de database van de volgende.
+    monkeypatch.setattr(settings, "trackers_enabled", False)
     db_module.reset_engine()
     settings.ensure_dirs()
     yield data_dir

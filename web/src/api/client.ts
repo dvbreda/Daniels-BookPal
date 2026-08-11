@@ -13,12 +13,14 @@ import type {
   Series,
   SeriesDetail,
   SeriesQuery,
+  PushReport,
   SourceRow,
   SubscribeResult,
   SubscriptionPolicy,
   SubscriptionRow,
   Tab,
   TabIn,
+  TrackerAccountRow,
 } from "./types";
 
 export class ApiError extends Error {
@@ -178,6 +180,25 @@ export const api = {
       { method: "POST", body: JSON.stringify(body) },
     ),
   runSources: () => request<RunReport>("/api/sources/run", { method: "POST" }),
+
+  trackers: () => request<TrackerAccountRow[]>("/api/trackers"),
+  addTracker: (body: { provider: string; client_id?: string; client_secret?: string }) =>
+    request<TrackerAccountRow>("/api/trackers", { method: "POST", body: JSON.stringify(body) }),
+  updateTracker: (id: number, body: { enabled?: boolean; dry_run?: boolean }) =>
+    request<TrackerAccountRow>(`/api/trackers/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteTracker: (id: number) => request<void>(`/api/trackers/${id}`, { method: "DELETE" }),
+  malAuthorizeUrl: (id: number) =>
+    request<{ url: string }>(`/api/trackers/${id}/mal/authorize-url`),
+  malCallback: (id: number, code: string) =>
+    request<TrackerAccountRow>(`/api/trackers/${id}/mal/callback`, {
+      method: "POST",
+      body: JSON.stringify({ code }),
+    }),
+  runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
+  goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
 };
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */

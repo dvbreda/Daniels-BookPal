@@ -13,9 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0, M1, M3 en M5 zijn gebouwd; M2 deels**
-(alles behalve de Nickel-integratie); de latere milestones staan erin zodat de vroege keuzes ze niet
-blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0, M1, M3, M5, M6 en M7 zijn gebouwd; M2
+deels** (alles behalve de Nickel-integratie); de latere milestones staan erin zodat de vroege keuzes
+ze niet blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -204,7 +204,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 | **M9** | `bookpal-kobo`: FBInk, touch, tabs, comics, offline, NickelMenu-installer | Eigen native comic-lezer op de Kobo |
 | **M10** | `bookpal-kobo`: epub + pdf via crengine en MuPDF | Volwaardige eigen lezer op de Kobo |
 
-## M0 + M1 + M3 — gebouwd, M2 gedeeltelijk
+## M0 + M1 + M3 + M5 + M6 + M7 — gebouwd, M2 gedeeltelijk
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
    libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
@@ -264,6 +264,31 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    Een bron hoort een gepubliceerde API te hebben waarvan het gebruik is toegestaan; scrapers voor
    sites die commercieel werk zonder licentie herdistribueren horen hier niet thuis. De interface
    staat los van de implementatie, dus een nette bron toevoegen is één bestand.
+
+9. **M6** — vendored **foliate-js** (`web/src/vendor/foliate/`, gepinde commit, niet het npm-pakket
+   van een derde — herkomst staat in `HERKOMST.md` ernaast) achter een eigen `EpubReader`. Downloads
+   lopen via `downloadWithProgress.ts` met een voortgangsbalk, want een epub van een paar honderd MB
+   zag er zonder die balk uit als een hang. `sort_volume` op `Book` bepaalt de leesvolgorde nu apart
+   van de weergavetitel, wat nodig bleek zodra series een `Deel 10` naast een `Deel 2` hadden staan.
+
+10. **M7** — `bookpal/trackers/` is eenrichtingsverkeer: BookPal leest nooit iets terug van
+    MyAnimeList of Goodreads, dus is er geen conflict om op te lossen. `Tracker` is een kleine ABC
+    (`push()` + `close()`); `MyAnimeListTracker` praat PKCE-OAuth2 (MAL ondersteunt alleen de
+    `plain`-challenge, geen S256) en een rate-limiter die dezelfde `RateLimiter`-klasse hergebruikt
+    als de MangaDex-bron (verplaatst naar `bookpal/ratelimit.py`). Goodreads heeft geen
+    `Tracker`-implementatie — de publieke API is dood sinds eind 2020, en geraden veldnamen die
+    "waarschijnlijk werken" zijn erger dan geen automatisering, want ze falen onopgemerkt. In plaats
+    daarvan exporteert `export_csv()` de hele bibliotheek naar het CSV-formaat van My Books → Import
+    and Export.
+
+    Pushen gebeurt gedebounced per serie: `trackers/scheduler.py` reset per `series_id` een
+    `threading.Timer` bij elke voortgangsupdate, en pas als een serie een paar seconden stil is
+    gebleven gaat de push voor precies díe serie uit — nooit de rest van de bibliotheek, ook niet als
+    er meerdere accounts gekoppeld zijn. Een nieuw account staat standaard op dry-run
+    (`TrackerAccount.dry_run`), dus deze trigger is uit zichzelf onschadelijk totdat je 'm bewust
+    aanzet. De web-app heeft `/trackers` om een MAL-app te koppelen (client-id/secret zelf
+    registreren op `myanimelist.net/apiconfig`, autorisatie-URL openen, code terugplakken),
+    dry-run/actief te schakelen, met de hand te pushen, en de Goodreads-CSV te downloaden.
 
 ## Verificatie
 

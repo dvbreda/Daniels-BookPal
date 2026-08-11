@@ -189,6 +189,7 @@ def lite_read(
         session,
         user,
         book.id,
+        series_id=book.series_id,
         position={"page": page},
         percent=round((page + 1) / book.page_count * 100, 1),
         device="lite",

@@ -55,13 +55,15 @@ def set_progress(payload: ProgressIn, session: Session = Depends(get_session)) -
     laten zien.
     """
     user = current_user(session)
-    if session.get(Book, payload.book_id) is None:
+    book = session.get(Book, payload.book_id)
+    if book is None:
         raise HTTPException(status_code=404, detail="boek niet gevonden")
 
     row = deps.upsert_progress(
         session,
         user,
         payload.book_id,
+        series_id=book.series_id,
         position=payload.position,
         percent=payload.percent,
         device=payload.device,

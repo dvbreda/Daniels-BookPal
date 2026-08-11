@@ -32,6 +32,14 @@ class Settings(BaseSettings):
     subscriptions_enabled: bool = True
     subscriptions_interval_minutes: int = 60
 
+    # M7: gedebouncede tracker-push na een voortgangsupdate. Uit in tests
+    # (elders uitgezet via monkeypatch), anders blijft er een echte
+    # achtergrond-timer hangen na de teardown van elke test.
+    trackers_enabled: bool = True
+    # Hoe lang een serie stil moet blijven voordat de push echt uitgaat.
+    # Voorkomt dat elke paginawissel een eigen aanroep naar MyAnimeList wordt.
+    tracker_debounce_seconds: float = 20.0
+
     @property
     def database_url(self) -> str:
         return f"sqlite:///{(self.data_dir / 'bookpal.db').resolve()}"

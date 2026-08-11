@@ -83,6 +83,9 @@ export function LibraryPage() {
         <Link to="/bronnen" className="text-xs text-slate-500 hover:text-slate-300">
           Bronnen
         </Link>
+        <Link to="/trackers" className="text-xs text-slate-500 hover:text-slate-300">
+          Trackers
+        </Link>
       </div>
 
       {activeTabId === null && (

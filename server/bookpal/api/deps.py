@@ -14,6 +14,7 @@ from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 from bookpal.sources import Source as SourceImpl
 from bookpal.sources import SourceError, get_source
+from bookpal.trackers import scheduler as trackers_scheduler
 
 SessionDep = Depends(get_session)
 
@@ -88,6 +89,7 @@ def upsert_progress(
     user: User,
     book_id: int,
     *,
+    series_id: int,
     position: dict[str, object],
     percent: float,
     device: str | None,
@@ -109,6 +111,10 @@ def upsert_progress(
     row.device = device
     row.updated_at = utcnow()
     session.commit()
+
+    # M7: gedebounced, dus dit is een goedkope aanroep — geen netwerk, alleen
+    # een timer resetten.
+    trackers_scheduler.notify_progress(series_id)
     return row
 
 

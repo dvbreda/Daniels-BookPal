@@ -9,6 +9,7 @@ import { SeriesPage } from "./pages/SeriesPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { TabsPage } from "./pages/TabsPage";
+import { TrackersPage } from "./pages/TrackersPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ export function App() {
           <Route path="/collecties" element={<CollectionsPage />} />
           <Route path="/collectie/:id" element={<CollectionViewPage />} />
           <Route path="/bronnen" element={<SourcesPage />} />
+          <Route path="/trackers" element={<TrackersPage />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>
