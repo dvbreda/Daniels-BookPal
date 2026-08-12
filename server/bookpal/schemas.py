@@ -537,12 +537,19 @@ class SourceOut(BaseModel):
     type: str
     name: str
     enabled: bool
+    # Wat een zelf toegevoegde bron nodig heeft, bv. het adres van een
+    # OPDS-catalogus. Een wachtwoord gaat er niet uit; zie SourceIn.
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceIn(BaseModel):
     type: str = Field(max_length=50)
     name: str = Field(max_length=100)
     enabled: bool = True
+    # Vrij veld per bronsoort. Bij OPDS: {"url": "...", "username": ...,
+    # "password": ...}. Bewust geen apart model per soort — dan zou elke nieuwe
+    # bron een schemawijziging vragen.
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResultOut(BaseModel):

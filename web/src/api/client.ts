@@ -221,7 +221,7 @@ export const api = {
 
   sourceTypes: () => request<string[]>("/api/sources/types"),
   sources: () => request<SourceRow[]>("/api/sources"),
-  addSource: (body: { type: string; name: string }) =>
+  addSource: (body: { type: string; name: string; config?: Record<string, string> }) =>
     request<SourceRow>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
   deleteSource: (id: number) => request<void>(`/api/sources/${id}`, { method: "DELETE" }),
   chapterCount: (sourceId: number, ref: string, language: string) =>

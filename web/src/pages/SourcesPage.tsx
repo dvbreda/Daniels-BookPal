@@ -61,13 +61,6 @@ export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
     void queryClient.invalidateQueries({ queryKey: ["series"] });
   }
 
-  const addSource = useMutation({
-    mutationFn: (type: string) => api.addSource({ type, name: type }),
-    onSuccess: refresh,
-    onError: (error: unknown) =>
-      setMessage(error instanceof ApiError ? error.message : "Toevoegen mislukt."),
-  });
-
   const runNow = useMutation({
     mutationFn: api.runSources,
     onSuccess: (report) => {
@@ -118,19 +111,7 @@ export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
               </button>
             </div>
           ))}
-          {sources?.length === 0 && (
-            <div className="flex flex-wrap gap-2">
-              {types?.map((type) => (
-                <button
-                  key={type}
-                  onClick={() => addSource.mutate(type)}
-                  className="rounded bg-accent px-3 py-1.5 text-sm text-ink-900"
-                >
-                  {type} toevoegen
-                </button>
-              ))}
-            </div>
-          )}
+          <AddSource types={types ?? []} onAdded={refresh} setMessage={setMessage} />
         </div>
       </section>
 
@@ -427,5 +408,127 @@ function ChapterCount({
     <span>
       {data.count} {data.count === 1 ? "hoofdstuk" : "hoofdstukken"} in {language}
     </span>
+  );
+}
+
+
+/**
+ * Een bron erbij.
+ *
+ * MangaDex en Internet Archive hebben niets nodig — die kennen hun eigen adres.
+ * OPDS wel: dat is juist de bron waar jij een catalogus in zet. Kavita, Komga,
+ * Calibre-web, Standard Ebooks en BookPal zelf spreken het allemaal, dus één
+ * adres invullen is genoeg.
+ */
+function AddSource({
+  types,
+  onAdded,
+  setMessage,
+}: {
+  types: string[];
+  onAdded: () => void;
+  setMessage: (bericht: string | null) => void;
+}) {
+  const [type, setType] = useState("opds");
+  const [naam, setNaam] = useState("");
+  const [url, setUrl] = useState("");
+  const [gebruiker, setGebruiker] = useState("");
+  const [wachtwoord, setWachtwoord] = useState("");
+
+  const toevoegen = useMutation({
+    mutationFn: () =>
+      api.addSource({
+        type,
+        name: naam.trim() || type,
+        config:
+          type === "opds"
+            ? {
+                url: url.trim(),
+                ...(gebruiker ? { username: gebruiker, password: wachtwoord } : {}),
+              }
+            : {},
+      }),
+    onSuccess: () => {
+      setMessage(null);
+      setNaam("");
+      setUrl("");
+      setGebruiker("");
+      setWachtwoord("");
+      onAdded();
+    },
+    onError: (fout: unknown) =>
+      setMessage(fout instanceof ApiError ? fout.message : "Bron toevoegen mislukt."),
+  });
+
+  const heeftAdres = type !== "opds" || url.trim().length > 0;
+
+  return (
+    <form
+      className="mt-3 border-t border-ink-700 pt-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (heeftAdres) toevoegen.mutate();
+      }}
+    >
+      <p className="mb-2 text-sm text-slate-300">Bron toevoegen</p>
+      <div className="flex flex-wrap gap-2">
+        <select
+          value={type}
+          onChange={(event) => setType(event.target.value)}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+        >
+          {types.map((item) => (
+            <option key={item} value={item}>
+              {item}
+            </option>
+          ))}
+        </select>
+        <input
+          value={naam}
+          onChange={(event) => setNaam(event.target.value)}
+          placeholder="Naam (optioneel)"
+          className="w-40 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+        />
+        {type === "opds" && (
+          <input
+            value={url}
+            onChange={(event) => setUrl(event.target.value)}
+            placeholder="https://… /opds"
+            className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+          />
+        )}
+        <button
+          type="submit"
+          disabled={toevoegen.isPending || !heeftAdres}
+          className="rounded bg-accent px-4 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          {toevoegen.isPending ? "Proberen…" : "Toevoegen"}
+        </button>
+      </div>
+
+      {type === "opds" && (
+        <>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <input
+              value={gebruiker}
+              onChange={(event) => setGebruiker(event.target.value)}
+              placeholder="Gebruikersnaam (alleen als de catalogus erom vraagt)"
+              className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+            />
+            <input
+              value={wachtwoord}
+              onChange={(event) => setWachtwoord(event.target.value)}
+              type="password"
+              placeholder="Wachtwoord"
+              className="w-48 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+            />
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            Het adres wordt meteen geprobeerd; klopt het niet, dan hoor je dat nu in plaats
+            van pas als je gaat zoeken.
+          </p>
+        </>
+      )}
+    </form>
   );
 }

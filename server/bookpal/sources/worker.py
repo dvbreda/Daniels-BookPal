@@ -120,7 +120,7 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
             continue
 
         try:
-            implementation = get_source(source_row.type)
+            implementation = get_source(source_row.type, source_row.config)
         except SourceError as exc:
             report.errors.append(f"{source_row.name}: {exc}")
             continue

@@ -81,7 +81,7 @@ def get_source_row(session: Session, source_id: int) -> Source:
 
 def get_source_implementation(source: Source) -> SourceImpl:
     try:
-        return get_source(source.type)
+        return get_source(source.type, source.config)
     except SourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

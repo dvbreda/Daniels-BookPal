@@ -54,17 +54,47 @@ def list_types() -> list[str]:
 @router.get("", response_model=list[SourceOut])
 def list_sources(session: Session = Depends(get_session)) -> list[SourceOut]:
     rows = session.scalars(select(Source).order_by(Source.name)).all()
-    return [SourceOut.model_validate(row) for row in rows]
+    return [_hide_secrets(SourceOut.model_validate(row)) for row in rows]
+
+
+def _hide_secrets(out: SourceOut) -> SourceOut:
+    """Een wachtwoord dat binnenkwam hoeft er niet weer uit.
+
+    Het staat in de database omdat de bron het nodig heeft; het teruggeven aan
+    elke client die de bronnenlijst opvraagt voegt daar niets aan toe.
+    """
+    if "password" in out.config:
+        out.config = {**out.config, "password": "••••••"}
+    return out
 
 
 @router.post("", response_model=SourceOut, status_code=201)
 def create_source(payload: SourceIn, session: Session = Depends(get_session)) -> SourceOut:
     if payload.type not in REGISTRY:
         raise HTTPException(status_code=400, detail=f"onbekende bron: {payload.type}")
-    source = Source(type=payload.type, name=payload.name, enabled=payload.enabled)
+    source = Source(
+        type=payload.type,
+        name=payload.name,
+        enabled=payload.enabled,
+        config=payload.config,
+    )
     session.add(source)
+    session.flush()
+
+    # Meteen proberen: een adres met een typefout hoort je nú te bereiken, niet
+    # pas als je gaat zoeken en niet begrijpt waarom er niets komt.
+    try:
+        implementation = _implementation(source)
+        implementation.search("", limit=1)
+    except SourceError as exc:
+        session.rollback()
+        raise HTTPException(status_code=400, detail=f"deze bron werkt niet: {exc}") from exc
+    except HTTPException:
+        session.rollback()
+        raise
+
     session.commit()
-    return SourceOut.model_validate(source)
+    return _hide_secrets(SourceOut.model_validate(source))
 
 
 @router.delete("/{source_id}", status_code=204)

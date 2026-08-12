@@ -84,7 +84,7 @@ def _download_ahead(series_id: int) -> None:
             return
 
         try:
-            implementation = get_source(source_row.type)
+            implementation = get_source(source_row.type, source_row.config)
         except SourceError as exc:
             logger.warning("bron %s niet te starten: %s", source_row.type, exc)
             return

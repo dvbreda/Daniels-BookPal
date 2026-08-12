@@ -870,7 +870,7 @@ class TestSeriesCoverApi:
     def test_attach_cover_persists_on_the_series(
         self, client, session: Session, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type, _config=None: make_source())
         source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
             "id"
         ]
@@ -929,7 +929,7 @@ class TestSourcesApi:
     def test_search_includes_the_cover_for_the_picker(
         self, client, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type, _config=None: make_source())
         source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
             "id"
         ]
