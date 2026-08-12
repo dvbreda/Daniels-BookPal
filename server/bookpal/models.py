@@ -248,6 +248,11 @@ class Book(Base):
     page_count: Mapped[int | None] = mapped_column(Integer, default=None)
     right_to_left: Mapped[bool] = mapped_column(Boolean, default=False)
 
+    # De omslag van dít deel bij de bron. MangaDex heeft er meestal één per
+    # volume; zonder dit zou elk deel "pagina 1" tonen, en dat is bij
+    # scanlations vaak een credits-pagina van de vertaalgroep.
+    cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
+
     # M5: geabonneerde hoofdstukken zonder lokaal bestand.
     source_id: Mapped[int | None] = mapped_column(
         ForeignKey("source.id", ondelete="SET NULL"), default=None

@@ -6,6 +6,8 @@ import type {
   Health,
   ImageProfile,
   ImportResult,
+  IntakeImportResult,
+  IntakeScan,
   GoodreadsStatus,
   GoodreadsSyncResult,
   LibraryRoot,
@@ -232,6 +234,12 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  intakeScan: () => request<IntakeScan>("/api/intake"),
+  intakeImport: (body: { paths: string[]; root_id: number; folder?: string | null }) =>
+    request<IntakeImportResult>("/api/intake/import", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   mergeSuggestions: () => request<MergeSuggestion[]>("/api/series/merge/suggestions"),
   mergeSeries: (keepId: number, absorbId: number) =>
     request<SeriesDetail>(`/api/series/${keepId}/merge`, {

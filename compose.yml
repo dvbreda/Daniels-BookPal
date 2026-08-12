@@ -49,6 +49,10 @@ services:
       - "${BOOKPAL_BOEKEN:-/volume1/_boeken}:/library/boeken"
       - "${BOOKPAL_STRIPS:-/volume1/_strips}:/library/strips"
       - "${BOOKPAL_MANGA:-/volume1/_manga}:/library/manga"
+      # Losse bestanden die je erin wilt zetten: downloads, een Dropbox-map,
+      # wat iemand je stuurt. Importeren verplaatst ze naar een van je mappen
+      # hierboven, dus deze mag niet read-only.
+      - "${BOOKPAL_INTAKE:-/volume1/_intake}:/intake"
       #
       # Heb je alles onder één map staan (bijvoorbeeld /volume1/_boeken met
       # daarin strips/ en manga/)? Haal de drie regels hierboven weg, zet deze

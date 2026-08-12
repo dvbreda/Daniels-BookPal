@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     gemini_image_model_fast: str = "gemini-3.1-flash-image"
     gemini_image_model_pro: str = "gemini-3-pro-image"
 
+    # Mappen waar losse bestanden vandaan komen om te importeren: downloads,
+    # een Dropbox-map, wat iemand je stuurt. Read-only aankoppelen mag niet —
+    # importeren verplaatst.
+    intake_dirs: list[str] = ["/intake"]
+
     # Waar vertalingen blijvend bewaard worden, buiten de database om. Een
     # vertaling kost geld; die mag niet verdwijnen als de database opnieuw
     # wordt opgebouwd. De collectie zelf is read-only aangekoppeld, dus dit

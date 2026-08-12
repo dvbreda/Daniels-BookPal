@@ -21,7 +21,7 @@ from typing import Any
 import httpx
 
 from bookpal.ratelimit import RateLimiter
-from bookpal.sources.base import ChapterInfo, SearchResult, Source, SourceError
+from bookpal.sources.base import ChapterInfo, CoverInfo, SearchResult, Source, SourceError
 
 API_BASE = "https://api.mangadex.org"
 COVERS_BASE = "https://uploads.mangadex.org/covers"
@@ -259,3 +259,34 @@ class MangaDexSource(Source):
 
     def close(self) -> None:
         self._client.close()
+
+
+    def covers(self, ref: str, *, limit: int = 100) -> list[CoverInfo]:
+        """Alle omslagen bij een reeks, meestal één per deel.
+
+        Zonder dit toont elk deel "pagina 1", en dat is bij scanlations vaak
+        een credits-pagina van de vertaalgroep in plaats van de echte omslag.
+        """
+        found: list[CoverInfo] = []
+        offset = 0
+        while True:
+            payload = self._get(
+                "/cover",
+                {"manga[]": ref, "limit": min(limit, 100), "offset": offset},
+            )
+            batch = payload.get("data", [])
+            for item in batch:
+                attributes = item.get("attributes") or {}
+                file_name = attributes.get("fileName")
+                if not file_name:
+                    continue
+                found.append(
+                    CoverInfo(
+                        url=f"{COVERS_BASE}/{ref}/{file_name}.512.jpg",
+                        volume=attributes.get("volume"),
+                    )
+                )
+            offset += len(batch)
+            if len(batch) < min(limit, 100) or offset >= int(payload.get("total", 0)):
+                break
+        return found

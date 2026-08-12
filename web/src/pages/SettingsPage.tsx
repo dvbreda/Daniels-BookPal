@@ -69,6 +69,8 @@ export function SettingsPage() {
         </p>
       )}
 
+      <IntakePanel />
+
       <MergePanel />
 
       <TranslateModePanel />
@@ -327,6 +329,138 @@ function MergePanel() {
           </li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+
+/**
+ * Losse bestanden je bibliotheek in halen.
+ *
+ * Voor wat er buiten je mappen belandt: een download, iets uit Dropbox, een
+ * cbz die je van iemand kreeg. Verplaatst naar een van je eigen mappen en
+ * overschrijft nooit iets wat er al staat.
+ */
+function IntakePanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["intake"], queryFn: api.intakeScan });
+  const { data: roots } = useQuery({ queryKey: ["libraries"], queryFn: api.libraries });
+  const [rootId, setRootId] = useState<number | null>(null);
+  const [folder, setFolder] = useState("");
+  const [gekozen, setGekozen] = useState<string[]>([]);
+  const [result, setResult] = useState<string | null>(null);
+
+  const doImport = useMutation({
+    mutationFn: () =>
+      api.intakeImport({ paths: gekozen, root_id: rootId!, folder: folder.trim() || null }),
+    onSuccess: (report) => {
+      setResult(
+        `${report.moved} verplaatst, ${report.skipped} overgeslagen.` +
+          (report.errors.length ? ` Fouten: ${report.errors.slice(0, 3).join("; ")}` : ""),
+      );
+      setGekozen([]);
+      void queryClient.invalidateQueries({ queryKey: ["intake"] });
+    },
+    onError: (error: unknown) =>
+      setResult(error instanceof ApiError ? error.message : "Importeren mislukt."),
+  });
+
+  if (!data) return null;
+
+  if (data.folders.length === 0) {
+    return (
+      <section className="mt-6 rounded border border-ink-600 p-4">
+        <h2 className="font-medium text-slate-200">Bestanden importeren</h2>
+        <p className="mt-1 text-xs text-slate-500">
+          Er is geen intake-map aangekoppeld. Zet <code>BOOKPAL_INTAKE</code> in je{" "}
+          <code>.env</code> naar de map met je downloads of Dropbox-bestanden.
+        </p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Bestanden importeren</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Gevonden in {data.folders.join(", ")}. Verplaatsen naar je bibliotheek overschrijft nooit
+        iets wat er al staat.
+      </p>
+      {data.unwritable.length > 0 && (
+        <p className="mt-2 text-xs text-warning">
+          Uit {data.unwritable.join(", ")} kan niets verplaatst worden. Meestal heeft Docker die
+          map als root aangemaakt; maak hem aan met je eigen gebruiker.
+        </p>
+      )}
+
+      {data.files.length === 0 ? (
+        <p className="mt-3 text-sm text-slate-500">Niets klaarstaan.</p>
+      ) : (
+        <>
+          <ul className="mt-3 max-h-64 space-y-1 overflow-y-auto">
+            {data.files.map((file) => (
+              <li key={file.path}>
+                <label className="flex cursor-pointer items-center gap-2 rounded bg-ink-800 px-3 py-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={gekozen.includes(file.path)}
+                    onChange={(event) =>
+                      setGekozen((huidig) =>
+                        event.target.checked
+                          ? [...huidig, file.path]
+                          : huidig.filter((p) => p !== file.path),
+                      )
+                    }
+                  />
+                  <span className="min-w-0 flex-1 truncate text-slate-100">{file.name}</span>
+                  {file.series && (
+                    <span className="truncate text-xs text-slate-500">{file.series}</span>
+                  )}
+                  <span className="tabular-nums text-xs text-slate-500">
+                    {Math.round(file.size / 1024 / 1024)} MB
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setGekozen(data.files.map((f) => f.path))}
+              className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
+            >
+              Alles
+            </button>
+            <select
+              value={rootId ?? ""}
+              onChange={(event) => setRootId(Number(event.target.value) || null)}
+              className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+            >
+              <option value="">Kies een map…</option>
+              {(roots ?? []).map((root) => (
+                <option key={root.id} value={root.id}>
+                  {root.name}
+                </option>
+              ))}
+            </select>
+            <input
+              value={folder}
+              onChange={(event) => setFolder(event.target.value)}
+              placeholder="Submap (optioneel)"
+              className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+            />
+            <button
+              onClick={() => doImport.mutate()}
+              disabled={!rootId || gekozen.length === 0 || doImport.isPending}
+              className="rounded bg-accent px-4 py-2 text-sm text-ink-900 disabled:opacity-50"
+            >
+              {doImport.isPending ? "Bezig…" : `Importeer ${gekozen.length}`}
+            </button>
+          </div>
+        </>
+      )}
+
+      {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
     </section>
   );
 }

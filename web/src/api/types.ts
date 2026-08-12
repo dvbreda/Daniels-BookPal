@@ -327,6 +327,28 @@ export interface ImportResult {
   errors: string[];
 }
 
+export interface IntakeFile {
+  path: string;
+  name: string;
+  size: number;
+  series: string | null;
+  number: string | null;
+}
+
+export interface IntakeScan {
+  /** Welke intake-mappen er daadwerkelijk bestaan. */
+  folders: string[];
+  /** Mappen die bestaan maar waaruit niets verplaatst kan worden. */
+  unwritable: string[];
+  files: IntakeFile[];
+}
+
+export interface IntakeImportResult {
+  moved: number;
+  skipped: number;
+  errors: string[];
+}
+
 export interface MergeSuggestion {
   keep_id: number;
   keep_title: string;

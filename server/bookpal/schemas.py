@@ -174,6 +174,37 @@ class NextChapterOut(BaseModel):
     has_file: bool
 
 
+class IntakeCandidateOut(BaseModel):
+    path: str
+    name: str
+    size: int
+    series: str | None = None
+    number: str | None = None
+
+
+class IntakeScanOut(BaseModel):
+    # Welke mappen er daadwerkelijk bestaan; anders zoek je je scheel naar
+    # waarom er niets staat.
+    folders: list[str] = Field(default_factory=list)
+    # Mappen die bestaan maar waaruit niets verplaatst kan worden — meestal
+    # omdat Docker ze als root heeft aangemaakt.
+    unwritable: list[str] = Field(default_factory=list)
+    files: list[IntakeCandidateOut] = Field(default_factory=list)
+
+
+class IntakeImportIn(BaseModel):
+    paths: list[str]
+    root_id: int
+    # Submap op serienaam; leeg zet ze los in de root.
+    folder: str | None = Field(default=None, max_length=200)
+
+
+class IntakeImportOut(BaseModel):
+    moved: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
 class MergeSeriesIn(BaseModel):
     """De serie die opgaat in deze. Verdwijnt daarna."""
 

@@ -14,6 +14,7 @@ from bookpal.images import (
     open_source,
     render_cover,
     render_page,
+    render_remote_cover,
     source_id_for,
 )
 from bookpal.images.adjust import Adjustments
@@ -224,6 +225,26 @@ def get_cover(
     session: Session = Depends(get_session),
 ) -> Response:
     book = deps.get_book(session, book_id)
+
+    # De omslag van dít deel bij de bron wint van "pagina 1": bij scanlations
+    # staat daar vaak een credits-pagina van de vertaalgroep. Een handmatig
+    # gekozen paginanummer gaat hier weer boven, want dat is een echte keuze.
+    if book.cover_url and (book.series is None or book.series.cover_page_index is None):
+        try:
+            remote = render_remote_cover(
+                book.cover_url, profile, source_id=f"book-cover:{book.id}:{book.cover_url}"
+            )
+            return Response(
+                content=remote.data,
+                media_type=remote.media_type,
+                headers={
+                    "Cache-Control": COVER_CACHE_CONTROL,
+                    "X-BookPal-Cache": "hit" if remote.from_cache else "miss",
+                },
+            )
+        except UnsupportedOperation:
+            pass  # bron onbereikbaar; val terug op de pagina zelf
+
     path = deps.book_file_path(session, book)
     source = open_source(path)
 

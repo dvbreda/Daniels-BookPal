@@ -590,9 +590,15 @@ function MalListPanel({
             className="flex flex-wrap items-center gap-2 rounded bg-ink-800 px-3 py-2 text-sm"
           >
             <span className="min-w-0 flex-1 truncate text-slate-100">{item.title}</span>
-            {item.chapters > 0 && (
-              <span className="tabular-nums text-xs text-slate-500">
-                {item.chapters_read}/{item.chapters}
+            {/* MyAnimeList geeft 0 als totaal voor reeksen die nog lopen; het
+                aantal staat dan simpelweg niet vast. Dat is geen reden om ook
+                te verzwijgen hoe ver jij bent. */}
+            {(item.chapters > 0 || item.chapters_read > 0) && (
+              <span
+                className="tabular-nums text-xs text-slate-500"
+                title={item.chapters > 0 ? undefined : "Loopt nog; totaal onbekend"}
+              >
+                {item.chapters_read}/{item.chapters > 0 ? item.chapters : "?"}
               </span>
             )}
             {item.series_id ? (

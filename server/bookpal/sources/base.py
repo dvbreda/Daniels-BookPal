@@ -41,6 +41,14 @@ class SearchResult:
 
 
 @dataclass(frozen=True, slots=True)
+class CoverInfo:
+    """Eén omslag bij een reeks. ``volume`` is None voor de hoofdomslag."""
+
+    url: str
+    volume: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterInfo:
     """Eén hoofdstuk bij een serie.
 

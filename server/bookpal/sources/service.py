@@ -319,6 +319,7 @@ def subscribe(
     detail = implementation.detail(ref)
     series = upsert_series(session, source_row, detail)
 
+
     # Het abonnement moet er zijn vóór het synchroniseren: daar staat de
     # voorkeursgroep op, en die bepaalt welke vertaling er wordt aangemaakt.
     subscription = session.scalar(
@@ -459,3 +460,35 @@ def expire_downloads(session: Session, *, now: datetime | None = None) -> int:
         removed += 1
     session.flush()
     return removed
+
+
+def sync_covers(session: Session, implementation: SourceImpl, series: Series) -> int:
+    """Haal de omslagen per deel op en hang ze aan de bijbehorende boeken.
+
+    MangaDex heeft er meestal één per volume. Zonder dit toont elk deel
+    "pagina 1", en dat is bij scanlations vaak een credits-pagina van de
+    vertaalgroep in plaats van de echte omslag.
+
+    Faalt zacht: een serie zonder omslagen is nog steeds prima leesbaar.
+    """
+    getter = getattr(implementation, "covers", None)
+    if getter is None or not series.source_ref:
+        return 0
+
+    try:
+        covers = getter(series.source_ref)
+    except SourceError as exc:
+        logger.warning("omslagen ophalen voor %s: %s", series.title, exc)
+        return 0
+
+    per_volume = {cover.volume: cover.url for cover in covers if cover.volume}
+    if not per_volume:
+        return 0
+
+    aantal = 0
+    for book in session.scalars(select(Book).where(Book.series_id == series.id)):
+        url = per_volume.get(book.volume) if book.volume else None
+        if url and book.cover_url != url:
+            book.cover_url = url
+            aantal += 1
+    return aantal

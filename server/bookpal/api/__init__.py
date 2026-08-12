@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from bookpal.api import (
     books,
     collections,
+    intake,
     libraries,
     lite,
     opds,
@@ -26,6 +27,7 @@ router.include_router(books.router)
 router.include_router(progress.router)
 router.include_router(tabs.router)
 router.include_router(collections.router)
+router.include_router(intake.router)
 router.include_router(sources.router)
 router.include_router(trackers.router)
 router.include_router(translate.router)

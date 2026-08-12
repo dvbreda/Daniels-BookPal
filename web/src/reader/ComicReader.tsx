@@ -7,6 +7,8 @@ import { ApiError, api, imageUrl } from "../api/client";
 import type { BookDetail, TranslateMode } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
+import type { GridTransform } from "./grid";
+import { cellOrder, cellTransform } from "./grid";
 import { TranslationOverlay } from "./TranslationOverlay";
 import { usePageTranslation } from "./usePageTranslation";
 import {
@@ -60,13 +62,19 @@ export function ComicReader({ book, onClose }: Props) {
   // Leesinstellingen die het beeld zelf raken; de server snijdt en rekt op en
   // cachet het resultaat, dus dit kost niets bij het omslaan.
   const [crop, setCrop] = useStoredState("reader.crop", false);
+  // Rasterzoom: de pagina in cellen, één voor één vullend. Op een telefoon is
+  // een mangapagina anders leesbaar noch te overzien.
+  const [grid, setGrid] = useStoredState("reader.grid", 0);
+  const [cell, setCell] = useState(0);
   const [contrast, setContrast] = useStoredState("reader.contrast", 100);
   const adjust = useMemo(() => ({ crop, contrast }), [crop, contrast]);
   const [dismissedNext, setDismissedNext] = useState(false);
 
   const spreads = useMemo(
-    () => buildSpreads(pageCount, viewMode === "paged" && doublePage, { aspects }),
-    [pageCount, viewMode, doublePage, aspects],
+    // Rasterzoom en dubbelpagina sluiten elkaar uit: een raster over twee
+    // pagina's tegelijk zou per pagina apart schalen en uit elkaar lopen.
+    () => buildSpreads(pageCount, viewMode === "paged" && doublePage && grid === 0, { aspects }),
+    [pageCount, viewMode, doublePage, grid, aspects],
   );
 
   const spreadIndex = spreadIndexOfPage(spreads, page);
@@ -122,8 +130,39 @@ export function ComicReader({ book, onClose }: Props) {
     [spreads],
   );
 
-  const goNext = useCallback(() => goToSpread(spreadIndex + 1), [goToSpread, spreadIndex]);
-  const goPrevious = useCallback(() => goToSpread(spreadIndex - 1), [goToSpread, spreadIndex]);
+  // Bij een raster van 0 staat het uit; 2 betekent 2x2, 3 betekent 3x2.
+  const gridRows = grid === 0 ? 1 : grid;
+  const gridCols = grid === 0 ? 1 : 2;
+  const cells = useMemo(
+    () => (grid === 0 ? [] : cellOrder(gridRows, gridCols, rightToLeft)),
+    [grid, gridRows, gridCols, rightToLeft],
+  );
+
+  // Bij een sprong met de schuifbalk (of een moduswissel) hoor je bovenaan de
+  // nieuwe pagina te beginnen, niet halverwege het raster.
+  useEffect(() => {
+    setCell(0);
+  }, [currentPage]);
+
+  const goNext = useCallback(() => {
+    // Eerst door de cellen van deze pagina, dan pas omslaan.
+    if (cells.length > 0 && cell < cells.length - 1) {
+      setCell(cell + 1);
+      return;
+    }
+    setCell(0);
+    goToSpread(spreadIndex + 1);
+  }, [cell, cells.length, goToSpread, spreadIndex]);
+
+  const goPrevious = useCallback(() => {
+    if (cells.length > 0 && cell > 0) {
+      setCell(cell - 1);
+      return;
+    }
+    // Terugbladeren komt onderaan de vorige pagina uit, niet bovenaan.
+    setCell(Math.max(0, cells.length - 1));
+    goToSpread(spreadIndex - 1);
+  }, [cell, cells.length, goToSpread, spreadIndex]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -260,6 +299,11 @@ export function ComicReader({ book, onClose }: Props) {
                 fitClass={fitClass}
                 translated={translated}
                 adjust={adjust}
+                grid={
+                  grid === 0
+                    ? null
+                    : cellTransform(cells[cell] ?? { row: 0, col: 0 }, gridRows, gridCols)
+                }
                 onAspect={noteAspect}
               />
             ))}
@@ -290,6 +334,11 @@ export function ComicReader({ book, onClose }: Props) {
           pageCount={pageCount}
           crop={crop}
           setCrop={setCrop}
+          grid={grid}
+          setGrid={(value) => {
+            setGrid(value);
+            setCell(0);
+          }}
           contrast={contrast}
           setContrast={setContrast}
           translated={translated}
@@ -437,6 +486,8 @@ interface ChromeProps {
   pageCount: number;
   crop: boolean;
   setCrop: (value: boolean) => void;
+  grid: number;
+  setGrid: (value: number) => void;
   contrast: number;
   setContrast: (value: number) => void;
   translated: boolean;
@@ -466,6 +517,8 @@ function Chrome(props: ChromeProps) {
     pageCount,
     crop,
     setCrop,
+    grid,
+    setGrid,
     contrast,
     setContrast,
     translated,
@@ -527,7 +580,7 @@ function Chrome(props: ChromeProps) {
             <div className="flex flex-wrap items-center gap-2">
               <Toggle
                 active={doublePage}
-                disabled={viewMode === "vertical"}
+                disabled={viewMode === "vertical" || grid > 0}
                 onClick={() => setDoublePage(!doublePage)}
               >
                 Dubbel
@@ -557,6 +610,24 @@ function Chrome(props: ChromeProps) {
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Raster</span>
+                {[0, 2, 3].map((value) => (
+                  <Toggle
+                    key={value}
+                    active={grid === value}
+                    disabled={viewMode === "vertical"}
+                    onClick={() => setGrid(value)}
+                    title={
+                      value === 0
+                        ? "Hele pagina"
+                        : `Pagina in ${value}x2 cellen; bladeren gaat per cel`
+                    }
+                  >
+                    {value === 0 ? "Uit" : `${value}×2`}
+                  </Toggle>
+                ))}
+              </div>
               <Toggle
                 active={crop}
                 onClick={() => setCrop(!crop)}
@@ -661,6 +732,7 @@ function TranslatablePage({
   fitClass,
   translated,
   adjust,
+  grid,
   onAspect,
 }: {
   book: BookDetail;
@@ -669,6 +741,7 @@ function TranslatablePage({
   fitClass: string;
   translated: boolean;
   adjust: { crop: boolean; contrast: number };
+  grid: GridTransform | null;
   onAspect: (index: number, width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, page, translated);
@@ -676,8 +749,19 @@ function TranslatablePage({
 
   return (
     // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
-    // als de afbeelding zelf — vandaar w-fit en relative.
-    <div className="relative w-fit [container-type:inline-size]">
+    // als de afbeelding zelf — vandaar w-fit en relative. Bij rasterzoom
+    // schaalt en verschuift ditzelfde vlak, zodat de vertaling meebeweegt.
+    <div
+      className="relative w-fit overflow-hidden [container-type:inline-size]"
+      style={
+        grid
+          ? {
+              transform: `scale(${grid.scale}) translate(${grid.translateX}%, ${grid.translateY}%)`,
+              transformOrigin: "center",
+            }
+          : undefined
+      }
+    >
       <img
         src={
           useFullPage
