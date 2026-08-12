@@ -262,6 +262,7 @@ function SeriesSettings({
             </div>
           </section>
 
+          <SimilarPanel seriesId={seriesId} />
           <RenamePanel seriesId={seriesId} title={series.title} />
           <EditionsPanel seriesId={seriesId} editions={series.editions} />
           <CoverPicker series={series} />
@@ -625,10 +626,15 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
     void queryClient.invalidateQueries({ queryKey: ["series"] });
   };
 
+  // Was de naam bezet? Dan is hij niet doorgevoerd en is samenvoegen de enige
+  // weg vooruit: twee series met dezelfde naam in één map bestaan niet.
+  const [bezet, setBezet] = useState(false);
+
   const rename = useMutation({
     mutationFn: () => api.renameSeries(seriesId, naam.trim()),
     onSuccess: (result) => {
       setNaamgenoot(result.merge_candidate);
+      setBezet(!result.renamed);
       ververs();
     },
   });
@@ -637,7 +643,14 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
     mutationFn: (absorbId: number) => api.mergeSeries(seriesId, absorbId),
     onSuccess: () => {
       setNaamgenoot(null);
-      ververs();
+      void queryClient.invalidateQueries({ queryKey: ["similar-series", seriesId] });
+      // De naam die zojuist bezet was, is nu vrij: alsnog doorvoeren.
+      if (bezet) {
+        setBezet(false);
+        rename.mutate();
+      } else {
+        ververs();
+      }
     },
   });
 
@@ -676,6 +689,12 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
             «{naamgenoot.title}» bestaat al ({naamgenoot.books}{" "}
             {naamgenoot.books === 1 ? "deel" : "delen"}). Samenvoegen?
           </p>
+          {bezet && (
+            <p className="mt-1 text-xs text-warning">
+              De naam is nog niet doorgevoerd: twee series met dezelfde naam in één map
+              bestaan niet. Na het samenvoegen zet ik hem alsnog om.
+            </p>
+          )}
           <p className="mt-1 text-xs text-slate-500">
             De delen en abonnementen verhuizen hierheen en worden uitgaven van deze serie. Er
             gaat niets van schijf.
@@ -689,7 +708,10 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
               {samenvoegen.isPending ? "Bezig…" : "Samenvoegen"}
             </button>
             <button
-              onClick={() => setNaamgenoot(null)}
+              onClick={() => {
+                setNaamgenoot(null);
+                setBezet(false);
+              }}
               className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-300"
             >
               Apart laten
@@ -703,6 +725,77 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
             </p>
           )}
         </div>
+      )}
+    </section>
+  );
+}
+
+
+/**
+ * Series die op deze lijken, met de vraag of ze samen mogen.
+ *
+ * Een dubbele serie ontstaat vanzelf: door een scan die een map net anders
+ * benoemt, of door een bron die "One Piece (Official Colored)" heet waar jij
+ * "One Piece" hebt staan. Dat wil je gemeld krijgen in plaats van zelf moeten
+ * opmerken — vandaar hier en niet alleen op het moment dat je hernoemt.
+ */
+function SimilarPanel({ seriesId }: { seriesId: number }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["similar-series", seriesId],
+    queryFn: () => api.similarSeries(seriesId),
+  });
+
+  const samenvoegen = useMutation({
+    mutationFn: (absorbId: number) => api.mergeSeries(seriesId, absorbId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["similar-series", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series"] });
+    },
+  });
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <section className="mt-3 rounded border border-ink-600 p-4">
+      <h2 className="text-sm font-medium text-slate-200">Lijkt hierop</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Samenvoegen maakt er uitgaven van één serie van: de delen en abonnementen verhuizen
+        hierheen, er gaat niets van schijf. Dezelfde reeks met een editie erachter hoort
+        meestal bij elkaar; twee delen van een lange reeks niet.
+      </p>
+      <ul className="mt-3 space-y-1">
+        {data.map((kandidaat) => (
+          <li
+            key={kandidaat.id}
+            className="flex flex-wrap items-center gap-2 rounded bg-ink-800 px-3 py-2 text-sm"
+          >
+            <Link
+              to={`/serie/${kandidaat.id}`}
+              className="min-w-0 flex-1 truncate text-slate-100 hover:text-accent"
+            >
+              {kandidaat.title}
+            </Link>
+            <span className="tabular-nums text-xs text-slate-500">
+              {kandidaat.books} {kandidaat.books === 1 ? "deel" : "delen"}
+            </span>
+            <button
+              onClick={() => samenvoegen.mutate(kandidaat.id)}
+              disabled={samenvoegen.isPending}
+              className="rounded bg-accent px-2 py-1 text-xs text-ink-900 disabled:opacity-50"
+            >
+              Samenvoegen
+            </button>
+          </li>
+        ))}
+      </ul>
+      {samenvoegen.isError && (
+        <p className="mt-2 text-xs text-danger">
+          {samenvoegen.error instanceof ApiError
+            ? samenvoegen.error.message
+            : "Samenvoegen mislukt."}
+        </p>
       )}
     </section>
   );

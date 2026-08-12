@@ -17,6 +17,7 @@ import type {
   Edition,
   MalImportProgress,
   MalListItem,
+  MergeCandidate,
   MergeSuggestion,
   NextChapter,
   PageTranslation,
@@ -142,6 +143,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  similarSeries: (id: number) => request<MergeCandidate[]>(`/api/series/${id}/similar`),
   syncCovers: (id: number) =>
     request<SyncCoversResult>(`/api/series/${id}/covers`, { method: "POST" }),
   renameSeries: (id: number, title: string) =>

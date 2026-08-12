@@ -186,13 +186,18 @@ class SeriesRenameIn(BaseModel):
 
 
 class SeriesRenameOut(SeriesOut):
-    """De hernoemde serie, plus wat je er waarschijnlijk mee wilde.
+    """De serie na het hernoemen, plus wat je er waarschijnlijk mee wilde.
 
     Hernoemen naar een naam die al bestaat betekent bijna altijd dat het
     hetzelfde ding is. Dat is een vraag en geen automatisme: gelijknamig is niet
     hetzelfde, en samenvoegen laat zich niet met één druk terugdraaien.
+
+    Is die naam in dezelfde map al bezet, dan kán de serie niet hernoemd worden
+    — twee mappen met dezelfde naam bestaan niet. Dan blijft ``renamed`` op
+    false en is samenvoegen de enige weg vooruit.
     """
 
+    renamed: bool = True
     merge_candidate: MergeCandidateOut | None = None
 
 

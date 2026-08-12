@@ -268,8 +268,11 @@ def _editions_out(
             **{
                 **{
                     veld: getattr(edition, veld)
-                    for veld in ("id", "series_id", "name", "rank", "note")
+                    for veld in ("id", "series_id", "name", "rank")
                 },
+                # Zelf gezet wint; anders afgeleid uit de naam, net als bij de
+                # hoofdstukken zelf.
+                "note": edition.note or source_service.edition_note(edition.name),
                 "language": talen.get(edition.id),
                 "subscription_id": edition.subscription_id,
                 "folder_path": edition.folder_path,
@@ -298,16 +301,29 @@ def rename_series(
     titel = payload.title.strip()
     if not titel:
         raise HTTPException(status_code=400, detail="een serie heeft een titel nodig")
-    series.title = titel
-    series.sort_title = titel.lower()
-    session.commit()
+
+    # Eerst kijken of de naam vrij is, dán pas opslaan. Binnen één map is de
+    # titel uniek, dus een botsing is geen fout maar een aanwijzing: die andere
+    # serie is bijna altijd hetzelfde ding.
+    bezet = session.scalar(
+        select(Series).where(
+            Series.id != series.id,
+            Series.library_root_id == series.library_root_id,
+            Series.title == titel,
+        )
+    )
+    if bezet is None:
+        series.title = titel
+        series.sort_title = titel.lower()
+        session.commit()
 
     uit = SeriesRenameOut(
         **deps.to_series_out(
             series, len(series.books), sorted({book.kind.value for book in series.books})
         ).model_dump()
     )
-    naamgenoot = _same_name(session, series)
+    uit.renamed = bezet is None
+    naamgenoot = bezet or _same_name(session, series, titel)
     if naamgenoot is not None:
         uit.merge_candidate = MergeCandidateOut(
             id=naamgenoot.id, title=naamgenoot.title, books=len(naamgenoot.books)
@@ -315,19 +331,36 @@ def rename_series(
     return uit
 
 
-def _same_name(session: Session, series: Series) -> Series | None:
+def _same_name(session: Session, series: Series, titel: str) -> Series | None:
     """Een andere serie die na normaliseren dezelfde naam heeft.
 
     Dezelfde vergelijking als bij het toevoegen van een bron, zodat "Shinya
     Shokudou" en "Shinya Shokudo" hier ook als één ding gelden.
     """
-    gezocht = normalise(series.title)
+    gezocht = normalise(titel)
     if not gezocht:
         return None
     for andere in session.scalars(select(Series).where(Series.id != series.id)):
         if normalise(andere.title) == gezocht:
             return andere
     return None
+
+
+@router.get("/{series_id}/similar", response_model=list[MergeCandidateOut])
+def similar_series(
+    series_id: int, session: Session = Depends(get_session)
+) -> list[MergeCandidateOut]:
+    """Series die op deze lijken, om samen te voegen.
+
+    Staat permanent bij de instellingen: een dubbele serie ontstaat vanzelf —
+    door een scan, door een bron met een net andere titel — en dan wil je erop
+    gewezen worden in plaats van het zelf te moeten opmerken.
+    """
+    series = deps.get_series(session, series_id)
+    return [
+        MergeCandidateOut(id=andere.id, title=andere.title, books=len(andere.books))
+        for andere in merge_module.similar(session, series)
+    ]
 
 
 @router.patch("/{series_id}/origin", response_model=SeriesOut)

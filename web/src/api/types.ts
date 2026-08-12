@@ -92,7 +92,10 @@ export interface MergeCandidate {
 }
 
 export interface SeriesRenamed extends Series {
-  /** Een serie die na het hernoemen dezelfde naam blijkt te hebben. */
+  /** Was de naam vrij? Binnen één map kan een titel maar één keer bestaan;
+   * dan is samenvoegen de enige weg vooruit. */
+  renamed: boolean;
+  /** Een serie die dezelfde naam blijkt te hebben. */
   merge_candidate: MergeCandidate | null;
 }
 

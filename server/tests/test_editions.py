@@ -591,8 +591,10 @@ class TestWhatEachChapterTellsYou:
         _book(session, series, uitgave, 1.0)
         session.commit()
 
-        [regel] = client.get(f"/api/series/{series.id}").json()["books"]
-        assert regel["edition_note"] == "kleur"
+        body = client.get(f"/api/series/{series.id}").json()
+        assert body["books"][0]["edition_note"] == "kleur"
+        # En bij de uitgave zelf, want daar staat de lijst waarin je ordent.
+        assert body["editions"][0]["note"] == "kleur"
 
     def test_a_coloured_source_is_labelled_by_itself(self):
         from bookpal.sources.service import edition_note
@@ -603,6 +605,27 @@ class TestWhatEachChapterTellsYou:
 
 
 class TestRenamingOntoAnExistingName:
+    def test_a_taken_name_in_the_same_folder_is_not_an_error(self, client, session: Session):
+        """Binnen één map is de titel uniek; dat is geen 500 maar een voorstel."""
+        from bookpal.models import LibraryRoot
+
+        root = LibraryRoot(name="R", path="/tmp/r-hernoem")
+        session.add(root)
+        session.flush()
+        bezet = Series(title="One Piece", sort_title="o", library_root_id=root.id)
+        hernoemd = Series(
+            title="One Piece (Official Colored)", sort_title="o", library_root_id=root.id
+        )
+        session.add_all([bezet, hernoemd])
+        session.commit()
+
+        response = client.patch(f"/api/series/{hernoemd.id}/title", json={"title": "One Piece"})
+        assert response.status_code == 200
+        body = response.json()
+        assert body["renamed"] is False
+        assert body["title"] == "One Piece (Official Colored)", "de naam blijft zoals hij was"
+        assert body["merge_candidate"]["id"] == bezet.id
+
     def test_it_offers_to_merge(self, client, session: Session):
         session.add(Series(title="Shinya Shokudou", sort_title="s"))
         hernoemd = Series(title="Iets anders", sort_title="i")
@@ -705,3 +728,41 @@ class TestFetchingCovers:
         response = client.post(f"/api/series/{series.id}/covers")
         assert response.status_code == 200
         assert response.json()["updated"] == 0
+
+
+class TestSimilarSeries:
+    """Een dubbele serie ontstaat vanzelf; je hoort erop gewezen te worden."""
+
+    def test_a_romanisation_variant_is_offered(self, client, session: Session):
+        session.add(Series(title="Shinya Shokudo", sort_title="s"))
+        andere = Series(title="Shinya Shokudou", sort_title="s")
+        session.add(andere)
+        session.commit()
+
+        [voorstel] = client.get(f"/api/series/{andere.id}/similar").json()
+        assert voorstel["title"] == "Shinya Shokudo"
+
+    def test_a_title_with_an_edition_behind_it_is_offered(self, client, session: Session):
+        """ "One Piece" en "One Piece (Official Colored)" zijn dezelfde reeks."""
+        kaal = Series(title="One Piece", sort_title="o")
+        gekleurd = Series(title="One Piece (Official Colored)", sort_title="o")
+        session.add_all([kaal, gekleurd])
+        session.commit()
+
+        titels = [v["title"] for v in client.get(f"/api/series/{kaal.id}/similar").json()]
+        assert titels == ["One Piece (Official Colored)"]
+
+    def test_an_unrelated_series_is_not_offered(self, client, session: Session):
+        eerste = Series(title="Oishinbo", sort_title="o")
+        session.add_all([eerste, Series(title="One Piece", sort_title="o")])
+        session.commit()
+
+        assert client.get(f"/api/series/{eerste.id}/similar").json() == []
+
+    def test_a_short_title_does_not_drag_everything_in(self, client, session: Session):
+        """ "Ai" zit in van alles; daar valt niets op te baseren."""
+        kort = Series(title="Ai", sort_title="a")
+        session.add_all([kort, Series(title="Ai Yori Aoshi", sort_title="a")])
+        session.commit()
+
+        assert client.get(f"/api/series/{kort.id}/similar").json() == []

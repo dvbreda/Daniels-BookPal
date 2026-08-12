@@ -145,3 +145,41 @@ def _normalise(title: str) -> str:
     # Gedeeld met het koppelen aan MyAnimeList: daar heet dezelfde reeks
     # "Shinya Shokudou" waar je map "Shinya Shokudo" zegt.
     return normalise_title(title)
+
+
+# Korter dan dit is te weinig om iets op te baseren: "Ai" zit in van alles.
+_MINIMUM_OVERLAP = 6
+
+
+def similar(session: Session, series: Series) -> list[Series]:
+    """Series die op deze lijken, meest waarschijnlijke eerst.
+
+    Twee soorten treffer. Gelijk na normaliseren is de sterkste — "Shinya
+    Shokudou" naast "Shinya Shokudo". Daarnaast de titel die met de andere
+    begint: "One Piece" en "One Piece (Official Colored)" zijn dezelfde reeks
+    met een editie erachter geplakt, en dat is precies het geval waarin je ze
+    als uitgaven naast elkaar wilt.
+
+    Een voorstel en geen automatisme: "Dragon Ball" en "Dragon Ball Super"
+    voldoen ook aan die regel en zijn wél verschillende reeksen.
+    """
+    mij = _normalise(series.title)
+    if not mij:
+        return []
+
+    gelijk: list[Series] = []
+    begint_met: list[Series] = []
+    for andere in session.scalars(select(Series).where(Series.id != series.id)):
+        hun = _normalise(andere.title)
+        if not hun:
+            continue
+        if hun == mij:
+            gelijk.append(andere)
+        elif (
+            len(mij) >= _MINIMUM_OVERLAP
+            and len(hun) >= _MINIMUM_OVERLAP
+            and (hun.startswith(mij) or mij.startswith(hun))
+        ):
+            begint_met.append(andere)
+
+    return gelijk + begint_met
