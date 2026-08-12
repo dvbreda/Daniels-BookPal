@@ -446,6 +446,8 @@ interface ChromeProps {
 }
 
 function Chrome(props: ChromeProps) {
+  // Standaard dicht: een lezer hoort een strip te tonen, geen bedieningspaneel.
+  const [showSettings, setShowSettings] = useState(false);
   const {
     book,
     fit,
@@ -498,61 +500,89 @@ function Chrome(props: ChromeProps) {
           // Bij manga loopt de balk mee met de leesrichting.
           style={{ direction: rightToLeft ? "rtl" : "ltr" }}
         />
+        {/* Één regel die altijd zichtbaar is: wat je tijdens het lezen echt
+            omzet. De rest zit achter "Weergave" — die balk was uitgegroeid tot
+            zestien knoppen, en dat is op een telefoon vier regels over je
+            strip heen. */}
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-          <Toggle active={viewMode === "vertical"} onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}>
+          <Toggle
+            active={viewMode === "vertical"}
+            onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}
+          >
             {viewMode === "vertical" ? "Doorlopend" : "Pagina's"}
           </Toggle>
-          <Toggle
-            active={doublePage}
-            disabled={viewMode === "vertical"}
-            onClick={() => setDoublePage(!doublePage)}
-          >
-            Dubbel
+          <Toggle active={translated} onClick={() => setTranslated(!translated)}>
+            Vertaling
           </Toggle>
-          <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
-            {rightToLeft ? "Rechts → links" : "Links → rechts"}
+          <Toggle active={showSettings} onClick={() => setShowSettings(!showSettings)}>
+            ⚙ Weergave
           </Toggle>
-          <Toggle
-            active={crop}
-            onClick={() => setCrop(!crop)}
-            title="Egale rand rond de pagina wegsnijden — scheelt op een klein scherm zo een vijfde"
-          >
-            Bijsnijden
-          </Toggle>
-          <Toggle
-            active={contrast > 100}
-            onClick={() => setContrast(contrast > 100 ? 100 : 140)}
-            title="Grijsbereik oprekken; helpt bij bleke scans"
-          >
-            Contrast
-          </Toggle>
-          <TranslateControl
-            bookId={book.id}
-            currentPage={currentPage}
-            active={translated}
-            setActive={setTranslated}
-          />
-          <div className="flex gap-1">
-            {(["width", "height", "screen"] as FitMode[]).map((mode) => (
-              <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
-                {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
-              </Toggle>
-            ))}
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
-              −
-            </Toggle>
-            <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
-            <Toggle active={false} onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
-              +
-            </Toggle>
-          </div>
-          <span className="w-full text-slate-500">
-            Spread {spreadIndex + 1} van {spreadCount} · pijltjes bladeren, D dubbel, V doorlopend,
-            F passend, Esc sluit
+          <span className="ml-auto tabular-nums text-slate-500">
+            {spreadIndex + 1} / {spreadCount}
           </span>
         </div>
+
+        {showSettings && (
+          <div className="space-y-2 border-t border-ink-700 pt-2 text-xs text-slate-300">
+            <div className="flex flex-wrap items-center gap-2">
+              <Toggle
+                active={doublePage}
+                disabled={viewMode === "vertical"}
+                onClick={() => setDoublePage(!doublePage)}
+              >
+                Dubbel
+              </Toggle>
+              <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
+                {rightToLeft ? "Rechts → links" : "Links → rechts"}
+              </Toggle>
+              <div className="flex gap-1">
+                {(["width", "height", "screen"] as FitMode[]).map((mode) => (
+                  <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
+                    {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
+                  </Toggle>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-1">
+                <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
+                  −
+                </Toggle>
+                <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+                <Toggle
+                  active={false}
+                  onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}
+                >
+                  +
+                </Toggle>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Toggle
+                active={crop}
+                onClick={() => setCrop(!crop)}
+                title="Egale rand rond de pagina wegsnijden — scheelt op een klein scherm zo een vijfde"
+              >
+                Bijsnijden
+              </Toggle>
+              <Toggle
+                active={contrast > 100}
+                onClick={() => setContrast(contrast > 100 ? 100 : 140)}
+                title="Grijsbereik oprekken; helpt bij bleke scans"
+              >
+                Contrast
+              </Toggle>
+              <TranslateControl
+                bookId={book.id}
+                currentPage={currentPage}
+                setActive={setTranslated}
+              />
+            </div>
+
+            <p className="text-slate-500">
+              Pijltjes bladeren, D dubbel, V doorlopend, F passend, Esc sluit.
+            </p>
+          </div>
+        )}
       </div>
     </>
   );
@@ -677,12 +707,10 @@ function TranslatablePage({
 function TranslateControl({
   bookId,
   currentPage,
-  active,
   setActive,
 }: {
   bookId: number;
   currentPage: number;
-  active: boolean;
   setActive: (value: boolean) => void;
 }) {
   const queryClient = useQueryClient();
@@ -737,9 +765,6 @@ function TranslateControl({
 
   return (
     <div className="flex items-center gap-1">
-      <Toggle active={active} onClick={() => setActive(!active)}>
-        Vertaling
-      </Toggle>
       <Toggle
         active={false}
         disabled={busy !== null}
