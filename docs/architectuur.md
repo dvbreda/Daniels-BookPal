@@ -13,8 +13,9 @@ Tachimanga doet bronnen maar geen eigen NAS-bibliotheek, Komga/Kavita doen de se
 geen goede iOS-lezer of vertaling. Het doel is die werelden achter één API en één datamodel te
 zetten, zodat elk apparaat dezelfde bibliotheek, tabs en voortgang ziet.
 
-Dit document legt de architectuur en het datamodel vast. **M0 en M1 zijn gebouwd**; de latere
-milestones staan erin zodat de vroege keuzes ze niet blokkeren.
+Dit document legt de architectuur en het datamodel vast. **M0, M1, M3, M5, M6, M7 en M8 zijn
+gebouwd; M2 deels** (alles behalve de Nickel-integratie); de latere milestones staan erin zodat de
+vroege keuzes ze niet blokkeren.
 
 ## Vastgelegde keuzes
 
@@ -203,7 +204,7 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
 | **M9** | `bookpal-kobo`: FBInk, touch, tabs, comics, offline, NickelMenu-installer | Eigen native comic-lezer op de Kobo |
 | **M10** | `bookpal-kobo`: epub + pdf via crengine en MuPDF | Volwaardige eigen lezer op de Kobo |
 
-## M0 + M1 — gebouwd
+## M0 + M1 + M3 + M5 + M6 + M7 + M8 — gebouwd, M2 gedeeltelijk
 
 1. **M0** — `server/` met FastAPI-skelet, `pyproject.toml` (ruff, mypy, pytest), Dockerfile met
    libarchive; `web/` met Vite + React + TS + Tailwind + TanStack Query; `compose.yml` met
@@ -223,6 +224,145 @@ dezelfde tab laat verschijnen, en wat "tijdelijk downloaden om vooruit te lezen"
    preload van omliggende pagina's. Voor epub/pdf komt in M6 **foliate-js** (MIT; epub/mobi/fb2/cbz
    en pdf via pdf.js) — die engine wordt ook in een WKWebView op iOS hergebruikt, zodat er maar één
    epub-lezer voor web en iOS onderhouden hoeft te worden.
+6. **M2, deels** — `/api/progress` bestond al vanaf M1 (gedeeld door alle clients, zie ontwerp 4);
+   daar bovenop nu **BookPal Lite** (`/lite`, Laag A uit ontwerp 3: server-rendered HTML, geen
+   JavaScript, een pagina omslaan is een gewone link die tegelijk de voortgang bijwerkt) en
+   **OPDS 1.2** (`/opds`, navigatiefeed met series + acquisitiefeed per serie). De Kobo-
+   beeldprofielen (`images/profiles.py`) waren al vanaf M1 aanwezig. Nog open: Laag B, de
+   Nickel-integratie in de instellingen — die leunt op reverse-engineering van
+   `KoboReader.sqlite` en is dus alleen te bouwen/testen met een echt apparaat erbij.
+7. **M3** — `bookpal/tabs/rules.py` compileert een regelboom naar een SQLAlchemy-expressie
+   op `Series`: `and`/`or`/`not` plus condities op `extension`, `kind`, `origin_region`, `root`,
+   `publisher`, `tag`, `series`, `source` en `reading_status`. Tags gaan via het gedocumenteerde
+   `json_each`-idioom voor SQLite; `reading_status` via een dubbele `NOT EXISTS` (de ORM kent geen
+   `relationship.all()`). `/api/tabs` en `/api/collections` delen die ene engine. De web-app heeft
+   een tabbalk plus beheerschermen voor tabs (`/tabs`) en collecties (`/collecties`), met een
+   gedeelde `RuleEditor`: een voorwaarden-bouwer voor het gangbare geval (platte "en") en een
+   JSON-modus voor geneste `and`/`or`/`not`. Groeperen (`group_by`) gebeurt voorlopig client-side
+   in `CollectionViewPage`; server-side groepering komt terug zodra "submappen als collectie"
+   op grote mappen gaat knellen.
+
+8. **M5, deels** — `bookpal/sources/` met de `Source`-interface (`search`, `detail`, `chapters`,
+   `page_urls`, `download`), een token-bucket rate limiter en `mangadex.py`. Abonneren maakt boeken
+   mét bron-referentie en zónder bestand; downloaden hangt er een cbz aan zonder die referentie te
+   wissen, zodat de TTL-opruiming het bestand later kan weghalen terwijl het hoofdstuk zichtbaar
+   blijft. Gedownloade bestanden landen in een gewone library-root, dus ze lopen daarna door
+   dezelfde scanner, formats en beeldprofielen als eigen bestanden. `originalLanguage` voedt stap 2
+   van de herkomst-keten en `links.mal` vult `tracker_ids` alvast voor M7.
+
+   `worker.py` draait de drie taken op een interval in een achtergrond-thread (bewust een thread:
+   ophalen is synchroon en hoort niet in de event loop). De beslissing zit in `plan_readahead`, een
+   pure functie: begin bij het eerste nog niet uitgelezen deel en pak daarvandaan `readahead_n`
+   hoofdstukken zonder bestand. Alles vóór die grens blijft met rust — dat is gelezen of bewust
+   overgeslagen, en opnieuw ophalen zou juist de bandbreedte kosten die voor het vooruitlezen
+   bedoeld is. Eén hikkende bron stopt de ronde niet; de fout komt in het rapport terecht.
+
+   De web-app heeft `/bronnen` om te zoeken, te volgen en een ronde met de hand te draaien.
+   `BookOut.from_source` en `expires_at` maken de drie toestanden zichtbaar die anders niet uit
+   elkaar te houden zijn: eigen bestand, opgehaald, en nog online.
+
+   Een bron hoort een gepubliceerde API te hebben waarvan het gebruik is toegestaan; scrapers voor
+   sites die commercieel werk zonder licentie herdistribueren horen hier niet thuis. De interface
+   staat los van de implementatie, dus een nette bron toevoegen is één bestand.
+
+9. **M6** — vendored **foliate-js** (`web/src/vendor/foliate/`, gepinde commit, niet het npm-pakket
+   van een derde — herkomst staat in `HERKOMST.md` ernaast) achter een eigen `EpubReader`. Downloads
+   lopen via `downloadWithProgress.ts` met een voortgangsbalk, want een epub van een paar honderd MB
+   zag er zonder die balk uit als een hang. `sort_volume` op `Book` bepaalt de leesvolgorde nu apart
+   van de weergavetitel, wat nodig bleek zodra series een `Deel 10` naast een `Deel 2` hadden staan.
+
+10. **M7** — `bookpal/trackers/` is eenrichtingsverkeer: BookPal leest nooit iets terug van
+    MyAnimeList of Goodreads, dus is er geen conflict om op te lossen. `Tracker` is een kleine ABC
+    (`push()` + `close()`); `MyAnimeListTracker` praat PKCE-OAuth2 (MAL ondersteunt alleen de
+    `plain`-challenge, geen S256) en een rate-limiter die dezelfde `RateLimiter`-klasse hergebruikt
+    als de MangaDex-bron (verplaatst naar `bookpal/ratelimit.py`). Goodreads heeft geen
+    `Tracker`-implementatie — de publieke API is dood sinds eind 2020, en geraden veldnamen die
+    "waarschijnlijk werken" zijn erger dan geen automatisering, want ze falen onopgemerkt. In plaats
+    daarvan exporteert `export_csv()` de hele bibliotheek naar het CSV-formaat van My Books → Import
+    and Export.
+
+    Pushen gebeurt gedebounced per serie: `trackers/scheduler.py` reset per `series_id` een
+    `threading.Timer` bij elke voortgangsupdate, en pas als een serie een paar seconden stil is
+    gebleven gaat de push voor precies díe serie uit — nooit de rest van de bibliotheek, ook niet als
+    er meerdere accounts gekoppeld zijn. Een nieuw account staat standaard op dry-run
+    (`TrackerAccount.dry_run`), dus deze trigger is uit zichzelf onschadelijk totdat je 'm bewust
+    aanzet. De web-app heeft `/trackers` om een MAL-app te koppelen (client-id/secret zelf
+    registreren op `myanimelist.net/apiconfig`, autorisatie-URL openen, code terugplakken),
+    dry-run/actief te schakelen, met de hand te pushen, en de Goodreads-CSV te downloaden.
+
+11. **M8** — `bookpal/translate/` doet detectie, uitlezen én vertalen in **één** multimodale
+    Gemini-aanroep per pagina, in plaats van de keten YOLOv8 → crop → manga-ocr/PaddleOCR → Gemini
+    die hierboven beschreven staat. Die afwijking is bewust en om drie redenen:
+
+    * Het model ziet de **hele pagina**, niet losse uitgeknipte strings. Dat is precies wat deze
+      architectuur wilde bereiken met "vertaling mét paginacontext" — een keten die strings
+      doorgeeft, gooit die context juist weg.
+    * Geen ~700 MB aan modelgewichten (torch, manga-ocr, YOLO) in een image die op een N100 draait.
+    * Nagemeten op een echte pagina uit de eigen bibliotheek: gemini-3-flash-preview vond alle acht
+      tekstvlakken met vakken die sluitend om de tekst zaten, waar 2.5-flash er zeven vond en de
+      laatste regel van elke ballon afkapte.
+
+    De prijs is een netwerkverzoek per pagina en een API-sleutel. `BubbleTranslator` is daarom een
+    aparte ABC: een lokale YOLO+OCR-pipeline kan er later naast zonder dat de rest iets merkt.
+
+    Resultaten komen in de bestaande `translation`-tabel (`payload` bevat de vlakken), dus M8 had
+    geen migratie nodig — het datamodel uit M0 had hier al ruimte voor gelaten. Vakken worden
+    genormaliseerd op 0..1 bewaard en niet in pixels: dezelfde vertaling moet over elk beeldprofiel
+    passen, en web, Kobo en miniatuur hebben alle drie een andere afmeting.
+
+    `queue.py` is geen FIFO maar een gesorteerde wachtrij: een voortgangsupdate zet de pagina's vlak
+    vóór je uit vooraan, zodat de NAS vooruitloopt op wat je leest. Eén thread, want op een N100
+    telt het uitserveren van beeld zwaarder dan snel vertalen.
+
+    Er zijn **drie** manieren om de vertaling te tonen, en welke de beste is hangt af van de client:
+
+    | Vorm | Endpoint | Voor wie |
+    |---|---|---|
+    | JSON-vlakken | `/pages/{n}/translation` | Web-lezer: tekent een HTML-overlay, blijft scherp bij zoomen en je kunt op een ballon tikken voor het origineel |
+    | Doorzichtige PNG | `/pages/{n}/overlay` | BookPal Lite, Kobo, straks iOS: een laag over de pagina, met CSS te stapelen zonder JavaScript |
+    | Ingebakken pagina | `/pages/{n}?translate=nl` | Clients die maar één plat plaatje aankunnen, zoals de eigen Kobo-app van M9 |
+
+    De losse laag is voor de meeste clients de betere: de pagina zelf blijft **één gedeelde
+    afbeelding**, dus aan- en uitzetten hoeft die pagina niet opnieuw op te halen. Op een echte
+    pagina uit de bibliotheek gemeten: de laag is 43 kB tegen 249 kB voor de pagina (17 %), en hij
+    komt in 6 ms uit de cache waar inbakken 328 ms kost — élke aanvraag opnieuw, want een ingebakken
+    pagina is niet te cachen zonder van elke pagina twee volledige varianten te bewaren. De
+    cachesleutel van de laag bevat de opgeslagen vertaling zelf, dus opnieuw vertalen levert vanzelf
+    een nieuwe laag op in plaats van de oude te blijven tonen.
+
+    Alle drie de vormen delen hetzelfde tekenwerk (`_draw_onto`), zodat de Kobo en de web-app niet
+    uit elkaar kunnen gaan lopen. Het inbakken behoudt bovendien de geditherde grijswaarden — die
+    naar RGB tillen zou precies het werk weggooien waar het Kobo-profiel voor bestaat.
+
+    **Lettering.** Gemini kan geen font namaken — het levert tekst, coördinaten en of het origineel
+    vet/cursief stond, geen glyphs. Beide kanten tekenen die tekst daarom met **Comic Neue** (SIL OFL
+    1.1, een vrij te herdistribueren remake van Comic Sans) in plaats van een systeemfont: de server
+    heeft het Debian-pakket `fonts-comic-neue`, de web-app dezelfde vier stijlen zelf gehost als
+    webfont (`web/src/vendor/comic-neue/`), zodat overlay en ingebakken versie er hetzelfde uitzien.
+    `Bubble.upper` zet de vertaling zelf in kapitalen als de brontekst dat ook was — striplettering
+    staat traditioneel vol in kapitalen, en een vertaling in onderkast daartussen valt op als
+    "ingeplakt". Dat vragen we niet aan het model; het staat al in de brontekst.
+
+    De prompt vraagt Gemini nu ook om `bold`/`italic` per vlak, met een expliciete waarschuwing dat
+    "italic" een écht schuine nadruk betekent en niet gewoon een golvend handlettering-lettertype —
+    zonder die waarschuwing markeerde het model bijna elke ballon als cursief. Zelfs met de
+    waarschuwing blijft dit een oordeel, geen meting: hetzelfde verzoek op dezelfde pagina gaf bij
+    herhaling een wisselende uitkomst. Bold bleef in alle metingen wel stabiel. Het effect van een
+    foutieve `italic` is bovendien mild — Comic Neue Italic blijft goed leesbaar — dus dit is
+    geaccepteerd als grens van wat een taalmodel betrouwbaar kan beoordelen aan een tekening, in
+    plaats van dat er tot in het oneindige aan de prompt gesleuteld is.
+
+    **Onderzocht en bewust niet gebouwd: Gemini de ballon zelf laten "schoonvegen" met
+    beeldgeneratie** (`gemini-2.5-flash-image`), zodat onze eigen tekst op een gepaste achtergrond
+    komt te staan in plaats van op een simpel wit vlak. Op een hele pagina werkt dit niet: het model
+    regenereert de compositie in zijn eigen canonieke resolutie, niet pixel-voor-pixel identiek —
+    getest op een echte pagina, en na terugschalen naar de oorspronkelijke afmeting stonden panelen
+    en ballonvormen meetbaar verschoven ten opzichte van de al bepaalde tekstvakken. Op een los
+    uitgeknipt ballonnetje werkt het schoonvegen zelf wél overtuigend, maar dat zou een aparte
+    beeldgeneratie-aanroep per tekstvlak vergen — bij acht vlakken op een pagina een veelvoud van de
+    tijd en kosten van de huidige aanpak. Zou dit ooit terugkomen, dan als aparte, expliciet
+    duurdere stand naast de huidige — nooit als vervanging, want de huidige aanpak is voor de meeste
+    pagina's al goed genoeg.
 
 ## Verificatie
 

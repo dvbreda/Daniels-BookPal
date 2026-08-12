@@ -4,18 +4,48 @@ from __future__ import annotations
 
 from typing import Any, TypeVar
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Select, func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
-from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
+from bookpal.formats.base import UnsupportedOperation
+from bookpal.images import (
+    ImageProfile,
+    RenderedImage,
+    open_source,
+    render_cover,
+    render_page,
+    render_remote_cover,
+    source_id_for,
+)
+from bookpal.library import merge as merge_module
+from bookpal.models import (
+    Book,
+    BookKind,
+    File,
+    LibraryRoot,
+    OriginRegion,
+    OriginSource,
+    Series,
+    Source,
+)
 from bookpal.schemas import (
+    AttachCoverIn,
+    ContinueOut,
+    ImportSeriesIn,
+    ImportSeriesOut,
+    MarkReadBeforeOut,
+    MergeSeriesIn,
+    MergeSuggestionOut,
     OriginPatch,
     Paginated,
     SeriesDetailOut,
     SeriesOut,
+    SetCoverPageIn,
 )
+from bookpal.sources import SourceError, importer
+from bookpal.sources import service as source_service
 
 from . import deps
 
@@ -70,17 +100,7 @@ def list_series(
         )
     )
     rows = session.scalars(base.order_by(Series.sort_title).offset(offset).limit(limit)).all()
-
-    items: list[SeriesOut] = []
-    for series in rows:
-        counts = session.execute(
-            select(Book.kind, func.count(Book.id))
-            .where(Book.series_id == series.id)
-            .group_by(Book.kind)
-        ).all()
-        book_count = sum(int(count) for _, count in counts)
-        kinds = [str(k.value if hasattr(k, "value") else k) for k, _ in counts]
-        items.append(deps.to_series_out(series, book_count, kinds))
+    items = deps.series_out_list(session, list(rows))
 
     return Paginated(items=items, total=int(total or 0), offset=offset, limit=limit)
 
@@ -130,3 +150,335 @@ def set_origin(
         session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
     )
     return deps.to_series_out(series, book_count, [])
+
+
+@router.post("/{series_id}/cover", response_model=SeriesOut)
+def attach_cover(
+    series_id: int, payload: AttachCoverIn, session: Session = Depends(get_session)
+) -> SeriesOut:
+    """Koppel de officiële omslag van een bron aan deze serie.
+
+    Nuttig bij scanlaties: 'pagina 1 van hoofdstuk 1' is daar vaak een
+    credits-pagina van de vertaalgroep over de echte omslag heen. Werkt ook
+    voor een serie die je zelf hebt gescand — er komt geen abonnement bij,
+    alleen de omslag zelf.
+    """
+    series = deps.get_series(session, series_id)
+    source = deps.get_source_row(session, payload.source_id)
+    implementation = deps.get_source_implementation(source)
+    try:
+        source_service.attach_cover(series, implementation, payload.ref)
+    except SourceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    # Een net gekozen bron-omslag mag niet verborgen blijven achter een oude
+    # handmatige paginakeuze; die kan altijd terug via .../cover-page.
+    series.cover_page_index = None
+    session.commit()
+
+    book_count = int(
+        session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
+    )
+    return deps.to_series_out(series, book_count, [])
+
+
+@router.patch("/{series_id}/cover-page", response_model=SeriesOut)
+def set_cover_page(
+    series_id: int, payload: SetCoverPageIn, session: Session = Depends(get_session)
+) -> SeriesOut:
+    """Een vaste pagina van het eerste boek als omslag.
+
+    Nuttig als er geen bron met een schone omslag bestaat, of als 'pagina 1'
+    domweg niet de omslag is. Wint van een eerder gekoppelde bron-omslag —
+    die blijft ondertussen bewaard en komt terug zodra je dit weer op de
+    standaardkeuze zet (``page_index: null``).
+    """
+    series = deps.get_series(session, series_id)
+    if payload.page_index is not None:
+        first = series.books[0] if series.books else None
+        if first is None:
+            raise HTTPException(status_code=409, detail="deze serie heeft nog geen boeken")
+        if first.kind is BookKind.EPUB:
+            raise HTTPException(
+                status_code=409,
+                detail="een epub heeft geen vaste pagina's om als omslag te kiezen",
+            )
+        if first.page_count is not None and payload.page_index >= first.page_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"pagina {payload.page_index} bestaat niet; {first.title} heeft er "
+                f"{first.page_count}",
+            )
+    series.cover_page_index = payload.page_index
+    session.commit()
+
+    book_count = int(
+        session.scalar(select(func.count(Book.id)).where(Book.series_id == series.id)) or 0
+    )
+    return deps.to_series_out(series, book_count, [])
+
+
+@router.get("/{series_id}/cover")
+def get_series_cover(
+    series_id: int,
+    profile: ImageProfile = deps.ProfileDep,
+    session: Session = Depends(get_session),
+) -> Response:
+    """De omslag van deze serie: eerst een handmatig gekozen pagina, dan een
+    omslag van de bron, dan pagina 1 van het eerste boek.
+
+    Alle drie via dezelfde cache en beeldpipeline als elke andere afbeelding
+    — dus ook grijswaarden en dithering voor de Kobo.
+    """
+    series = deps.get_series(session, series_id)
+
+    if series.cover_page_index is not None:
+        first = series.books[0] if series.books else None
+        if first is not None and first.file_id is not None:
+            path = deps.book_file_path(session, first)
+            source = open_source(path)
+            try:
+                rendered = render_page(
+                    source, series.cover_page_index, profile, source_id=source_id_for(path)
+                )
+                return _cover_response(rendered)
+            except (IndexError, UnsupportedOperation):
+                pass  # gekozen pagina bestaat niet meer; val terug
+
+    if series.cover_url:
+        try:
+            rendered = render_remote_cover(
+                series.cover_url, profile, source_id=f"series-cover:{series.id}:{series.cover_url}"
+            )
+        except UnsupportedOperation as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return _cover_response(rendered)
+
+    first = series.books[0] if series.books else None
+    if first is not None and first.file_id is not None:
+        path = deps.book_file_path(session, first)
+        source = open_source(path)
+        maybe_rendered = render_cover(source, profile, source_id=source_id_for(path))
+        if maybe_rendered is not None:
+            return _cover_response(maybe_rendered)
+
+    raise HTTPException(status_code=404, detail="deze serie heeft nog geen omslag")
+
+
+def _cover_response(rendered: RenderedImage) -> Response:
+    return Response(
+        content=rendered.data,
+        media_type=rendered.media_type,
+        headers={
+            "Cache-Control": "public, max-age=86400",
+            "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",
+        },
+    )
+
+
+def _readable_books(session: Session, series_id: int) -> list[Book]:
+    """De hoofdstukken in leesvolgorde, alleen wat je daadwerkelijk kunt openen.
+
+    Hoofdstukken zonder bestand (een abonnement dat nog niet is opgehaald)
+    slaan we over: "lees verder" hoort je niet op een lege pagina te zetten.
+    """
+    return list(
+        session.scalars(
+            select(Book)
+            .where(Book.series_id == series_id, Book.file_id.isnot(None))
+            .order_by(Book.sort_volume, Book.sort_number)
+        )
+    )
+
+
+@router.get("/{series_id}/continue", response_model=ContinueOut)
+def continue_reading(series_id: int, session: Session = Depends(get_session)) -> ContinueOut:
+    """Waar je verder leest: vanaf hoe ver je in de serie bent.
+
+    Het ankerpunt is het **laatste** hoofdstuk in leesvolgorde waar voortgang op
+    staat, niet het eerste. Dat verschil is het hele punt: een hoofdstuk uit
+    deel 1 dat je ooit even hebt opengeslagen blijft anders eeuwig "de eerste
+    die nog openstaat", terwijl je allang in deel 3 zit. Zo'n oud restje hoort
+    je niet terug te trekken — daar is de knop "markeer eerdere als gelezen"
+    voor.
+
+    Staat er op dat anker nog voortgang, dan ga je daar verder op je eigen
+    pagina. Is het uit, dan het eerstvolgende hoofdstuk dat nog niet uit is.
+    """
+    deps.get_series(session, series_id)
+    books = _readable_books(session, series_id)
+    if not books:
+        raise HTTPException(status_code=404, detail="deze serie heeft nog niets te lezen")
+
+    user = current_user(session)
+    progress = deps.progress_for(session, user, [book.id for book in books])
+
+    anchor_index: int | None = None
+    for index, book in enumerate(books):
+        if book.id in progress:
+            anchor_index = index
+
+    if anchor_index is None:
+        target = books[0]
+    else:
+        anchor = books[anchor_index]
+        anchor_row = progress[anchor.id]
+        if not anchor_row.finished:
+            target = anchor
+        else:
+            later = [
+                book
+                for book in books[anchor_index + 1 :]
+                if not (book.id in progress and progress[book.id].finished)
+            ]
+            # Niets meer erna: dan maar het laatste hoofdstuk, zodat de knop
+            # iets doet in plaats van te verdwijnen.
+            target = later[0] if later else books[-1]
+
+    row = progress.get(target.id)
+    position = row.position if row is not None else {}
+    page = position.get("page") if isinstance(position, dict) else None
+
+    unread_before = sum(
+        1
+        for book in books[: books.index(target)]
+        if not (book.id in progress and progress[book.id].finished)
+    )
+
+    return ContinueOut(
+        book_id=target.id,
+        title=target.title,
+        number=target.number,
+        page=page if isinstance(page, int) and page >= 0 else 0,
+        resuming=row is not None and row.percent > 0 and not row.finished,
+        unread_before=unread_before,
+    )
+
+
+@router.post("/{series_id}/mark-read-before/{book_id}", response_model=MarkReadBeforeOut)
+def mark_read_before(
+    series_id: int, book_id: int, session: Session = Depends(get_session)
+) -> MarkReadBeforeOut:
+    """Alles vóór dit hoofdstuk als gelezen wegzetten.
+
+    Voor de gewone situatie dat je elders al tot hier was, of dat je een serie
+    halverwege oppakt. Het hoofdstuk zelf blijft ongemoeid — daar ga je juist
+    lezen.
+    """
+    deps.get_series(session, series_id)
+    target = deps.get_book(session, book_id)
+    if target.series_id != series_id:
+        raise HTTPException(status_code=400, detail="dit hoofdstuk hoort niet bij deze serie")
+
+    user = current_user(session)
+    books = _readable_books(session, series_id)
+    progress = deps.progress_for(session, user, [book.id for book in books])
+
+    marked = 0
+    for book in books:
+        if (book.sort_volume, book.sort_number) >= (target.sort_volume, target.sort_number):
+            continue
+        row = progress.get(book.id)
+        if row is not None and row.finished:
+            continue
+        deps.upsert_progress(
+            session,
+            user,
+            book.id,
+            series_id=series_id,
+            position={"page": max(0, (book.page_count or 1) - 1)},
+            percent=100.0,
+            device="web",
+            finished=True,
+        )
+        marked += 1
+    return MarkReadBeforeOut(marked=marked)
+
+
+@router.post("/{series_id}/import", response_model=ImportSeriesOut)
+def import_series_to_library(
+    series_id: int,
+    payload: ImportSeriesIn,
+    session: Session = Depends(get_session),
+) -> ImportSeriesOut:
+    """Zet een gevolgde serie als gewone bestanden in een van je eigen mappen.
+
+    Daarna is het een lokale serie als elke andere: geen TTL die het bestand
+    weer weghaalt, en leesbaar zonder dat de bron bereikbaar is. Het abonnement
+    blijft staan, zodat nieuwe hoofdstukken gewoon binnen blijven komen.
+    """
+    series = deps.get_series(session, series_id)
+    root = session.get(LibraryRoot, payload.root_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail="die map bestaat niet")
+    if not root.enabled:
+        raise HTTPException(status_code=409, detail="die map staat uit")
+
+    source_row = session.get(Source, series.source_id) if series.source_id else None
+    implementation = deps.get_source_implementation(source_row) if source_row else None
+    if implementation is None and payload.download_missing:
+        raise HTTPException(
+            status_code=409,
+            detail="deze serie hoort niet bij een bron; er valt niets op te halen",
+        )
+
+    try:
+        report = importer.import_series(
+            session,
+            implementation,  # type: ignore[arg-type]
+            series,
+            root,
+            download_missing=payload.download_missing and implementation is not None,
+        )
+    except SourceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ImportSeriesOut(
+        moved=report.moved,
+        downloaded=report.downloaded,
+        skipped=report.skipped,
+        errors=report.errors,
+    )
+
+
+@router.get("/merge/suggestions", response_model=list[MergeSuggestionOut])
+def merge_suggestions(session: Session = Depends(get_session)) -> list[MergeSuggestionOut]:
+    """Series die waarschijnlijk hetzelfde zijn.
+
+    Alleen op genormaliseerde titel — dat vangt hoofdletter- en
+    leestekenverschillen zonder te gaan raden.
+    """
+    out: list[MergeSuggestionOut] = []
+    for keep, absorb in merge_module.suggest(session):
+        out.append(
+            MergeSuggestionOut(
+                keep_id=keep.id,
+                keep_title=keep.title,
+                keep_books=_book_count(session, keep.id),
+                absorb_id=absorb.id,
+                absorb_title=absorb.title,
+                absorb_books=_book_count(session, absorb.id),
+            )
+        )
+    return out
+
+
+def _book_count(session: Session, series_id: int) -> int:
+    return int(session.scalar(select(func.count(Book.id)).where(Book.series_id == series_id)) or 0)
+
+
+@router.post("/{series_id}/merge", response_model=SeriesDetailOut)
+def merge_series(
+    series_id: int, payload: MergeSeriesIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Voeg een andere serie in deze samen. De andere verdwijnt."""
+    keep = deps.get_series(session, series_id)
+    absorb = session.get(Series, payload.absorb_id)
+    if absorb is None:
+        raise HTTPException(status_code=404, detail="die serie bestaat niet")
+
+    try:
+        merge_module.merge(session, keep, absorb)
+    except merge_module.MergeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return get_series(series_id, session)

@@ -5,13 +5,20 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
-from bookpal.models import Book, File, Progress, Series, User
+from bookpal.images.adjust import Adjustments
+from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
+from bookpal.sources import Source as SourceImpl
+from bookpal.sources import SourceError, get_source
+from bookpal.sources import ahead as readahead
+from bookpal.trackers import scheduler as trackers_scheduler
+from bookpal.translate.queue import queue as translate_queue
 
 SessionDep = Depends(get_session)
 
@@ -31,6 +38,24 @@ def profile_param(
 ProfileDep = Depends(profile_param)
 
 
+def adjust_param(
+    crop: bool = Query(
+        default=False,
+        description="Egale rand rond de pagina wegsnijden (rakuyomi's 'page crop: auto').",
+    ),
+    contrast: int = Query(
+        default=100,
+        ge=50,
+        le=200,
+        description="100 is onbewerkt; hoger rekt het grijsbereik op voor bleke scans.",
+    ),
+) -> Adjustments:
+    return Adjustments(crop=crop, contrast=contrast)
+
+
+AdjustDep = Depends(adjust_param)
+
+
 def get_book(session: Session, book_id: int) -> Book:
     book = session.get(Book, book_id)
     if book is None:
@@ -43,6 +68,22 @@ def get_series(session: Session, series_id: int) -> Series:
     if series is None:
         raise HTTPException(status_code=404, detail="serie niet gevonden")
     return series
+
+
+def get_source_row(session: Session, source_id: int) -> Source:
+    source = session.get(Source, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="bron niet gevonden")
+    if not source.enabled:
+        raise HTTPException(status_code=409, detail="deze bron staat uit")
+    return source
+
+
+def get_source_implementation(source: Source) -> SourceImpl:
+    try:
+        return get_source(source.type)
+    except SourceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def book_file_path(session: Session, book: Book) -> Path:
@@ -65,6 +106,51 @@ def book_file_path(session: Session, book: Book) -> Path:
     return path
 
 
+def upsert_progress(
+    session: Session,
+    user: User,
+    book_id: int,
+    *,
+    series_id: int,
+    position: dict[str, object],
+    percent: float,
+    device: str | None,
+    finished: bool | None = None,
+) -> Progress:
+    """Positie opslaan. Laatste schrijver wint — gedeeld door de REST-endpoint
+    en Lite, zodat een paginaomslag in de Kobo-browser dezelfde waarheid
+    bijwerkt als een tap in de web-app."""
+    row = session.scalar(
+        select(Progress).where(Progress.user_id == user.id, Progress.book_id == book_id)
+    )
+    if row is None:
+        row = Progress(user_id=user.id, book_id=book_id)
+        session.add(row)
+
+    row.position = position
+    row.percent = percent
+    row.finished = finished if finished is not None else percent >= 100.0
+    row.device = device
+    row.updated_at = utcnow()
+    session.commit()
+
+    # M7: gedebounced, dus dit is een goedkope aanroep — geen netwerk, alleen
+    # een timer resetten.
+    trackers_scheduler.notify_progress(series_id)
+
+    # Vooruit downloaden terwijl je leest: de ronde op een interval is te traag
+    # om achter je aan te lopen als je een paar hoofdstukken achter elkaar
+    # omslaat. Gedebounced, dus dit is een goedkope aanroep.
+    readahead.notify_progress(series_id)
+
+    # M8: nu we weten waar je bent, kan de vertaalwachtrij vooruitlopen op wat
+    # je zo omslaat. Alleen zinvol voor een strip met paginanummers.
+    page = position.get("page")
+    if isinstance(page, int):
+        translate_queue.notify_reading(book_id, page + 1, settings.translate_lang)
+    return row
+
+
 def progress_for(session: Session, user: User, book_ids: list[int]) -> dict[int, Progress]:
     if not book_ids:
         return {}
@@ -85,6 +171,9 @@ def to_book_out(book: Book, progress: Progress | None, extension: str | None) ->
         page_count=book.page_count,
         right_to_left=book.right_to_left,
         has_file=book.file_id is not None,
+        from_source=book.source_id is not None,
+        source_group_name=book.source_group_name,
+        expires_at=book.expires_at,
         extension=extension,
         added_at=book.added_at,
         progress=ProgressOut.model_validate(progress) if progress is not None else None,
@@ -103,8 +192,28 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         origin_region=series.origin_region,
         origin_source=series.origin_source,
         publisher=series.publisher,
+        authors=series.authors,
         tags=series.tags,
         summary=series.summary,
         book_count=book_count,
         kinds=kinds,  # type: ignore[arg-type]
+        from_source=series.source_id is not None,
+        has_cover_url=series.cover_url is not None,
+        cover_page_index=series.cover_page_index,
     )
+
+
+def series_out_list(session: Session, rows: list[Series]) -> list[SeriesOut]:
+    """Series met hun boekentelling en soorten — gedeeld door /api/series,
+    tabs en collecties, want ze tonen allemaal dezelfde serie-kaart."""
+    items: list[SeriesOut] = []
+    for series in rows:
+        counts = session.execute(
+            select(Book.kind, func.count(Book.id))
+            .where(Book.series_id == series.id)
+            .group_by(Book.kind)
+        ).all()
+        book_count = sum(int(count) for _, count in counts)
+        kinds = [str(k.value if hasattr(k, "value") else k) for k, _ in counts]
+        items.append(to_series_out(series, book_count, kinds))
+    return items

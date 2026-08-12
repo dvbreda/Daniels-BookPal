@@ -96,6 +96,7 @@ nano .env                  # zet BOOKPAL_BOEKEN/_STRIPS/_MANGA goed
 echo "BOOKPAL_WORKSPACE=/volume1/docker/bookpal" >> .env
 echo "HOST_UID=$(id -u)"  >> .env
 echo "HOST_GID=$(id -g)"  >> .env
+echo "DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)" >> .env
 
 # Container bouwen en starten
 docker compose -f compose.claude.yml up -d --build
@@ -127,7 +128,14 @@ en herstart de container. De token is een jaar geldig.
 ```bash
 docker exec -it bookpal-claude claude doctor      # installatie en instellingen
 docker exec -it bookpal-claude claude --version
+docker exec -it bookpal-claude docker ps          # kan hij bij de socket?
+docker exec -it bookpal-claude docker compose version
 ```
+
+Geeft die laatste `permission denied` in plaats van een (lege) lijst, dan klopt
+`DOCKER_GID` niet met de group-owner van `/var/run/docker.sock` op de host.
+Corrigeer `.env` en bouw opnieuw met `docker compose -f compose.claude.yml up
+-d --build`.
 
 ## Wat deze container mag
 

@@ -1,9 +1,16 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { api, imageUrl } from "../api/client";
-import type { BookDetail } from "../api/types";
+import { useNavigate } from "react-router-dom";
+
+import { ApiError, api, imageUrl } from "../api/client";
+import type { BookDetail, TranslateMode } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
+import type { GridTransform } from "./grid";
+import { cellOrder, cellTransform } from "./grid";
+import { TranslationOverlay } from "./TranslationOverlay";
+import { usePageTranslation } from "./usePageTranslation";
 import {
   buildSpreads,
   orderForDisplay,
@@ -51,10 +58,23 @@ export function ComicReader({ book, onClose }: Props) {
   });
   const [zoom, setZoom] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
+  const [translated, setTranslated] = useStoredState("reader.translated", false);
+  // Leesinstellingen die het beeld zelf raken; de server snijdt en rekt op en
+  // cachet het resultaat, dus dit kost niets bij het omslaan.
+  const [crop, setCrop] = useStoredState("reader.crop", false);
+  // Rasterzoom: de pagina in cellen, één voor één vullend. Op een telefoon is
+  // een mangapagina anders leesbaar noch te overzien.
+  const [grid, setGrid] = useStoredState("reader.grid", 0);
+  const [cell, setCell] = useState(0);
+  const [contrast, setContrast] = useStoredState("reader.contrast", 100);
+  const adjust = useMemo(() => ({ crop, contrast }), [crop, contrast]);
+  const [dismissedNext, setDismissedNext] = useState(false);
 
   const spreads = useMemo(
-    () => buildSpreads(pageCount, viewMode === "paged" && doublePage, { aspects }),
-    [pageCount, viewMode, doublePage, aspects],
+    // Rasterzoom en dubbelpagina sluiten elkaar uit: een raster over twee
+    // pagina's tegelijk zou per pagina apart schalen en uit elkaar lopen.
+    () => buildSpreads(pageCount, viewMode === "paged" && doublePage && grid === 0, { aspects }),
+    [pageCount, viewMode, doublePage, grid, aspects],
   );
 
   const spreadIndex = spreadIndexOfPage(spreads, page);
@@ -73,9 +93,9 @@ export function ComicReader({ book, onClose }: Props) {
     if (viewMode !== "paged") return;
     for (const page of pagesToPreload(spreads, spreadIndex, PRELOAD_SPREADS)) {
       const image = new Image();
-      image.src = imageUrl.page(book.id, page, profile);
+      image.src = imageUrl.page(book.id, page, profile, adjust);
     }
-  }, [book.id, profile, spreadIndex, spreads, viewMode]);
+  }, [adjust, book.id, profile, spreadIndex, spreads, viewMode]);
 
   // Voortgang wegschrijven, ontdaan van ruis tijdens snel doorbladeren.
   const pendingPercent = useRef<number | null>(null);
@@ -110,8 +130,39 @@ export function ComicReader({ book, onClose }: Props) {
     [spreads],
   );
 
-  const goNext = useCallback(() => goToSpread(spreadIndex + 1), [goToSpread, spreadIndex]);
-  const goPrevious = useCallback(() => goToSpread(spreadIndex - 1), [goToSpread, spreadIndex]);
+  // Bij een raster van 0 staat het uit; 2 betekent 2x2, 3 betekent 3x2.
+  const gridRows = grid === 0 ? 1 : grid;
+  const gridCols = grid === 0 ? 1 : 2;
+  const cells = useMemo(
+    () => (grid === 0 ? [] : cellOrder(gridRows, gridCols, rightToLeft)),
+    [grid, gridRows, gridCols, rightToLeft],
+  );
+
+  // Bij een sprong met de schuifbalk (of een moduswissel) hoor je bovenaan de
+  // nieuwe pagina te beginnen, niet halverwege het raster.
+  useEffect(() => {
+    setCell(0);
+  }, [currentPage]);
+
+  const goNext = useCallback(() => {
+    // Eerst door de cellen van deze pagina, dan pas omslaan.
+    if (cells.length > 0 && cell < cells.length - 1) {
+      setCell(cell + 1);
+      return;
+    }
+    setCell(0);
+    goToSpread(spreadIndex + 1);
+  }, [cell, cells.length, goToSpread, spreadIndex]);
+
+  const goPrevious = useCallback(() => {
+    if (cells.length > 0 && cell > 0) {
+      setCell(cell - 1);
+      return;
+    }
+    // Terugbladeren komt onderaan de vorige pagina uit, niet bovenaan.
+    setCell(Math.max(0, cells.length - 1));
+    goToSpread(spreadIndex - 1);
+  }, [cell, cells.length, goToSpread, spreadIndex]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -201,6 +252,11 @@ export function ComicReader({ book, onClose }: Props) {
     );
   }
 
+  // Op de laatste spread: aanbieden om door te gaan. Niet pas bij "uitgelezen",
+  // want die vlag gaat pas om als de voortgang is weggeschreven — dan sta je al
+  // een tel te wachten op iets wat je nu wilt.
+  const atEnd = spreads.length > 0 && spreadIndex === spreads.length - 1;
+
   const fitClass =
     fit === "width"
       ? "w-full h-auto"
@@ -218,6 +274,8 @@ export function ComicReader({ book, onClose }: Props) {
           initialPage={currentPage}
           onVisiblePage={setPage}
           onAspect={noteAspect}
+          translated={translated}
+          adjust={adjust}
         />
       ) : (
         <div
@@ -231,23 +289,30 @@ export function ComicReader({ book, onClose }: Props) {
             style={{ transform: `scale(${zoom})` }}
           >
             {orderForDisplay(currentSpread, rightToLeft).map((page) => (
-              <img
+              // De overlay staat absoluut binnen dit vlak, dus het moet net zo
+              // groot zijn als de afbeelding zelf — vandaar w-fit en relative.
+              <TranslatablePage
                 key={page}
-                src={imageUrl.page(book.id, page, profile)}
-                alt={`Pagina ${page + 1}`}
-                className={`object-contain ${fitClass}`}
-                draggable={false}
-                onLoad={(event) =>
-                  noteAspect(
-                    page,
-                    event.currentTarget.naturalWidth,
-                    event.currentTarget.naturalHeight,
-                  )
+                book={book}
+                page={page}
+                profile={profile}
+                fitClass={fitClass}
+                translated={translated}
+                adjust={adjust}
+                grid={
+                  grid === 0
+                    ? null
+                    : cellTransform(cells[cell] ?? { row: 0, col: 0 }, gridRows, gridCols)
                 }
+                onAspect={noteAspect}
               />
             ))}
           </div>
         </div>
+      )}
+
+      {atEnd && !dismissedNext && (
+        <NextChapterPrompt bookId={book.id} onDismiss={() => setDismissedNext(true)} />
       )}
 
       {showChrome && (
@@ -267,6 +332,17 @@ export function ComicReader({ book, onClose }: Props) {
           spreadCount={spreads.length}
           currentPage={currentPage}
           pageCount={pageCount}
+          crop={crop}
+          setCrop={setCrop}
+          grid={grid}
+          setGrid={(value) => {
+            setGrid(value);
+            setCell(0);
+          }}
+          contrast={contrast}
+          setContrast={setContrast}
+          translated={translated}
+          setTranslated={setTranslated}
           onSeek={setPage}
           onClose={onClose}
         />
@@ -282,6 +358,8 @@ interface VerticalProps {
   initialPage: number;
   onVisiblePage: (page: number) => void;
   onAspect: (index: number, width: number, height: number) => void;
+  translated: boolean;
+  adjust: { crop: boolean; contrast: number };
 }
 
 /** Doorlopende verticale weergave voor webtoons — daar zijn "pagina's" een
@@ -293,6 +371,8 @@ function VerticalReader({
   initialPage,
   onVisiblePage,
   onAspect,
+  translated,
+  adjust,
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);
@@ -358,11 +438,11 @@ function VerticalReader({
           <div
             key={index}
             data-page={index}
-            className="w-full"
+            className="relative w-full [container-type:inline-size]"
             style={loaded.has(index) ? undefined : { aspectRatio: "2 / 3" }}
           >
             <img
-              src={imageUrl.page(book.id, index, profile)}
+              src={imageUrl.page(book.id, index, profile, adjust)}
               alt={`Pagina ${index + 1}`}
               className="w-full"
               loading="lazy"
@@ -378,6 +458,9 @@ function VerticalReader({
                 );
               }}
             />
+            {loaded.has(index) && (
+              <TranslationOverlay bookId={book.id} pageIndex={index} enabled={translated} />
+            )}
           </div>
         ))}
       </div>
@@ -401,11 +484,21 @@ interface ChromeProps {
   spreadCount: number;
   currentPage: number;
   pageCount: number;
+  crop: boolean;
+  setCrop: (value: boolean) => void;
+  grid: number;
+  setGrid: (value: number) => void;
+  contrast: number;
+  setContrast: (value: number) => void;
+  translated: boolean;
+  setTranslated: (value: boolean) => void;
   onSeek: (page: number) => void;
   onClose: () => void;
 }
 
 function Chrome(props: ChromeProps) {
+  // Standaard dicht: een lezer hoort een strip te tonen, geen bedieningspaneel.
+  const [showSettings, setShowSettings] = useState(false);
   const {
     book,
     fit,
@@ -422,6 +515,14 @@ function Chrome(props: ChromeProps) {
     spreadCount,
     currentPage,
     pageCount,
+    crop,
+    setCrop,
+    grid,
+    setGrid,
+    contrast,
+    setContrast,
+    translated,
+    setTranslated,
     onSeek,
     onClose,
   } = props;
@@ -452,43 +553,345 @@ function Chrome(props: ChromeProps) {
           // Bij manga loopt de balk mee met de leesrichting.
           style={{ direction: rightToLeft ? "rtl" : "ltr" }}
         />
+        {/* Één regel die altijd zichtbaar is: wat je tijdens het lezen echt
+            omzet. De rest zit achter "Weergave" — die balk was uitgegroeid tot
+            zestien knoppen, en dat is op een telefoon vier regels over je
+            strip heen. */}
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
-          <Toggle active={viewMode === "vertical"} onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}>
+          <Toggle
+            active={viewMode === "vertical"}
+            onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}
+          >
             {viewMode === "vertical" ? "Doorlopend" : "Pagina's"}
           </Toggle>
-          <Toggle
-            active={doublePage}
-            disabled={viewMode === "vertical"}
-            onClick={() => setDoublePage(!doublePage)}
-          >
-            Dubbel
+          <Toggle active={translated} onClick={() => setTranslated(!translated)}>
+            Vertaling
           </Toggle>
-          <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
-            {rightToLeft ? "Rechts → links" : "Links → rechts"}
+          <Toggle active={showSettings} onClick={() => setShowSettings(!showSettings)}>
+            ⚙ Weergave
           </Toggle>
-          <div className="flex gap-1">
-            {(["width", "height", "screen"] as FitMode[]).map((mode) => (
-              <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
-                {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
-              </Toggle>
-            ))}
-          </div>
-          <div className="ml-auto flex items-center gap-1">
-            <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
-              −
-            </Toggle>
-            <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
-            <Toggle active={false} onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}>
-              +
-            </Toggle>
-          </div>
-          <span className="w-full text-slate-500">
-            Spread {spreadIndex + 1} van {spreadCount} · pijltjes bladeren, D dubbel, V doorlopend,
-            F passend, Esc sluit
+          <span className="ml-auto tabular-nums text-slate-500">
+            {spreadIndex + 1} / {spreadCount}
           </span>
         </div>
+
+        {showSettings && (
+          <div className="space-y-2 border-t border-ink-700 pt-2 text-xs text-slate-300">
+            <div className="flex flex-wrap items-center gap-2">
+              <Toggle
+                active={doublePage}
+                disabled={viewMode === "vertical" || grid > 0}
+                onClick={() => setDoublePage(!doublePage)}
+              >
+                Dubbel
+              </Toggle>
+              <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
+                {rightToLeft ? "Rechts → links" : "Links → rechts"}
+              </Toggle>
+              <div className="flex gap-1">
+                {(["width", "height", "screen"] as FitMode[]).map((mode) => (
+                  <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
+                    {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
+                  </Toggle>
+                ))}
+              </div>
+              <div className="ml-auto flex items-center gap-1">
+                <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
+                  −
+                </Toggle>
+                <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+                <Toggle
+                  active={false}
+                  onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}
+                >
+                  +
+                </Toggle>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1">
+                <span className="text-slate-500">Raster</span>
+                {[0, 2, 3].map((value) => (
+                  <Toggle
+                    key={value}
+                    active={grid === value}
+                    disabled={viewMode === "vertical"}
+                    onClick={() => setGrid(value)}
+                    title={
+                      value === 0
+                        ? "Hele pagina"
+                        : `Pagina in ${value}x2 cellen; bladeren gaat per cel`
+                    }
+                  >
+                    {value === 0 ? "Uit" : `${value}×2`}
+                  </Toggle>
+                ))}
+              </div>
+              <Toggle
+                active={crop}
+                onClick={() => setCrop(!crop)}
+                title="Egale rand rond de pagina wegsnijden — scheelt op een klein scherm zo een vijfde"
+              >
+                Bijsnijden
+              </Toggle>
+              <Toggle
+                active={contrast > 100}
+                onClick={() => setContrast(contrast > 100 ? 100 : 140)}
+                title="Grijsbereik oprekken; helpt bij bleke scans"
+              >
+                Contrast
+              </Toggle>
+              <TranslateControl
+                bookId={book.id}
+                currentPage={currentPage}
+                setActive={setTranslated}
+              />
+            </div>
+
+            <p className="text-slate-500">
+              Pijltjes bladeren, D dubbel, V doorlopend, F passend, Esc sluit.
+            </p>
+          </div>
+        )}
       </div>
     </>
+  );
+}
+
+/**
+ * "Volgende hoofdstuk?" als je aan het eind bent.
+ *
+ * Staat het nog niet op schijf, dan haalt de knop het eerst op — bij een
+ * abonnement is het volgende hoofdstuk vaak nog een verwijzing, en dan is
+ * "bestaat niet" het verkeerde antwoord.
+ */
+function NextChapterPrompt({ bookId, onDismiss }: { bookId: number; onDismiss: () => void }) {
+  const navigate = useNavigate();
+  const [busy, setBusy] = useState(false);
+  const { data } = useQuery({
+    queryKey: ["next-chapter", bookId],
+    queryFn: () => api.nextChapter(bookId),
+    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
+    staleTime: Infinity,
+  });
+
+  if (!data) return null;
+
+  const label = [data.volume ? `Deel ${data.volume}` : null, data.number ? `#${data.number}` : null]
+    .filter(Boolean)
+    .join(" ");
+
+  async function go() {
+    if (data!.has_file) {
+      navigate(`/lezen/${data!.book_id}`);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.downloadChapter(data!.book_id);
+      navigate(`/lezen/${data!.book_id}`);
+    } catch {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="absolute inset-x-0 bottom-24 z-10 mx-auto w-fit max-w-[90%] rounded-lg bg-ink-800/95 p-3 text-sm shadow-lg backdrop-blur">
+      <p className="text-slate-300">
+        Volgende: <span className="text-slate-100">{label || data.title}</span>
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={() => void go()}
+          disabled={busy}
+          className="rounded bg-accent px-3 py-1.5 text-ink-900 disabled:opacity-50"
+        >
+          {busy ? "Ophalen…" : data.has_file ? "Lezen" : "Ophalen en lezen"}
+        </button>
+        <button onClick={onDismiss} className="rounded bg-ink-700 px-3 py-1.5 text-slate-300">
+          Later
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Eén pagina met wat er aan vertaling voor klaarligt (M8).
+ *
+ * In de tekststand komt er een overlay overheen; in de beeldstanden is de hele
+ * pagina hertekend en wordt de afbeelding zelf vervangen. Welke van de twee het
+ * wordt, weet alleen de server — vandaar dat de vertaalquery hier bepaalt welke
+ * bron de img krijgt.
+ */
+function TranslatablePage({
+  book,
+  page,
+  profile,
+  fitClass,
+  translated,
+  adjust,
+  grid,
+  onAspect,
+}: {
+  book: BookDetail;
+  page: number;
+  profile: string;
+  fitClass: string;
+  translated: boolean;
+  adjust: { crop: boolean; contrast: number };
+  grid: GridTransform | null;
+  onAspect: (index: number, width: number, height: number) => void;
+}) {
+  const { data } = usePageTranslation(book.id, page, translated);
+  const useFullPage = translated && data?.full_page === true;
+
+  return (
+    // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
+    // als de afbeelding zelf — vandaar w-fit en relative. Bij rasterzoom
+    // schaalt en verschuift ditzelfde vlak, zodat de vertaling meebeweegt.
+    <div
+      className="relative w-fit overflow-hidden [container-type:inline-size]"
+      style={
+        grid
+          ? {
+              transform: `scale(${grid.scale}) translate(${grid.translateX}%, ${grid.translateY}%)`,
+              transformOrigin: "center",
+            }
+          : undefined
+      }
+    >
+      <img
+        src={
+          useFullPage
+            ? imageUrl.fullTranslation(book.id, page)
+            : imageUrl.page(book.id, page, profile, adjust)
+        }
+        alt={`Pagina ${page + 1}`}
+        className={`object-contain ${fitClass}`}
+        draggable={false}
+        onLoad={(event) =>
+          onAspect(page, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+        }
+      />
+      <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
+    </div>
+  );
+}
+
+/**
+ * Vertaalknop met voortgang (M8).
+ *
+ * Verschijnt alleen als er een Gemini-sleutel is: zonder sleutel zou hij je op
+ * een 409 laten lopen, en dat is geen keuze die je in een lezer wilt maken.
+ * "Vertaal de rest" zet het boek in de wachtrij vanaf waar je bent — wat je al
+ * gelezen hebt hoeft niet meer.
+ */
+function TranslateControl({
+  bookId,
+  currentPage,
+  setActive,
+}: {
+  bookId: number;
+  currentPage: number;
+  setActive: (value: boolean) => void;
+}) {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: ["translation-status", bookId],
+    queryFn: () => api.translationStatus(bookId),
+    // Terwijl de wachtrij loopt willen we de teller zien oplopen; daarna niet
+    // meer pollen dan nodig.
+    refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 4000 : false),
+  });
+
+  const [busy, setBusy] = useState<string | null>(null);
+
+  if (!status?.configured) return null;
+
+  const total = status.page_count ?? 0;
+  const done = status.translated;
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
+    void queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] });
+  }
+
+  async function translateThisPage() {
+    setBusy("tekst");
+    try {
+      await api.makePageTranslation(bookId, currentPage);
+      setActive(true);
+      refresh();
+    } catch {
+      /* zacht falen: de lezer toont gewoon het origineel */
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // De dure standen: altijd een bewuste keuze per pagina, ook als de
+  // schakelaar in de instellingen op goedkoop staat. Ze kosten tientallen
+  // centen per pagina, dus ze horen nooit vanzelf te lopen.
+  async function translateFully(mode: TranslateMode) {
+    setBusy(mode);
+    try {
+      await api.translatePageFully(bookId, currentPage, { mode });
+      setActive(true);
+      refresh();
+    } catch {
+      /* zacht falen */
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-1">
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void translateThisPage()}
+      >
+        {busy === "tekst" ? "Bezig…" : "Deze pagina"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void translateFully("image_fast")}
+        title="Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)"
+      >
+        {busy === "image_fast" ? "Bezig…" : "Volledig"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void translateFully("image_pro")}
+        title="Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)"
+      >
+        {busy === "image_pro" ? "Bezig…" : "Volledig+"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={status.queued > 0 || busy !== null}
+        onClick={() => {
+          void api
+            .translateBook(bookId, { from_page: currentPage })
+            .then(() =>
+              queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] }),
+            )
+            .catch(() => {
+              /* zacht falen */
+            });
+        }}
+      >
+        {status.queued > 0 ? `In wachtrij: ${status.queued}` : "Rest vertalen"}
+      </Toggle>
+      <span className="tabular-nums text-slate-500">
+        {done}/{total}
+      </span>
+    </div>
   );
 }
 
@@ -496,17 +899,20 @@ function Toggle({
   active,
   disabled,
   onClick,
+  title,
   children,
 }: {
   active: boolean;
   disabled?: boolean;
   onClick: () => void;
+  title?: string;
   children: React.ReactNode;
 }) {
   return (
     <button
       disabled={disabled}
       onClick={onClick}
+      title={title}
       className={`rounded px-2 py-1 transition ${
         active ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-200 hover:bg-ink-600"
       } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}

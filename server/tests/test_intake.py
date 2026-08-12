@@ -1,0 +1,174 @@
+"""Losse bestanden importeren (downloads, Dropbox).
+
+Twee dingen staan hier centraal: er mag niets overschreven worden, en het
+endpoint mag geen willekeurig bestand op de NAS kunnen verplaatsen.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.orm import Session
+
+from bookpal.config import settings
+from bookpal.library.intake import import_files, scan
+from bookpal.sources.base import SourceError
+from tests.conftest import make_root
+
+
+def _bestand(folder: Path, naam: str, inhoud: bytes = b"cbz") -> Path:
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / naam
+    path.write_bytes(inhoud)
+    return path
+
+
+class TestScan:
+    def test_it_finds_readable_files(self, tmp_path: Path):
+        _bestand(tmp_path / "in", "Storm 01.cbz")
+        _bestand(tmp_path / "in", "Een boek.epub")
+        gevonden = scan([str(tmp_path / "in")])
+        assert {c.name for c in gevonden} == {"Storm 01.cbz", "Een boek.epub"}
+
+    def test_it_looks_in_subfolders(self, tmp_path: Path):
+        """Een download is vaak een map met hoofdstukken erin."""
+        _bestand(tmp_path / "in" / "Storm", "01.cbz")
+        assert len(scan([str(tmp_path / "in")])) == 1
+
+    def test_it_skips_files_it_cannot_read(self, tmp_path: Path):
+        _bestand(tmp_path / "in", "notities.txt")
+        _bestand(tmp_path / "in", "thumbs.db")
+        _bestand(tmp_path / "in", ".verborgen.cbz")
+        assert scan([str(tmp_path / "in")]) == []
+
+    def test_a_missing_folder_is_not_an_error(self, tmp_path: Path):
+        assert scan([str(tmp_path / "bestaat-niet")]) == []
+
+    def test_the_filename_is_parsed_as_a_suggestion(self, tmp_path: Path):
+        _bestand(tmp_path / "in", "Storm 12.cbz")
+        kandidaat = scan([str(tmp_path / "in")])[0]
+        assert kandidaat.series == "Storm"
+        assert kandidaat.number == "12"
+
+
+class TestImport:
+    def test_files_move_into_the_library(self, session: Session, tmp_path: Path):
+        bron = _bestand(tmp_path / "in", "Storm 01.cbz")
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+
+        report = import_files(
+            session, [str(bron)], root, allowed=[str(tmp_path / "in")]
+        )
+
+        assert report.moved == 1
+        assert (Path(root.path) / "Storm 01.cbz").is_file()
+        assert not bron.exists()
+
+    def test_it_can_put_them_in_a_subfolder(self, session: Session, tmp_path: Path):
+        bron = _bestand(tmp_path / "in", "Storm 01.cbz")
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+
+        import_files(
+            session, [str(bron)], root, folder="Storm", allowed=[str(tmp_path / "in")]
+        )
+        assert (Path(root.path) / "Storm" / "Storm 01.cbz").is_file()
+
+    def test_an_existing_file_is_never_overwritten(self, session: Session, tmp_path: Path):
+        bron = _bestand(tmp_path / "in", "Storm 01.cbz", b"nieuw")
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+        bestaand = Path(root.path) / "Storm 01.cbz"
+        bestaand.write_bytes(b"van mij")
+
+        report = import_files(
+            session, [str(bron)], root, allowed=[str(tmp_path / "in")]
+        )
+
+        assert report.moved == 0
+        assert report.skipped == 1
+        assert bestaand.read_bytes() == b"van mij"
+        assert bron.exists()  # en het origineel staat er nog
+
+    def test_a_file_outside_the_allowed_folders_is_refused(
+        self, session: Session, tmp_path: Path
+    ):
+        """Zonder die grens is dit een endpoint waarmee elk bestand op de NAS
+        te verplaatsen is."""
+        elders = _bestand(tmp_path / "ergens-anders", "geheim.cbz")
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+
+        report = import_files(
+            session, [str(elders)], root, allowed=[str(tmp_path / "in")]
+        )
+
+        assert report.moved == 0
+        assert "niet in een toegestane map" in report.errors[0]
+        assert elders.exists()
+
+    def test_a_path_traversal_attempt_is_refused(self, session: Session, tmp_path: Path):
+        """../ mag niet buiten de toegestane map wijzen."""
+        elders = _bestand(tmp_path / "ergens-anders", "geheim.cbz")
+        (tmp_path / "in").mkdir(parents=True, exist_ok=True)
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+
+        sluipweg = str(tmp_path / "in" / ".." / "ergens-anders" / "geheim.cbz")
+        report = import_files(session, [sluipweg], root, allowed=[str(tmp_path / "in")])
+
+        assert report.moved == 0
+        assert elders.exists()
+
+    def test_a_read_only_target_fails_before_moving_anything(
+        self, session: Session, tmp_path: Path
+    ):
+        bron = _bestand(tmp_path / "in", "Storm 01.cbz")
+        folder = tmp_path / "alleenlezen"
+        folder.mkdir()
+        folder.chmod(0o500)
+        root = make_root(session, folder, name="RO")
+
+        try:
+            with pytest.raises(SourceError):
+                import_files(session, [str(bron)], root, allowed=[str(tmp_path / "in")])
+            assert bron.exists()
+        finally:
+            folder.chmod(0o700)
+
+    def test_a_vanished_file_is_reported_not_fatal(self, session: Session, tmp_path: Path):
+        (tmp_path / "in").mkdir(parents=True, exist_ok=True)
+        root = make_root(session, tmp_path / "strips", name="Strips")
+        Path(root.path).mkdir(parents=True, exist_ok=True)
+
+        report = import_files(
+            session,
+            [str(tmp_path / "in" / "weg.cbz")],
+            root,
+            allowed=[str(tmp_path / "in")],
+        )
+        assert report.moved == 0
+        assert "bestaat niet meer" in report.errors[0]
+
+
+class TestApi:
+    def test_the_scan_reports_which_folders_exist(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        _bestand(tmp_path / "in", "Storm 01.cbz")
+        monkeypatch.setattr(
+            settings, "intake_dirs", [str(tmp_path / "in"), str(tmp_path / "weg")]
+        )
+
+        body = client.get("/api/intake").json()
+        assert body["folders"] == [str(tmp_path / "in")]
+        assert [f["name"] for f in body["files"]] == ["Storm 01.cbz"]
+
+    def test_importing_to_an_unknown_root_is_a_404(self, client: TestClient):
+        response = client.post(
+            "/api/intake/import", json={"paths": [], "root_id": 9999}
+        )
+        assert response.status_code == 404

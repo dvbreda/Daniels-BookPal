@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1)
+## Wat er nu werkt (M0 + M1 + M3 + M5 + M6 + M7 + M8 + deels M2)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -21,9 +21,54 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
 - **Web-app** met bibliotheekgrid en een stripleer: enkel/dubbel, automatische
   herkenning van dubbelpagina's, doorlopende modus voor webtoons, links-naar-
   rechts én rechts-naar-links, zoom, fit-modi en vooruitladen.
+- **BookPal Lite** (`/lite`): server-rendered lezer zonder JavaScript voor de
+  Kobo-browser. Een pagina omslaan is een gewone link, dus de voortgang wordt
+  bijgewerkt zonder dat het apparaat iets hoeft uit te voeren.
+- **OPDS** (`/opds`): catalogfeed voor apps die dat al spreken, zoals Chunky of
+  KyBook.
+- **Tabs en slimme collecties** (`/tabs` en `/collecties` in de web-app):
+  opslaanbare regels — combinaties van soort, bestandstype, herkomst, uitgever,
+  label, map, bron en leesstatus — die naar een SQLAlchemy-query compileren.
+  Eén engine voor allebei; collecties groeperen hun uitkomst bovendien op
+  uitgever of map.
 
-Nog niet: tabs als opslaanbare regels (M3), iOS (M4), MangaDex (M5), vertaling
-(M6/M8), trackers (M7) en de Kobo-app (M9/M10).
+- **Bronnen** (`/bronnen` in de web-app): MangaDex zoeken, volgen en
+  hoofdstukken ophalen. Een gevolgd hoofdstuk is eerst een boek zonder bestand;
+  ophalen hangt er een cbz aan die daarna door dezelfde scanner, lezer en
+  beeldprofielen loopt als je eigen bestanden. Kaartjes tonen waar iets vandaan
+  komt: geen badge voor je eigen bestanden, ☁ voor wat nog online staat, ✓ voor
+  opgehaald en ⏳ met het aantal dagen voor een tijdelijke download.
+- **Vooruitlezen**: een achtergrond-worker haalt periodiek nieuwe hoofdstukken
+  op en downloadt er `readahead_n` vooruit vanaf waar je gebleven bent.
+  Tijdelijke downloads verlopen na hun TTL — dan gaat alleen het bestand weg,
+  het hoofdstuk blijft staan. Uit te zetten met `BOOKPAL_SUBSCRIPTIONS_ENABLED=false`,
+  of handmatig te draaien via de knop "Nu bijwerken".
+
+- **Epub-lezer** (foliate-js, herschikbare tekst met eigen instellingen voor
+  lettergrootte en thema): downloads tonen nu een voortgangsbalk in plaats van
+  stil te lijken hangen bij een groot bestand.
+- **Trackers** (`/trackers` in de web-app): eenrichtingssync naar MyAnimeList
+  na een voortgangsupdate, gedebounced per serie zodat niet elke paginawissel
+  een eigen aanroep wordt. Nieuw gekoppelde accounts staan standaard op
+  dry-run. Goodreads heeft geen live koppeling meer (de publieke API is dood
+  sinds eind 2020) — daarvoor is er een CSV-export voor My Books → Import and
+  Export. Uit te zetten met `BOOKPAL_TRACKERS_ENABLED=false`.
+
+- **Tekstwolkjes vertalen** (in de stripleer): één Gemini-aanroep per pagina
+  doet detectie, uitlezen en vertalen tegelijk — het model ziet de hele
+  pagina, dus een ballon wordt niet los van zijn context vertaald. De web-lezer
+  legt er een overlay overheen (tik op een ballon voor het origineel); **BookPal
+  Lite** krijgt de vertaling als doorzichtige PNG over de pagina, met een link
+  om 'm aan of uit te zetten — dus ook op de Kobo, zonder JavaScript. Een
+  achtergrondwachtrij loopt vooruit op je leespositie. Zet
+  `BOOKPAL_GEMINI_API_KEY` om het aan te zetten — zonder sleutel blijft de knop
+  verborgen. Getekend met **Comic Neue** (vrij lettertype, geen Comic Sans) in
+  plaats van een systeemfont, en in kapitalen/vet/cursief als het origineel dat
+  ook was — Gemini kan geen font namaken, maar wel zien hoe de lettering
+  eruitziet.
+
+Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4)
+en de Kobo-app (M9/M10).
 
 ## Draaien op de NAS
 
@@ -50,7 +95,7 @@ Daarna:
 cd Daniels-BookPal
 cp .env.example .env
 ls -d /volume1/_*        # kijk welke mappen je écht hebt
-nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA goed
+nano .env                # zet BOOKPAL_BOEKEN / _STRIPS / _MANGA, HOST_UID en HOST_GID goed
 docker compose up -d --build
 ```
 

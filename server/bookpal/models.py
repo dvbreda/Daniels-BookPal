@@ -36,6 +36,7 @@ class Base(DeclarativeBase):
     type_annotation_map: ClassVar[dict[object, object]] = {
         dict[str, Any]: JSON,
         list[str]: JSON,
+        list[dict[str, Any]]: JSON,
     }
 
 
@@ -181,6 +182,21 @@ class Series(Base):
     publisher: Mapped[str | None] = mapped_column(String(200), default=None)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list)
     summary: Mapped[str | None] = mapped_column(Text, default=None)
+    # M7: elke format-parser levert dit al (ComicInfo, epub-OPF, pdf-metadata),
+    # maar niets bewaarde het — nodig voor de titel+auteur-matching die
+    # Goodreads' CSV-import gebruikt.
+    authors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    # De officiële omslag van een bron, als afwijkend beter is dan "pagina 1
+    # van het eerste boek". Bij scanlaties is die pagina vaak een
+    # credits-pagina van de vertaalgroep over de echte cover heen, dus de
+    # schone versie van de bron is dan de betere keuze. Werkt zowel voor een
+    # abonnement als voor een lokale serie die je handmatig koppelt.
+    cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
+    # Handmatig gekozen: "pagina 1" is niet altijd de omslag, en niet elke
+    # serie heeft een bron met een schone versie. Wint van cover_url zodra
+    # gezet — de laatste keuze van de twee geldt, zie attach_cover die dit
+    # weer leegmaakt.
+    cover_page_index: Mapped[int | None] = mapped_column(Integer, default=None)
 
     # M5: waar deze serie vandaan komt als hij geabonneerd is.
     source_id: Mapped[int | None] = mapped_column(
@@ -194,7 +210,9 @@ class Series(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     books: Mapped[list[Book]] = relationship(
-        back_populates="series", cascade="all, delete-orphan", order_by="Book.sort_number"
+        back_populates="series",
+        cascade="all, delete-orphan",
+        order_by="Book.sort_volume, Book.sort_number",
     )
 
     __table_args__ = (UniqueConstraint("library_root_id", "title", name="uq_series_root_title"),)
@@ -221,15 +239,29 @@ class Book(Base):
     # Genormaliseerd voor sorteren: "10.5" -> 10.5, ontbrekend -> heel groot.
     sort_number: Mapped[float] = mapped_column(Float, default=0.0)
     volume: Mapped[str | None] = mapped_column(String(40), default=None)
+    # Zonder dit sorteert een reeks puur op hoofdstuknummer, en dat nummer telt
+    # meestal opnieuw per deel: hoofdstuk 1 van deel 1, deel 2, deel 10 komen
+    # dan allemaal naast elkaar te staan in scan-volgorde in plaats van
+    # leesvolgorde. Eerst op deel, dan pas op hoofdstuk.
+    sort_volume: Mapped[float] = mapped_column(Float, default=0.0)
 
     page_count: Mapped[int | None] = mapped_column(Integer, default=None)
     right_to_left: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # De omslag van dít deel bij de bron. MangaDex heeft er meestal één per
+    # volume; zonder dit zou elk deel "pagina 1" tonen, en dat is bij
+    # scanlations vaak een credits-pagina van de vertaalgroep.
+    cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
 
     # M5: geabonneerde hoofdstukken zonder lokaal bestand.
     source_id: Mapped[int | None] = mapped_column(
         ForeignKey("source.id", ondelete="SET NULL"), default=None
     )
     source_ref: Mapped[str | None] = mapped_column(String(200), default=None)
+    # Wie heeft dit vertaald? Bij bronnen met meerdere vertalingen van dezelfde
+    # aflevering is dit het enige onderscheid — nummer en omvang zijn gelijk.
+    source_group_id: Mapped[str | None] = mapped_column(String(200), default=None)
+    source_group_name: Mapped[str | None] = mapped_column(String(200), default=None)
     # Bij een readahead-download: wanneer mag dit bestand weer weg?
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
@@ -241,7 +273,9 @@ class Book(Base):
         back_populates="book", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (Index("ix_book_series_sort", "series_id", "sort_number"),)
+    __table_args__ = (
+        Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),
+    )
 
 
 class User(Base):
@@ -331,6 +365,16 @@ class Subscription(Base):
     readahead_n: Mapped[int] = mapped_column(Integer, default=3)
     ttl_days: Mapped[int] = mapped_column(Integer, default=14)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    # Welke vertaalgroep je wilt lezen. Leeg = automatisch kiezen (de groep die
+    # het grootste deel van de reeks heeft gedaan). Zelf kiezen is nodig omdat
+    # "de meeste hoofdstukken" niet hetzelfde is als "de mooiste vertaling".
+    preferred_group_id: Mapped[str | None] = mapped_column(String(200), default=None)
+    # Wat er bij de laatste ronde te kiezen viel: [{"id", "name", "chapters"}].
+    # Opgeslagen zodat de UI een keuzelijst kan tonen zonder de bron te
+    # bevragen — na het ontdubbelen bestaan de afgevallen hoofdstukken hier
+    # namelijk niet meer als boek.
+    available_groups: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
 
 
 class DownloadJob(Base):

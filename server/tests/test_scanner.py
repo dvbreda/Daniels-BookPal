@@ -221,6 +221,80 @@ class TestSeriesGrouping:
         assert series is not None
         assert [book.number for book in series.books] == ["1", "2", "10"]
 
+    def test_sorts_by_volume_first_when_chapters_restart_per_volume(
+        self, session: Session, library_root: Path
+    ):
+        """Chapter 1 bestaat in elk deel — zonder sort_volume komen die naast
+        elkaar te staan in scanvolgorde in plaats van leesvolgorde. Precies
+        wat er met de echte Crayon Shin-Chan-collectie misging."""
+        folder = library_root / "Reeks"
+        # Bewust niet in leesvolgorde aanmaken: de bug zat in aanname dat
+        # scanvolgorde toevallig zou kloppen.
+        for vol, ch in [("10", "1"), ("1", "2"), ("2", "1"), ("1", "1")]:
+            make_cbz(
+                folder / f"vol{vol}-ch{ch}.cbz",
+                pages=1,
+                comicinfo=comicinfo_xml(series="Reeks", number=ch, volume=vol),
+            )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        volgorde = [(book.volume, book.number) for book in series.books]
+        assert volgorde == [("1", "1"), ("1", "2"), ("2", "1"), ("10", "1")]
+
+    def test_books_without_a_volume_still_sort_by_number(
+        self, session: Session, library_root: Path
+    ):
+        """De meeste strips hebben geen 'deel' apart van het nummer; die
+        mogen niet allemaal naar het einde van de reeks verdwijnen."""
+        for number in ("3", "1", "2"):
+            make_cbz(
+                library_root / f"los-{number}.cbz",
+                pages=1,
+                comicinfo=comicinfo_xml(series="Los", number=number),
+            )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert [book.number for book in series.books] == ["1", "2", "3"]
+
+    def test_a_folder_holds_one_series_even_with_messy_filenames(
+        self, session: Session, library_root: Path
+    ):
+        """De echte vorm waar dit op stukliep: de serietitel staat achteraan,
+        achter de hoofdstuktitel. Ontleden van de naam maakt er dan van elk
+        hoofdstuk een eigen reeks; de map weet het beter."""
+        folder = library_root / "Crayon Shin-Chan"
+        for stem in (
+            "Vol.15 Ch.005.002 - Part 002 - Complicated Cases! - Crayon Shin-chan",
+            "Vol.15 Ch.005.003 - Part 003 - Complicated Cases! - Crayon Shin-chan",
+            "Vol.16 Ch.006.001 - Part 001 - A Love Letter - Crayon Shin-chan",
+        ):
+            make_cbz(folder / f"{stem}.cbz", pages=1)
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalars(select(Series)).all()
+        assert len(series) == 1
+        assert series[0].title == "Crayon Shin-Chan"
+        assert len(series[0].books) == 3
+
+    def test_comicinfo_still_wins_over_the_folder(self, session: Session, library_root: Path):
+        make_cbz(
+            library_root / "Verkeerde Mapnaam" / "deel 1.cbz",
+            pages=1,
+            comicinfo=comicinfo_xml(series="De Echte Reeks", number="1"),
+        )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.title == "De Echte Reeks"
+
     def test_folder_becomes_series_as_last_resort(self, session: Session, library_root: Path):
         make_cbz(library_root / "Een Map" / "losse naam zonder nummer.cbz", pages=1)
         root = make_root(session, library_root)
@@ -228,6 +302,47 @@ class TestSeriesGrouping:
         series = session.scalar(select(Series))
         assert series is not None
         assert series.folder_path == "Een Map"
+
+
+class TestAuthorsDuringScan:
+    def test_writer_from_comicinfo_lands_on_the_series(
+        self, session: Session, library_root: Path
+    ):
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.authors == ["Iemand Anders"]
+
+    def test_authors_are_merged_not_overwritten(self, session: Session, library_root: Path):
+        """Een serie heeft vaak een tekenaar naast een schrijver, en die staan
+        zelden in hetzelfde deel — dus samenvoegen, niet vervangen."""
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        make_cbz(
+            library_root / "b.cbz",
+            pages=1,
+            comicinfo=comicinfo_xml(series="Storm", number="2").replace(
+                b"<Writer>Iemand Anders</Writer>", b"<Writer>Nog Iemand</Writer>"
+            ),
+        )
+        root = make_root(session, library_root)
+        scan_root(session, root)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert sorted(series.authors) == ["Iemand Anders", "Nog Iemand"]
+
+    def test_rescanning_does_not_duplicate_authors(self, session: Session, library_root: Path):
+        make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
+        root = make_root(session, library_root)
+        scan_root(session, root)
+        scan_root(session, root, force=True)
+
+        series = session.scalar(select(Series))
+        assert series is not None
+        assert series.authors == ["Iemand Anders"]
 
 
 class TestOriginDuringScan:

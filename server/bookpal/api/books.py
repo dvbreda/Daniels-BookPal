@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
@@ -14,10 +14,21 @@ from bookpal.images import (
     open_source,
     render_cover,
     render_page,
+    render_remote_cover,
     source_id_for,
 )
+from bookpal.images.adjust import Adjustments
 from bookpal.models import Book, BookKind, File, Series
-from bookpal.schemas import BookDetailOut, BookOut, Paginated, TocEntryOut
+from bookpal.schemas import (
+    BookDetailOut,
+    BookOut,
+    NextChapterOut,
+    Paginated,
+    TocEntryOut,
+)
+from bookpal.translate import service as translation_service
+from bookpal.translate.base import PageResult
+from bookpal.translate.overlay import bake
 
 from . import deps
 
@@ -48,7 +59,9 @@ def list_books(
 
     total = int(session.scalar(counter) or 0)
     books = session.scalars(
-        statement.order_by(Book.series_id, Book.sort_number).offset(offset).limit(limit)
+        statement.order_by(Book.series_id, Book.sort_volume, Book.sort_number)
+        .offset(offset)
+        .limit(limit)
     ).all()
 
     user = current_user(session)
@@ -97,14 +110,54 @@ def get_book(book_id: int, session: Session = Depends(get_session)) -> BookDetai
     return detail
 
 
+@router.get("/{book_id}/next", response_model=NextChapterOut)
+def next_chapter(book_id: int, session: Session = Depends(get_session)) -> NextChapterOut:
+    """Wat er na dit hoofdstuk komt in leesvolgorde.
+
+    Inclusief hoofdstukken die nog opgehaald moeten worden: juist als je er een
+    uit hebt wil je weten dat het volgende bestaat, ook al staat het nog niet
+    op schijf. De client biedt dan "ophalen en lezen" aan in plaats van niets.
+    """
+    book = deps.get_book(session, book_id)
+    later = session.scalars(
+        select(Book)
+        .where(
+            Book.series_id == book.series_id,
+            tuple_(Book.sort_volume, Book.sort_number, Book.id)
+            > (book.sort_volume, book.sort_number, book.id),
+        )
+        .order_by(Book.sort_volume, Book.sort_number, Book.id)
+        .limit(1)
+    ).first()
+    if later is None:
+        raise HTTPException(status_code=404, detail="dit was het laatste hoofdstuk")
+
+    return NextChapterOut(
+        book_id=later.id,
+        title=later.title,
+        number=later.number,
+        volume=later.volume,
+        has_file=later.file_id is not None,
+    )
+
+
 @router.get("/{book_id}/pages/{index}")
 def get_page(
     book_id: int,
     index: int,
     profile: ImageProfile = deps.ProfileDep,
+    adjustments: Adjustments = deps.AdjustDep,
+    translate: str | None = Query(default=None, max_length=8),
     session: Session = Depends(get_session),
 ) -> Response:
-    """Eén pagina, klaargemaakt voor het gevraagde apparaat."""
+    """Eén pagina, klaargemaakt voor het gevraagde apparaat.
+
+    ``translate=nl`` bakt een al gemaakte vertaling in het beeld. Dat is er
+    voor de Kobo en voor BookPal Lite: die kunnen geen overlay tekenen, maar
+    krijgen hun pagina's toch al server-side klaargemaakt. Nog niet vertaald?
+    Dan gewoon het origineel — een lezer hoort niet te blokkeren op een
+    vertaling die nog moet komen.
+    """
     book = deps.get_book(session, book_id)
     if book.kind is BookKind.EPUB:
         raise HTTPException(
@@ -117,15 +170,46 @@ def get_page(
     path = deps.book_file_path(session, book)
     source = open_source(path)
     try:
-        rendered = render_page(source, index, profile, source_id=source_id_for(path))
+        rendered = render_page(
+            source, index, profile, source_id=source_id_for(path), adjustments=adjustments
+        )
     except IndexError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except UnsupportedOperation as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
+    data = rendered.data
+    media_type = rendered.media_type
+    if translate:
+        found = translation_service.best_available(session, book, index, translate)
+        if found is not None:
+            mode, row = found
+            if mode.is_image:
+                # De hele pagina is al hertekend; die vervangt het origineel in
+                # zijn geheel. Kan ontbreken als de sidecar-map is opgeruimd —
+                # dan gewoon het origineel, want blokkeren helpt de lezer niet.
+                replacement = translation_service.read_page_image(
+                    session, book, index, translate, mode
+                )
+                if replacement is not None:
+                    data, media_type = replacement, "image/webp"
+                    if mode.needs_bubbles:
+                        # Hybride: het model heeft alleen leeggeveegd, dus onze
+                        # eigen tekst moet er nog overheen — zonder wit vlakje,
+                        # want er valt niets meer af te dekken.
+                        ours = translation_service.bubbles_for(
+                            session, book, index, translate
+                        ).bubbles
+                        if ours:
+                            data = bake(data, ours, media_type=media_type, boxes=False)
+            else:
+                bubbles = PageResult.from_payload(row.payload).bubbles
+                if bubbles:
+                    data = bake(data, bubbles, media_type=media_type)
+
     return Response(
-        content=rendered.data,
-        media_type=rendered.media_type,
+        content=data,
+        media_type=media_type,
         headers={
             "Cache-Control": PAGE_CACHE_CONTROL,
             "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",
@@ -141,8 +225,47 @@ def get_cover(
     session: Session = Depends(get_session),
 ) -> Response:
     book = deps.get_book(session, book_id)
+
+    # De omslag van dít deel bij de bron wint van "pagina 1": bij scanlations
+    # staat daar vaak een credits-pagina van de vertaalgroep. Een handmatig
+    # gekozen paginanummer gaat hier weer boven, want dat is een echte keuze.
+    if book.cover_url and (book.series is None or book.series.cover_page_index is None):
+        try:
+            remote = render_remote_cover(
+                book.cover_url, profile, source_id=f"book-cover:{book.id}:{book.cover_url}"
+            )
+            return Response(
+                content=remote.data,
+                media_type=remote.media_type,
+                headers={
+                    "Cache-Control": COVER_CACHE_CONTROL,
+                    "X-BookPal-Cache": "hit" if remote.from_cache else "miss",
+                },
+            )
+        except UnsupportedOperation:
+            pass  # bron onbereikbaar; val terug op de pagina zelf
+
     path = deps.book_file_path(session, book)
     source = open_source(path)
+
+    # Een handmatig gekozen omslagpagina geldt voor de hele serie, niet alleen
+    # voor het eerste deel: bij scanlations zit de reclame op pagina 1 van elk
+    # hoofdstuk, dus juist de deel-kaartjes hebben die keuze nodig.
+    page_index = book.series.cover_page_index if book.series is not None else None
+    if page_index is not None:
+        try:
+            chosen = render_page(source, page_index, profile, source_id=source_id_for(path))
+            return Response(
+                content=chosen.data,
+                media_type=chosen.media_type,
+                headers={
+                    "Cache-Control": COVER_CACHE_CONTROL,
+                    "X-BookPal-Cache": "hit" if chosen.from_cache else "miss",
+                },
+            )
+        except (IndexError, UnsupportedOperation):
+            pass  # dit deel is korter, of heeft geen vaste pagina's; val terug
+
     rendered = render_cover(source, profile, source_id=source_id_for(path))
     if rendered is None:
         raise HTTPException(status_code=404, detail="dit boek heeft geen omslag")
@@ -156,6 +279,18 @@ def get_cover(
     )
 
 
+# Python's mimetypes kent cbz/cbr/cb7 niet en geeft voor epub op sommige
+# systemen niets terug; dan valt FileResponse terug op octet-stream. Clients
+# die op het mediatype afgaan zien zo'n bestand niet voor wat het is.
+FILE_MEDIA_TYPES = {
+    ".epub": "application/epub+zip",
+    ".pdf": "application/pdf",
+    ".cbz": "application/vnd.comicbook+zip",
+    ".cbr": "application/vnd.comicbook-rar",
+    ".cb7": "application/x-cb7",
+}
+
+
 @router.get("/{book_id}/file")
 def get_file(book_id: int, session: Session = Depends(get_session)) -> FileResponse:
     """Het originele bestand.
@@ -166,4 +301,8 @@ def get_file(book_id: int, session: Session = Depends(get_session)) -> FileRespo
     """
     book = deps.get_book(session, book_id)
     path = deps.book_file_path(session, book)
-    return FileResponse(path, filename=path.name)
+    return FileResponse(
+        path,
+        filename=path.name,
+        media_type=FILE_MEDIA_TYPES.get(path.suffix.lower()),
+    )

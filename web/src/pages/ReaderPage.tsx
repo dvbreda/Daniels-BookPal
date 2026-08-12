@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 
 import { api } from "../api/client";
 import { ComicReader } from "../reader/ComicReader";
+import { EpubReader } from "../reader/EpubReader";
 
 export function ReaderPage() {
   const { id } = useParams<{ id: string }>();
@@ -27,5 +28,14 @@ export function ReaderPage() {
     );
   }
 
-  return <ComicReader book={data} onClose={() => navigate(`/serie/${data.series_id}`)} />;
+  const close = () => navigate(`/serie/${data.series_id}`);
+
+  // Epub rendert de client zelf (foliate-js): herschikbare tekst heeft geen
+  // vaste pagina's die de server kan knippen. Strips en pdf komen als beeld
+  // van de server en gaan naar de stripleer.
+  return data.kind === "epub" ? (
+    <EpubReader book={data} onClose={close} />
+  ) : (
+    <ComicReader book={data} onClose={close} />
+  );
 }

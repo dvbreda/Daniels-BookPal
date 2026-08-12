@@ -4,11 +4,14 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from bookpal import db as db_module
 from bookpal.config import settings
+from bookpal.main import app
 from bookpal.models import LibraryRoot, OriginRegion
+from tests.fixtures import comicinfo_xml, make_cbz, make_epub, make_pdf
 
 
 @pytest.fixture
@@ -17,6 +20,24 @@ def temp_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     data_dir = tmp_path / "data"
     monkeypatch.setattr(settings, "data_dir", data_dir)
     monkeypatch.setattr(settings, "cache_dir", data_dir / "cache")
+    # Ook downloads omleiden, anders schrijft een test in de echte projectmap.
+    monkeypatch.setattr(settings, "download_dir", data_dir / "downloads")
+    # En de sidecar-map met bewaarde vertalingen, om dezelfde reden — die lekte
+    # anders tussen tests door en liet ze elkaars vertalingen zien.
+    monkeypatch.setattr(settings, "sidecar_dir", data_dir / "vertalingen")
+    # Geen achtergrondthread die naar een bron zou kunnen praten; de worker
+    # wordt apart getest met run_once().
+    monkeypatch.setattr(settings, "subscriptions_enabled", False)
+    # En het vooruit downloaden tijdens het lezen, dat aan diezelfde vlag hangt
+    # maar een eigen timer heeft.
+    monkeypatch.setattr(settings, "readahead_debounce_seconds", 0.0)
+    # Idem voor de gedebouncede tracker-push: anders overleeft een timer de
+    # teardown van deze test en raakt hij de database van de volgende.
+    monkeypatch.setattr(settings, "trackers_enabled", False)
+    # En de vertaalwachtrij: die zou anders een thread laten draaien die na de
+    # teardown nog naar Gemini en naar de oude database wil.
+    monkeypatch.setattr(settings, "translations_enabled", False)
+    monkeypatch.setattr(settings, "gemini_api_key", "")
     db_module.reset_engine()
     settings.ensure_dirs()
     yield data_dir
@@ -54,3 +75,44 @@ def make_root(
     session.add(root)
     session.flush()
     return root
+
+
+@pytest.fixture
+def client(temp_settings: Path) -> Iterator[TestClient]:
+    db_module.init_db()
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def library(tmp_path: Path) -> Path:
+    root = tmp_path / "collectie"
+    make_cbz(
+        root / "strips" / "Storm 01.cbz",
+        pages=5,
+        comicinfo=comicinfo_xml(series="Storm", number="1", publisher="Dupuis"),
+    )
+    make_cbz(
+        root / "strips" / "Storm 02.cbz",
+        pages=3,
+        comicinfo=comicinfo_xml(series="Storm", number="2", publisher="Dupuis"),
+    )
+    make_cbz(
+        root / "manga" / "Tesuto 01.cbz",
+        pages=4,
+        comicinfo=comicinfo_xml(series="Tesuto", number="1", manga="YesAndRightToLeft"),
+    )
+    make_epub(root / "boeken" / "Een Testboek.epub")
+    make_pdf(root / "boeken" / "Een Testdocument.pdf", pages=2)
+    return root
+
+
+@pytest.fixture
+def scanned(client: TestClient, library: Path) -> TestClient:
+    response = client.post("/api/libraries", json={"name": "Collectie", "path": str(library)})
+    assert response.status_code == 201
+    root_id = response.json()["id"]
+    scan = client.post(f"/api/libraries/{root_id}/scan")
+    assert scan.status_code == 200, scan.text
+    assert scan.json()["added"] == 5
+    return client

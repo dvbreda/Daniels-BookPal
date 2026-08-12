@@ -80,15 +80,42 @@ def iter_book_files(root_path: Path) -> list[Path]:
     return found
 
 
-def _series_title(meta: BookMetadata, path: Path, root_path: Path) -> str:
+def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKind) -> str:
+    """De serie waar dit bestand bij hoort, van sterk naar zwak signaal.
+
+    Expliciete metadata wint altijd. Daarna loopt het uiteen per soort, en dat
+    verschil is wezenlijk:
+
+    * **Strips** — een eigen submap betekent een serie. Wie zijn bestanden in
+      ``Crayon Shin-Chan/`` zet, zegt daarmee dat het één reeks is; hetzelfde
+      uitgangspunt als Komga en Kavita. De bestandsnaam is hier het zwakste
+      signaal, want de titel staat er lang niet altijd vooraan:
+      ``Vol.15 Ch.005.002 - Part 002 - ... - Crayon Shin-chan.cbz`` levert bij
+      ontleden per hoofdstuk een eigen "serie" op, en één map wordt tachtig
+      reeksen.
+    * **Boeken** — een map is daar juist meestal een categorie ("boeken",
+      "sci-fi") en niet een reeks. Een epub of pdf is in zijn eentje een boek,
+      dus de eigen titel gaat vóór de map.
+    """
     if meta.series:
         return meta.series.strip()
+
+    parent = path.parent
+    in_subfolder = parent != root_path
+
+    if kind is BookKind.COMIC:
+        if in_subfolder:
+            return parent.name
+        parsed = parse_filename(path.stem)
+        return parsed.series or path.stem
+
+    # Boeken: eigen titel eerst, map als laatste redmiddel.
+    if meta.title:
+        return meta.title.strip()
     parsed = parse_filename(path.stem)
     if parsed.series:
         return parsed.series
-    # Laatste redmiddel: de map waar het bestand in zit, tenzij dat de root zelf is.
-    parent = path.parent
-    if parent != root_path:
+    if in_subfolder:
         return parent.name
     return path.stem
 
@@ -150,7 +177,7 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
 
     parsed = parse_filename(path.stem)
     root_path = Path(root.path)
-    series_title = _series_title(meta, path, root_path)
+    series_title = _series_title(meta, path, root_path, FORMAT_KINDS[fmt])
     folder = path.parent.relative_to(root_path) if path.parent != root_path else None
     series = _get_or_create_series(session, root, series_title, folder)
 
@@ -158,6 +185,11 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
         series.publisher = meta.publisher
     if meta.tags:
         series.tags = list(dict.fromkeys([*series.tags, *meta.tags]))
+    if meta.authors:
+        # Samenvoegen in plaats van overschrijven: een serie heeft vaak een
+        # tekenaar naast een schrijver, en die staan zelden in hetzelfde deel.
+        # dict.fromkeys houdt de volgorde aan waarin ze langskomen.
+        series.authors = list(dict.fromkeys([*series.authors, *meta.authors]))
     if meta.summary and not series.summary:
         series.summary = meta.summary
     _apply_origin(series, meta, root, FORMAT_KINDS[fmt])
@@ -168,12 +200,25 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
         book = Book(series_id=series.id, file_id=file_row.id, kind=FORMAT_KINDS[fmt], title="")
         session.add(book)
 
+    if book.source_ref is not None:
+        # Dit hoofdstuk komt van een abonnement (M5) en is daar al ingedeeld en
+        # benoemd. De scanner weet hier minder dan de bron: de bestandsnaam van
+        # een download zegt niets over volgorde of titel, en het boek staat in
+        # de serie van het abonnement. Alleen wat de scanner écht als enige
+        # weet — dat het bestand er is en hoeveel pagina's het heeft — mag hij
+        # bijwerken. Zonder deze uitzondering trok elke scan zulke hoofdstukken
+        # uit hun abonnement en in een serie die op de mapnaam was verzonnen.
+        book.page_count = page_count
+        session.flush()
+        return
+
     book.series_id = series.id
     book.kind = FORMAT_KINDS[fmt]
     book.title = meta.title or parsed.title or path.stem
     book.number = number
     book.sort_number = normalise_number(number)
     book.volume = meta.volume or parsed.volume
+    book.sort_volume = normalise_number(book.volume)
     book.page_count = page_count
     # Manga leest van rechts naar links; het ComicInfo-veld is de enige plek
     # waar dat expliciet in staat.

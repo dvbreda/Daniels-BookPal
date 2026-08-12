@@ -9,6 +9,7 @@ from bookpal.images.pipeline import (
     prune_cache,
     render_cover,
     render_page,
+    render_remote_cover,
     source_id_for,
     to_eink_gray,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "prune_cache",
     "render_cover",
     "render_page",
+    "render_remote_cover",
     "source_id_for",
     "to_eink_gray",
 ]

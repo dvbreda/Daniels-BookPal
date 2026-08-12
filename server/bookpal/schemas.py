@@ -11,7 +11,7 @@ from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from bookpal.models import BookKind, OriginRegion, OriginSource
+from bookpal.models import BookKind, OriginRegion, OriginSource, SubscriptionPolicy
 
 
 class LibraryRootIn(BaseModel):
@@ -70,6 +70,14 @@ class BookOut(BaseModel):
     # Lokaal bestand of alleen een bron-referentie? Clients gebruiken dit om te
     # bepalen of ze kunnen lezen of eerst moeten downloaden.
     has_file: bool
+    # Komt dit van een abonnement of uit je eigen mappen? Samen met has_file
+    # geeft dat de drie toestanden die een client wil tonen: eigen bestand,
+    # opgehaald van een bron, en nog op te halen.
+    from_source: bool = False
+    # Wie heeft dit vertaald? Alleen gevuld bij bronnen die dat meegeven.
+    source_group_name: str | None = None
+    # Bij een tijdelijke (readahead-)download: wanneer mag het bestand weg?
+    expires_at: datetime | None = None
     extension: str | None
     added_at: datetime
     progress: ProgressOut | None = None
@@ -88,10 +96,20 @@ class SeriesOut(BaseModel):
     origin_region: OriginRegion
     origin_source: OriginSource
     publisher: str | None
+    authors: list[str] = Field(default_factory=list)
     tags: list[str]
     summary: str | None
     book_count: int = 0
     kinds: list[BookKind] = Field(default_factory=list)
+    # Gevolgd bij een bron? Dan toont de client dat, en weet hij dat er
+    # hoofdstukken kunnen zijn zonder lokaal bestand.
+    from_source: bool = False
+    # Heeft deze serie een omslag van een bron? Zonder dit weet de client niet
+    # of /api/series/{id}/cover iets oplevert, en moet hij het gewoon proberen
+    # en op een 404 wachten.
+    has_cover_url: bool = False
+    # Handmatig gekozen paginanummer voor de omslag, als dat gezet is.
+    cover_page_index: int | None = None
 
 
 class SeriesDetailOut(SeriesOut):
@@ -105,6 +123,123 @@ class OriginPatch(BaseModel):
     origin_language: str | None = None
     origin_country: str | None = None
     origin_region: OriginRegion
+
+
+class AttachCoverIn(BaseModel):
+    """Koppel de omslag van een bron aan een (ook lokale) serie, zonder
+    daarmee te abonneren."""
+
+    source_id: int
+    ref: str = Field(max_length=200)
+
+
+class SetCoverPageIn(BaseModel):
+    """Een vaste pagina van het eerste boek als omslag, in plaats van
+    'pagina 1'. ``None`` zet de serie terug op de standaardkeuze."""
+
+    page_index: int | None = Field(default=None, ge=0)
+
+
+class ContinueOut(BaseModel):
+    """Waar je verder leest in deze serie."""
+
+    book_id: int
+    title: str
+    number: str | None
+    # De pagina waar je gebleven was; 0 voor een hoofdstuk dat je nog moet
+    # beginnen. Een epub heeft geen paginanummer — daar gebruikt de lezer zijn
+    # eigen opgeslagen positie.
+    page: int
+    # Ga je verder in iets dat je al begonnen was, of begin je aan een nieuw
+    # hoofdstuk? Bepaalt of de knop "Lees verder" of "Beginnen" heet.
+    resuming: bool
+    # Hoeveel hoofdstukken hiervóór nog niet uitgelezen zijn — dat is precies
+    # wat de knop "markeer vorige als gelezen" zou opruimen.
+    unread_before: int
+
+
+class MarkReadBeforeOut(BaseModel):
+    marked: int
+
+
+class NextChapterOut(BaseModel):
+    """Het volgende hoofdstuk, om aan te bieden als je er een uit hebt."""
+
+    book_id: int
+    title: str
+    number: str | None
+    volume: str | None
+    # Al binnen, of moet het nog opgehaald worden? Bepaalt of de knop meteen
+    # opent of eerst downloadt.
+    has_file: bool
+
+
+class IntakeCandidateOut(BaseModel):
+    path: str
+    name: str
+    size: int
+    series: str | None = None
+    number: str | None = None
+
+
+class IntakeScanOut(BaseModel):
+    # Welke mappen er daadwerkelijk bestaan; anders zoek je je scheel naar
+    # waarom er niets staat.
+    folders: list[str] = Field(default_factory=list)
+    # Mappen die bestaan maar waaruit niets verplaatst kan worden — meestal
+    # omdat Docker ze als root heeft aangemaakt.
+    unwritable: list[str] = Field(default_factory=list)
+    files: list[IntakeCandidateOut] = Field(default_factory=list)
+
+
+class IntakeImportIn(BaseModel):
+    paths: list[str]
+    root_id: int
+    # Submap op serienaam; leeg zet ze los in de root.
+    folder: str | None = Field(default=None, max_length=200)
+
+
+class IntakeImportOut(BaseModel):
+    moved: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class MergeSeriesIn(BaseModel):
+    """De serie die opgaat in deze. Verdwijnt daarna."""
+
+    absorb_id: int
+
+
+class MergeSuggestionOut(BaseModel):
+    keep_id: int
+    keep_title: str
+    keep_books: int
+    absorb_id: int
+    absorb_title: str
+    absorb_books: int
+
+
+class ImportSeriesIn(BaseModel):
+    """Een gevolgde serie als gewone bestanden in je eigen mappen zetten."""
+
+    root_id: int
+    # Ontbrekende hoofdstukken ophalen, of alleen verplaatsen wat er al is.
+    download_missing: bool = True
+
+
+class ImportSeriesOut(BaseModel):
+    moved: int
+    downloaded: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class WikiHitOut(BaseModel):
+    title: str
+    key: str
+    description: str | None = None
+    lang: str
 
 
 class TocEntryOut(BaseModel):
@@ -138,6 +273,362 @@ class ProfileOut(BaseModel):
     max_height: int | None
     format: str
     grayscale: bool
+
+
+class TabIn(BaseModel):
+    """Een tab: naam + icoon + volgorde + regel + weergave (ontwerp 2)."""
+
+    name: str = Field(max_length=100)
+    icon: str | None = Field(default=None, max_length=60)
+    position: int = 0
+    rule: dict[str, Any] = Field(default_factory=dict)
+    view_mode: str = Field(default="grid", max_length=20)
+    group_by: str | None = Field(default=None, max_length=20)
+    enabled: bool = True
+
+
+class TabOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    icon: str | None
+    position: int
+    rule: dict[str, Any]
+    view_mode: str
+    group_by: str | None
+    enabled: bool
+
+
+class CollectionIn(BaseModel):
+    """Een slimme collectie: dezelfde regel-engine als tabs, plus group_by."""
+
+    name: str = Field(max_length=200)
+    smart: bool = True
+    rule: dict[str, Any] = Field(default_factory=dict)
+    group_by: str | None = Field(default=None, max_length=20)
+
+
+class CollectionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    smart: bool
+    rule: dict[str, Any]
+    group_by: str | None
+
+
+class SourceOut(BaseModel):
+    """Een externe bron (M5), bv. MangaDex."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    type: str
+    name: str
+    enabled: bool
+
+
+class SourceIn(BaseModel):
+    type: str = Field(max_length=50)
+    name: str = Field(max_length=100)
+    enabled: bool = True
+
+
+class SearchResultOut(BaseModel):
+    """Een treffer bij een bron — nog geen serie in je bibliotheek."""
+
+    ref: str
+    title: str
+    description: str | None = None
+    year: int | None = None
+    status: str | None = None
+    original_language: str | None = None
+    tracker_ids: dict[str, str] = Field(default_factory=dict)
+    # Volg je deze al? Dan hoeft de UI geen tweede aanroep te doen.
+    subscribed_series_id: int | None = None
+    # Rechtstreeks te tonen als miniatuur in een zoekresultaat; pas bij
+    # koppelen (POST .../cover) gaat hij door de eigen cache en beeldpipeline.
+    cover_url: str | None = None
+
+
+class SubscribeIn(BaseModel):
+    ref: str = Field(max_length=200)
+    policy: str = Field(default="readahead", pattern="^(permanent|readahead)$")
+    readahead_n: int = Field(default=3, ge=0, le=50)
+    ttl_days: int = Field(default=14, ge=1, le=365)
+    language: str = Field(default="en", max_length=8)
+
+
+class GroupOut(BaseModel):
+    """Een vertaalgroep die deze reeks (deels) heeft gedaan."""
+
+    id: str
+    name: str
+    chapters: int
+
+
+class SubscriptionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    source_id: int
+    series_id: int
+    policy: SubscriptionPolicy
+    readahead_n: int
+    ttl_days: int
+    last_checked_at: datetime | None
+    preferred_group_id: str | None = None
+    available_groups: list[GroupOut] = Field(default_factory=list)
+    series_title: str = ""
+    chapters_total: int = 0
+    chapters_local: int = 0
+
+
+class SubscriptionPatch(BaseModel):
+    """Wat je aan een lopend abonnement kunt bijstellen.
+
+    ``preferred_group_id`` op ``null`` zet hem terug op automatisch kiezen.
+    """
+
+    preferred_group_id: str | None = Field(default=None, max_length=200)
+    policy: str | None = Field(default=None, pattern="^(permanent|readahead)$")
+    readahead_n: int | None = Field(default=None, ge=0, le=50)
+    ttl_days: int | None = Field(default=None, ge=1, le=365)
+
+
+class SubscribeResultOut(BaseModel):
+    subscription: SubscriptionOut
+    series_id: int
+    chapters_added: int
+
+
+class RunReportOut(BaseModel):
+    """Wat een ronde van de abonnementen-worker heeft gedaan."""
+
+    subscriptions: int
+    chapters_added: int
+    downloaded: int
+    expired: int
+    errors: list[str] = Field(default_factory=list)
+
+
+class TrackerAccountOut(BaseModel):
+    """Nooit ``credentials`` hierin — dat zijn client-secrets en tokens."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    provider: str
+    enabled: bool
+    dry_run: bool
+    last_sync_at: datetime | None
+    # Voor MAL: heeft dit account al een access token, of moet er nog
+    # gekoppeld worden? De UI kan dit tonen zonder de credentials te kennen.
+    connected: bool = False
+
+
+class TrackerAccountIn(BaseModel):
+    provider: str = Field(max_length=50)
+    # Alleen voor MAL nodig: je eigen app-registratie bij MyAnimeList.
+    client_id: str | None = Field(default=None, max_length=200)
+    client_secret: str | None = Field(default=None, max_length=200)
+
+
+class TrackerAccountPatch(BaseModel):
+    enabled: bool | None = None
+    dry_run: bool | None = None
+
+
+class GoodreadsLoginIn(BaseModel):
+    """Inloggen bij Goodreads via hun eigen site.
+
+    Het wachtwoord wordt gebruikt om in te loggen en daarna niet bewaard —
+    alleen de sessie gaat de database in, zodat er niet elke ronde opnieuw
+    ingelogd hoeft te worden.
+    """
+
+    email: str = Field(max_length=200)
+    password: str = Field(max_length=200)
+
+
+class ShelfRowOut(BaseModel):
+    """Eén serie zoals hij op een leeslijst zou staan."""
+
+    series_id: int
+    title: str
+    author: str | None = None
+    status: str
+    shelf: str
+    chapters_read: int = 0
+    chapters_total: int = 0
+    percent: float = 0.0
+    # Het id bij deze tracker, als het bekend is. Zonder id kan er niet
+    # gepusht worden — bij MyAnimeList is dat het gangbare geval voor series
+    # die niet van een bron komen.
+    remote_id: str | None = None
+    pushable: bool = True
+
+
+class ShelvesOut(BaseModel):
+    """Wat er naar een tracker zou gaan, per plank gegroepeerd."""
+
+    provider: str = "goodreads"
+    # Hoeveel er niet gepusht kan worden omdat er geen id bij deze tracker is.
+    without_id: int = 0
+    reading: list[ShelfRowOut] = Field(default_factory=list)
+    to_read: list[ShelfRowOut] = Field(default_factory=list)
+    read: list[ShelfRowOut] = Field(default_factory=list)
+
+
+class GoodreadsStatusOut(BaseModel):
+    # Is er een browser beschikbaar? Chromium wordt pas op verzoek gedownload.
+    browser_ready: bool
+    browser_note: str = ""
+    connected: bool
+    last_sync_at: datetime | None = None
+
+
+class GoodreadsSyncOut(BaseModel):
+    updated: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class MalListItemOut(BaseModel):
+    """Een reeks van je MyAnimeList-lijst."""
+
+    mal_id: str
+    title: str
+    status: str
+    chapters: int = 0
+    chapters_read: int = 0
+    score: int = 0
+    # Heb je deze al in je bibliotheek? Dit is de harde koppeling: de serie
+    # draagt dit MyAnimeList-id.
+    series_id: int | None = None
+    # Een serie die zó heet maar (nog) geen id draagt. Alleen een voorstel —
+    # "Shinya Shokudou" en "Shinya Shokudo" zijn hetzelfde, maar dat blijft
+    # raden, dus de gebruiker beslist.
+    match_series_id: int | None = None
+    match_title: str | None = None
+
+
+class MalLinkIn(BaseModel):
+    """Een serie uit je bibliotheek aan een MyAnimeList-reeks hangen."""
+
+    series_id: int
+    mal_id: str = Field(max_length=20)
+
+
+class MalAuthorizeOut(BaseModel):
+    url: str
+    # Dit adres moet in je MAL-app-registratie staan; de client toont het.
+    redirect_uri: str = ""
+
+
+class MalCallbackIn(BaseModel):
+    code: str = Field(max_length=2000)
+
+
+class PushResultOut(BaseModel):
+    series_id: int
+    title: str
+    pushed: bool
+    dry_run: bool
+    detail: str = ""
+
+
+class PushReportOut(BaseModel):
+    provider: str
+    pushed: int
+    results: list[PushResultOut] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class BubbleOut(BaseModel):
+    """Eén tekstvlak. ``box`` is [x0, y0, x1, y1] genormaliseerd op 0..1 ten
+    opzichte van de hele pagina, zodat dezelfde vertaling over elk
+    beeldprofiel past."""
+
+    box: list[float]
+    source: str
+    translation: str
+    kind: str
+    bold: bool = False
+    italic: bool = False
+
+
+class PageTranslationOut(BaseModel):
+    book_id: int
+    page_index: int
+    target_lang: str
+    provider: str
+    model: str = ""
+    bubbles: list[BubbleOut] = Field(default_factory=list)
+    # In de beeldstanden is de hele pagina hertekend in plaats van dat er
+    # tekstvlakken over het origineel gaan. De lezer moet dat weten: hij toont
+    # dan een andere afbeelding in plaats van een overlay, en er valt niet op
+    # een losse ballon te tikken voor het origineel.
+    mode: str = "text"
+    full_page: bool = False
+
+
+class TranslateModeOut(BaseModel):
+    mode: str
+    # Zonder sleutel kan er niets; de client verbergt de keuze dan.
+    configured: bool
+    # Waar vertalingen bewaard worden, en of dat ook echt lukt. Een vertaling
+    # kost geld; stilzwijgend niet kunnen bewaren is duur.
+    sidecar_dir: str = ""
+    sidecar_writable: bool = True
+    # Ruwe richtprijs per pagina in dollar, zodat de keuze niet blind is.
+    costs: dict[str, float] = Field(default_factory=dict)
+
+
+class TranslateModeIn(BaseModel):
+    mode: str = Field(max_length=20)
+
+
+class TranslatePageIn(BaseModel):
+    """De knop "vertaal deze pagina volledig". Bewust een expliciete keuze per
+    aanroep: deze standen kosten geld, dus ze horen nooit vanzelf te lopen."""
+
+    mode: str = Field(max_length=20)
+    lang: str | None = Field(default=None, max_length=8)
+    force: bool = False
+
+
+class TranslationStatusOut(BaseModel):
+    book_id: int
+    target_lang: str
+    provider: str
+    # Zonder sleutel kan er niets; de client verbergt de knop dan.
+    configured: bool
+    page_count: int | None
+    translated: int
+    queued: int
+
+
+class TranslateBookIn(BaseModel):
+    lang: str | None = Field(default=None, max_length=8)
+    # Vanaf welke pagina; standaard vanaf het begin. De wachtrij werkt in
+    # leesvolgorde, dus dit bepaalt ook wat er als eerste klaar is.
+    from_page: int = Field(default=0, ge=0)
+
+
+class TranslateBookOut(BaseModel):
+    queued: int
+    already_done: int
+
+
+class DownloadIn(BaseModel):
+    """Tijdelijk downloaden is het 'vooruitlezen' uit het datamodel: het
+    bestand krijgt een vervaldatum, de bron-referentie blijft."""
+
+    data_saver: bool = False
+    temporary: bool = False
+    ttl_days: int = Field(default=14, ge=1, le=365)
 
 
 T = TypeVar("T")
