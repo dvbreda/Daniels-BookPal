@@ -14,7 +14,16 @@ from sqlalchemy.orm import Session
 
 from bookpal import db as db_module
 from bookpal.db import current_user
-from bookpal.models import Book, BookKind, File, LibraryRoot, Progress, Series, TrackerAccount
+from bookpal.models import (
+    Book,
+    BookKind,
+    File,
+    LibraryRoot,
+    OriginRegion,
+    Progress,
+    Series,
+    TrackerAccount,
+)
 from bookpal.trackers import goodreads_browser, scheduler
 from bookpal.trackers.base import (
     PushResult,
@@ -1192,3 +1201,110 @@ class TestHowFarYouAre:
         import_progress(session, current_user(session), series, 3)
         entry = entry_for_series(session, current_user(session), series, "mal")
         assert entry.chapters_read == 3
+
+
+class TestNeverGoingBackwards:
+    """Je leest ook buiten BookPal om — op papier, in een app, elders."""
+
+    def _genummerd(self, session: Session, series: Series, nummer: str) -> Book:
+        from bookpal.metadata.filename import normalise_number
+
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+            sort_number=normalise_number(nummer),
+        )
+        session.add(book)
+        session.flush()
+        return book
+
+    def _tracker(self, ver: int):
+        class Nep:
+            provider = "mal"
+
+            def __init__(self) -> None:
+                self.geduwd: list[TrackerEntry] = []
+
+            def read_list(self, status=None, *, limit=100):
+                return [{"mal_id": "2435", "chapters_read": ver}]
+
+            def push(self, entry, *, dry_run=False):
+                self.geduwd.append(entry)
+                return PushResult(entry=entry, pushed=True, dry_run=dry_run)
+
+        return Nep()
+
+    def _serie(self, session: Session, tot: int) -> Series:
+        series = _series(session, tracker_ids={"mal": "2435"})
+        series.origin_region = OriginRegion.JAPAN
+        for nummer in range(1, tot + 1):
+            _finish(session, self._genummerd(session, series, str(nummer)))
+        session.flush()
+        return series
+
+    def test_a_higher_number_at_the_tracker_wins(self, session: Session):
+        """Anders zet één ronde je stand ongemerkt terug."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 22)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        report = push_all(session, tracker, account, current_user(session))
+
+        assert tracker.geduwd == [], "er hoorde niets gepusht te worden"
+        assert report.skipped and "al verder" in report.skipped[0]
+
+    def test_our_own_higher_number_is_pushed(self, session: Session):
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 30)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        push_all(session, tracker, account, current_user(session))
+
+        assert [entry.chapters_read for entry in tracker.geduwd] == [30]
+
+    def test_the_same_number_is_still_pushed(self, session: Session):
+        """Gelijk is geen achteruitgang; status en delen kunnen wél veranderd zijn."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 25)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        push_all(session, tracker, account, current_user(session))
+
+        assert len(tracker.geduwd) == 1
+
+    def test_a_tracker_that_cannot_be_read_still_gets_pushed(self, session: Session):
+        """Goodreads geeft zijn lijst niet terug; dat mag pushen niet blokkeren."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 5)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        class Blind:
+            provider = "mal"
+
+            def __init__(self) -> None:
+                self.geduwd: list[TrackerEntry] = []
+
+            def push(self, entry, *, dry_run=False):
+                self.geduwd.append(entry)
+                return PushResult(entry=entry, pushed=True, dry_run=dry_run)
+
+        tracker = Blind()
+        push_all(session, tracker, account, current_user(session))
+        assert len(tracker.geduwd) == 1

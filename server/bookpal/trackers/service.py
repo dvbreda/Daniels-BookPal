@@ -8,6 +8,7 @@ bron van waarheid.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterable
 
 from sqlalchemy import select
@@ -32,6 +33,8 @@ from bookpal.trackers.base import (
     TrackerError,
 )
 from bookpal.trackers.goodreads import GoodreadsRow
+
+logger = logging.getLogger(__name__)
 
 
 def reading_status_for(session: Session, user: User, series: Series) -> ReadingStatus:
@@ -158,17 +161,59 @@ def entries_for_provider(
     return entries
 
 
+def remote_progress(tracker: Tracker) -> dict[str, int]:
+    """Wat de tracker zelf al denkt, per id.
+
+    Nodig om nooit achteruit te schrijven. Kan een tracker zijn eigen lijst niet
+    teruggeven — Goodreads bijvoorbeeld — dan komt er een lege kaart terug en
+    valt de bewaking weg; dat is beter dan helemaal niet kunnen pushen.
+    """
+    lezer = getattr(tracker, "read_list", None)
+    if lezer is None:
+        return {}
+    try:
+        return {
+            str(item["mal_id"]): int(item.get("chapters_read") or 0) for item in lezer()
+        }
+    except TrackerError as exc:
+        logger.warning("kon de lijst van %s niet lezen: %s", tracker.provider, exc)
+        return {}
+
+
+def _would_go_backwards(entry: TrackerEntry, remote: dict[str, int]) -> bool:
+    """Staat de tracker al verder dan wij?
+
+    Dan is wat daar staat het hoogste, en dat hoort te winnen. Je leest ook
+    buiten BookPal om — op papier, in een app, op een ander apparaat — en zo'n
+    stand terugzetten naar wat wij toevallig lokaal hebben is verlies dat je
+    niet ziet gebeuren.
+    """
+    if entry.remote_id is None:
+        return False
+    daar = remote.get(str(entry.remote_id))
+    return daar is not None and daar > entry.chapters_read
+
+
 def push_series(
-    session: Session, tracker: Tracker, account: TrackerAccount, user: User, series: Series
+    session: Session,
+    tracker: Tracker,
+    account: TrackerAccount,
+    user: User,
+    series: Series,
+    *,
+    remote: dict[str, int] | None = None,
 ) -> PushResult | None:
     """Werk één serie bij — het gerichte pad achter de gedebouncede trigger.
 
-    ``None`` als deze serie geen id voor deze tracker heeft; dan is er niets
-    te doen en is dat geen fout.
+    ``None`` als deze serie geen id voor deze tracker heeft, of als de tracker
+    al verder staat dan wij; in beide gevallen is er niets te doen en is dat
+    geen fout.
     """
     if account.provider not in series.tracker_ids:
         return None
     entry = entry_for_series(session, user, series, account.provider)
+    if _would_go_backwards(entry, remote if remote is not None else remote_progress(tracker)):
+        return None
     return tracker.push(entry, dry_run=account.dry_run)
 
 
@@ -180,7 +225,13 @@ def push_all(session: Session, tracker: Tracker, account: TrackerAccount, user: 
     """
     report = PushReport(provider=account.provider)
     entries = entries_for_provider(session, user, account.provider)
+    # Eén keer ophalen wat daar staat, niet per serie: het is één verzoek voor
+    # de hele lijst.
+    remote = remote_progress(tracker)
     for entry in entries:
+        if _would_go_backwards(entry, remote):
+            report.skipped.append(f"{entry.title}: de tracker staat al verder")
+            continue
         try:
             result = tracker.push(entry, dry_run=account.dry_run)
         except TrackerError as exc:

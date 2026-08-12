@@ -96,6 +96,9 @@ class PushReport:
     provider: str
     results: list[PushResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Overgeslagen omdat de tracker al verder stond. Geen fout: dat is precies
+    # wat er hoort te gebeuren als je elders verder hebt gelezen.
+    skipped: list[str] = field(default_factory=list)
 
     @property
     def pushed(self) -> int:

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
-import type { SearchHit, SubscriptionPolicy, SubscriptionRow } from "../api/types";
+import type { SearchHit, SourceRow, SubscriptionPolicy, SubscriptionRow } from "../api/types";
 
 /**
  * Talen waarin je een reeks kunt volgen.
@@ -74,7 +74,6 @@ export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
     onError: () => setMessage("De ronde is mislukt."),
   });
 
-  const activeSource = sources?.[0];
 
   return (
     <div className={embedded ? "" : "mx-auto max-w-3xl px-4 py-6"}>
@@ -115,7 +114,9 @@ export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
         </div>
       </section>
 
-      {activeSource && <SearchPanel sourceId={activeSource.id} onChanged={refresh} />}
+      {sources && sources.length > 0 && (
+        <SearchPanel sources={sources} onChanged={refresh} />
+      )}
 
       <section className="mt-6 rounded border border-ink-600 p-4">
         <div className="flex items-center justify-between">
@@ -150,7 +151,23 @@ export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
   );
 }
 
-function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () => void }) {
+/**
+ * Zoeken bij je bronnen.
+ *
+ * Met een keuze erbij, inclusief "alle bronnen": dezelfde reeks staat vaak op
+ * meer dan één plek — MangaDex heeft de vertaling, het Internet Archive de hele
+ * delen — en dan wil je dat naast elkaar zien in plaats van twee keer te
+ * zoeken. Elke treffer draagt zelf welke bron hem gaf, want daar hangt het
+ * volgen en het tellen van hoofdstukken aan.
+ */
+function SearchPanel({
+  sources,
+  onChanged,
+}: {
+  sources: SourceRow[];
+  onChanged: () => void;
+}) {
+  const [sourceId, setSourceId] = useState<number | "alle">(sources[0]?.id ?? "alle");
   // Vanaf je MyAnimeList-lijst kom je hier binnen met een titel al ingevuld,
   // zodat "zoek bij bron" één klik is in plaats van overtypen.
   const [params] = useSearchParams();
@@ -163,16 +180,30 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
   // origineel eronder om verder te kunnen lezen (met de vertaalknop erbij).
   const [language, setLanguage] = useState("en");
 
+  const gekozen = sourceId === "alle" ? sources : sources.filter((s) => s.id === sourceId);
+
   const { data, isFetching, error } = useQuery({
     queryKey: ["source-search", sourceId, submitted, language],
     // De taal filtert bij de bron: anders krijg je tien treffers terug waarvan
     // er twee in jouw taal bestaan, en dat zie je pas na het volgen.
-    queryFn: () => api.searchSource(sourceId, submitted, language || undefined),
-    enabled: submitted.length > 0,
+    queryFn: async () => {
+      // Eén bron die hapert mag de rest niet meeslepen: bij "alle bronnen" is
+      // een halve lijst nuttiger dan een foutmelding.
+      const uitkomsten = await Promise.allSettled(
+        gekozen.map((bron) => api.searchSource(bron.id, submitted, language || undefined)),
+      );
+      return uitkomsten.flatMap((uitkomst, index) =>
+        uitkomst.status === "fulfilled"
+          ? uitkomst.value.map((hit) => ({ bron: gekozen[index]!, hit }))
+          : [],
+      );
+    },
+    enabled: submitted.length > 0 && gekozen.length > 0,
   });
 
   const subscribe = useMutation({
-    mutationFn: (hit: SearchHit) => api.subscribe(sourceId, { ref: hit.ref, policy, language }),
+    mutationFn: ({ bron, hit }: { bron: SourceRow; hit: SearchHit }) =>
+      api.subscribe(bron.id, { ref: hit.ref, policy, language }),
     onSuccess: onChanged,
   });
 
@@ -186,6 +217,21 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
           setSubmitted(query.trim());
         }}
       >
+        <select
+          value={String(sourceId)}
+          onChange={(event) =>
+            setSourceId(event.target.value === "alle" ? "alle" : Number(event.target.value))
+          }
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+          title="In welke bron je zoekt"
+        >
+          {sources.length > 1 && <option value="alle">Alle bronnen</option>}
+          {sources.map((bron) => (
+            <option key={bron.id} value={bron.id}>
+              {bron.name}
+            </option>
+          ))}
+        </select>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -229,8 +275,8 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
       )}
 
       <div className="mt-3 space-y-2">
-        {data?.map((hit) => (
-          <div key={hit.ref} className="flex items-start gap-3 rounded bg-ink-800 p-3">
+        {data?.map(({ bron, hit }) => (
+          <div key={`${bron.id}-${hit.ref}`} className="flex items-start gap-3 rounded bg-ink-800 p-3">
             {/* Zonder omslag is een titel alleen niet genoeg om te beoordelen
                 of dit de reeks is die je zoekt. */}
             {hit.cover_url && (
@@ -248,6 +294,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
               <p className="truncate text-slate-100">{hit.title}</p>
               <p className="text-xs text-slate-500">
                 {[
+                  sourceId === "alle" ? bron.name : null,
                   hit.year,
                   hit.status,
                   hit.original_language,
@@ -257,7 +304,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
                   .join(" · ")}
               </p>
               <p className="text-xs text-slate-500">
-                <ChapterCount sourceId={sourceId} refId={hit.ref} language={language || "en"} />
+                <ChapterCount sourceId={bron.id} refId={hit.ref} language={language || "en"} />
                 {hit.url && (
                   <>
                     {" · "}
@@ -292,7 +339,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
                 {/* Nog een taal erbij: die wordt een tweede uitgave van
                     dezelfde serie, niet een tweede serie. */}
                 <button
-                  onClick={() => subscribe.mutate(hit)}
+                  onClick={() => subscribe.mutate({ bron, hit })}
                   disabled={subscribe.isPending}
                   className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-50"
                   title="Volg deze reeks ook in de gekozen taal"
@@ -302,7 +349,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
               </>
             ) : (
               <button
-                onClick={() => subscribe.mutate(hit)}
+                onClick={() => subscribe.mutate({ bron, hit })}
                 disabled={subscribe.isPending}
                 className="rounded bg-accent px-3 py-1.5 text-sm text-ink-900 disabled:opacity-50"
               >
