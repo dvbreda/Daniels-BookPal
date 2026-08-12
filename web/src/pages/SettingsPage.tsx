@@ -1,13 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { ScanResult, TranslateMode } from "../api/types";
 import { KoboPanel } from "../components/KoboPanel";
+import { CollectionsPage } from "./CollectionsPage";
+import { SourcesPage } from "./SourcesPage";
+import { TabsPage } from "./TabsPage";
+import { TrackersPage } from "./TrackersPage";
+
+/** De panelen van de instellingen, in de volgorde waarin je ze nodig hebt. */
+const PANELEN: [PaneelNaam, string][] = [
+  ["algemeen", "Algemeen"],
+  ["tabs", "Tabs"],
+  ["collecties", "Collecties"],
+  ["bronnen", "Bronnen"],
+  ["trackers", "Trackers"],
+];
+
+type PaneelNaam = "algemeen" | "tabs" | "collecties" | "bronnen" | "trackers";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const [params, setParams] = useSearchParams();
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [region, setRegion] = useState("");
@@ -57,6 +73,13 @@ export function SettingsPage() {
     onSuccess: refresh,
   });
 
+  // Welk paneel je ziet, in de URL zodat je er rechtstreeks naartoe kunt
+  // linken en de terugknop werkt zoals je verwacht.
+  const paneel = (params.get("paneel") ?? "algemeen") as PaneelNaam;
+  const kies = (naam: PaneelNaam) => {
+    setParams(naam === "algemeen" ? {} : { paneel: naam });
+  };
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
@@ -64,6 +87,32 @@ export function SettingsPage() {
       </Link>
       <h1 className="mt-4 text-2xl font-semibold text-slate-100">Instellingen</h1>
 
+      {/* Tabs, collecties, bronnen en trackers waren losse pagina's met een
+          klein linkje boven de bibliotheek. Het zijn alle vier instellingen —
+          dingen die je één keer inricht — dus ze horen hier, en niet in de weg
+          te staan op de pagina waar je komt om te lezen. */}
+      <nav className="mt-4 flex flex-wrap gap-2">
+        {PANELEN.map(([naam, label]) => (
+          <button
+            key={naam}
+            onClick={() => kies(naam)}
+            aria-current={paneel === naam ? "page" : undefined}
+            className={`rounded-full px-3 py-1.5 text-sm ${
+              paneel === naam ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {paneel === "tabs" && <TabsPage embedded />}
+      {paneel === "collecties" && <CollectionsPage embedded />}
+      {paneel === "bronnen" && <SourcesPage embedded />}
+      {paneel === "trackers" && <TrackersPage embedded />}
+
+      {paneel !== "algemeen" ? null : (
+        <>
       {health && (
         <p className="mt-2 text-sm text-slate-400">
           {health.series} series · {health.books} boeken · {health.cache_mb} MB beeldcache
@@ -181,6 +230,8 @@ export function SettingsPage() {
           </div>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }

@@ -406,6 +406,35 @@ export interface ReadState {
   affected: number;
 }
 
+export interface HomeItem {
+  book_id: number;
+  series_id: number;
+  series_title: string;
+  title: string;
+  number: string | null;
+  volume: string | null;
+  kind: BookKind;
+  has_file: boolean;
+  extension: string | null;
+  page_count: number | null;
+  percent: number;
+  finished: boolean;
+  /** De pagina waar je gebleven was; de lezer opent hier. */
+  page: number;
+  updated_at: string | null;
+  added_at: string;
+}
+
+export interface HomeRail {
+  key: string;
+  title: string;
+  items: HomeItem[];
+}
+
+export interface Home {
+  rails: HomeRail[];
+}
+
 export interface KoboStatus {
   mount: string | null;
   connected: boolean;

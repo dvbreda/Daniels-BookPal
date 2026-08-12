@@ -42,7 +42,9 @@ const TALEN: [string, string][] = [
  * een bestand bij. Daarom toont de abonnementenlijst "lokaal van totaal" — dat
  * is precies het verschil dat je wilt kunnen zien.
  */
-export function SourcesPage() {
+/** ``embedded`` laat de eigen kop en terugknop weg: in de instellingen staat
+ * die er al, en twee keer "← Bibliotheek" onder elkaar is verwarrend. */
+export function SourcesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { data: sources } = useQuery({ queryKey: ["sources"], queryFn: api.sources });
   const { data: types } = useQuery({ queryKey: ["source-types"], queryFn: api.sourceTypes });
@@ -82,11 +84,15 @@ export function SourcesPage() {
   const activeSource = sources?.[0];
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
-        ← Bibliotheek
-      </Link>
-      <h1 className="mt-4 text-2xl font-semibold text-slate-100">Bronnen</h1>
+    <div className={embedded ? "" : "mx-auto max-w-3xl px-4 py-6"}>
+      {!embedded && (
+        <>
+          <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+            ← Bibliotheek
+          </Link>
+          <h1 className="mt-4 text-2xl font-semibold text-slate-100">Bronnen</h1>
+        </>
+      )}
       <p className="mt-1 text-sm text-slate-500">
         Series volgen bij een externe bron. Hoofdstukken verschijnen eerst als
         verwijzing; wat je ophaalt komt in je bibliotheek te staan en leest verder

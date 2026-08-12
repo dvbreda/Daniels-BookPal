@@ -166,6 +166,40 @@ class MergeCandidateOut(BaseModel):
     books: int
 
 
+class HomeItemOut(BaseModel):
+    """Eén tegel op de startpagina: genoeg om te tonen en te openen."""
+
+    book_id: int
+    series_id: int
+    series_title: str
+    title: str
+    number: str | None = None
+    volume: str | None = None
+    kind: BookKind
+    has_file: bool = True
+    extension: str | None = None
+    page_count: int | None = None
+    percent: float = 0.0
+    finished: bool = False
+    # De pagina waar je gebleven was; de lezer opent hier.
+    page: int = 0
+    updated_at: datetime | None = None
+    added_at: datetime
+
+
+class HomeRailOut(BaseModel):
+    """Eén rij op de startpagina."""
+
+    key: str
+    title: str
+    items: list[HomeItemOut] = Field(default_factory=list)
+
+
+class HomeOut(BaseModel):
+    # Lege rails komen niet mee: een kop zonder inhoud is ruis.
+    rails: list[HomeRailOut] = Field(default_factory=list)
+
+
 class KoboStatusOut(BaseModel):
     """Wat er van de Kobo-koppeling aanstaat, en of het apparaat er is."""
 

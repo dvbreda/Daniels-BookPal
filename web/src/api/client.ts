@@ -8,6 +8,7 @@ import type {
   ImportResult,
   IntakeImportResult,
   IntakeFetch,
+  Home,
   IntakeScan,
   KoboPlanItem,
   KoboStatus,
@@ -282,6 +283,7 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  home: () => request<Home>("/api/home"),
   koboStatus: () => request<KoboStatus>("/api/kobo/status"),
   koboSettings: (body: Partial<Omit<KoboStatus, "connected" | "writable" | "error">>) =>
     request<KoboStatus>("/api/kobo/settings", { method: "PUT", body: JSON.stringify(body) }),

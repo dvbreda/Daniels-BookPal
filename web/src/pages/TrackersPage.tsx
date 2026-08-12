@@ -19,7 +19,9 @@ const MAL_TERUG: Record<string, string> = {
   onbekend: "De terugkeer van MyAnimeList hoorde bij geen enkele koppelpoging; probeer opnieuw.",
 };
 
-export function TrackersPage() {
+/** ``embedded`` laat de eigen kop en terugknop weg: in de instellingen staat
+ * die er al, en twee keer "← Bibliotheek" onder elkaar is verwarrend. */
+export function TrackersPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { data: trackers } = useQuery({ queryKey: ["trackers"], queryFn: api.trackers });
   const [params, setParams] = useSearchParams();
@@ -50,11 +52,15 @@ export function TrackersPage() {
   });
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
-        ← Bibliotheek
-      </Link>
-      <h1 className="mt-4 text-2xl font-semibold text-slate-100">Trackers</h1>
+    <div className={embedded ? "" : "mx-auto max-w-3xl px-4 py-6"}>
+      {!embedded && (
+        <>
+          <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+            ← Bibliotheek
+          </Link>
+          <h1 className="mt-4 text-2xl font-semibold text-slate-100">Trackers</h1>
+        </>
+      )}
       <p className="mt-1 text-sm text-slate-500">
         Leesvoortgang eenrichtingsverkeer naar buiten sturen. BookPal leest hier
         nooit iets terug — bij twijfel push je gewoon opnieuw.
