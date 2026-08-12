@@ -56,6 +56,18 @@ class ProgressIn(BaseModel):
     device: str | None = Field(default=None, max_length=100)
 
 
+class BookAlternativeOut(BaseModel):
+    """Hetzelfde hoofdstuk uit een andere uitgave."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    edition_id: int | None = None
+    edition_name: str | None = None
+    has_file: bool = False
+
+
 class BookOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -81,6 +93,12 @@ class BookOut(BaseModel):
     extension: str | None
     added_at: datetime
     progress: ProgressOut | None = None
+    # Uit welke uitgave dit deel komt, en wat er verder voor deze aflevering
+    # klaarligt. Alleen gevuld in de serie-detailweergave, want daar worden de
+    # uitgaven samengevouwen tot één leeslijst.
+    edition_id: int | None = None
+    edition_name: str | None = None
+    alternatives: list[BookAlternativeOut] = Field(default_factory=list)
 
 
 class SeriesOut(BaseModel):
@@ -112,8 +130,48 @@ class SeriesOut(BaseModel):
     cover_page_index: int | None = None
 
 
+class EditionOut(BaseModel):
+    """Eén uitgave binnen een serie, in voorkeursvolgorde."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    series_id: int
+    name: str
+    rank: int
+    note: str | None = None
+    subscription_id: int | None = None
+    folder_path: str | None = None
+    # Hoeveel delen deze uitgave heeft, en hoeveel daarvan je te zien krijgt.
+    # Het verschil is precies wat een lager gerangschikte uitgave aanvult.
+    book_count: int = 0
+    chosen_count: int = 0
+
+
+class EditionPatch(BaseModel):
+    name: str | None = None
+    note: str | None = None
+
+
+class EditionOrderIn(BaseModel):
+    """De uitgaven in de volgorde die je wilt lezen, eerste keus vooraan."""
+
+    edition_ids: list[int]
+
+
+class BookSlotIn(BaseModel):
+    """Welke boeken dezelfde uitgave van hetzelfde ding zijn.
+
+    Voor titels zonder deelnummer — drie drukken van één boek horen bij elkaar,
+    maar dat is aan de titel niet te zien.
+    """
+
+    book_ids: list[int]
+
+
 class SeriesDetailOut(SeriesOut):
     books: list[BookOut] = Field(default_factory=list)
+    editions: list[EditionOut] = Field(default_factory=list)
 
 
 class OriginPatch(BaseModel):
@@ -519,6 +577,20 @@ class MalLinkIn(BaseModel):
 
     series_id: int
     mal_id: str = Field(max_length=20)
+
+
+class MalImportProgressIn(BaseModel):
+    """Leesstatus van MyAnimeList overnemen.
+
+    Zonder ``series_id`` gaat het over alles wat gekoppeld is.
+    """
+
+    series_id: int | None = None
+
+
+class MalImportProgressOut(BaseModel):
+    marked: int
+    series: list[str] = Field(default_factory=list)
 
 
 class MalAuthorizeOut(BaseModel):

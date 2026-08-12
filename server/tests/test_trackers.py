@@ -336,9 +336,7 @@ class TestMyAnimeListOAuth:
     def test_push_without_a_token_raises(self):
         client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
         tracker = MyAnimeListTracker({}, client=client)
-        entry = TrackerEntry(
-            series_id=1, title="X", remote_id="2435", status=ReadingStatus.READING
-        )
+        entry = TrackerEntry(series_id=1, title="X", remote_id="2435", status=ReadingStatus.READING)
         with pytest.raises(TrackerError):
             tracker.push(entry, dry_run=False)
 
@@ -443,7 +441,8 @@ class TestMalRedirectFlow:
 
     def test_a_returning_user_without_a_code_lands_on_a_message(self, client: TestClient):
         response = client.get(
-            "/api/trackers/mal/redirect", params={"error": "access_denied"},
+            "/api/trackers/mal/redirect",
+            params={"error": "access_denied"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -591,9 +590,7 @@ class TestGoodreadsBrowser:
     ):
         monkeypatch.setattr(goodreads_browser, "log_in", lambda email, password: {"cookies": []})
         monkeypatch.setattr(goodreads_browser, "available", lambda: (True, ""))
-        client.post(
-            "/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"}
-        )
+        client.post("/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"})
         assert client.delete("/api/trackers/goodreads/login").status_code == 204
         assert client.get("/api/trackers/goodreads/status").json()["connected"] is False
 
@@ -627,9 +624,7 @@ class TestShelves:
             )
             session.add(file_row)
             session.flush()
-            book = Book(
-                series_id=series.id, kind=BookKind.COMIC, title="Deel", file_id=file_row.id
-            )
+            book = Book(series_id=series.id, kind=BookKind.COMIC, title="Deel", file_id=file_row.id)
             session.add(book)
             session.flush()
             session.add(
@@ -950,3 +945,150 @@ class TestMalTitleMatching:
             f"/api/trackers/{account_id}/mal/link", json={"series_id": 9999, "mal_id": "1"}
         )
         assert response.status_code == 404
+
+
+class TestMalProgressImport:
+    """Wat je elders al gelezen had hoef je hier niet opnieuw door te klikken."""
+
+    def _account(self, client: TestClient) -> int:
+        response = client.post(
+            "/api/trackers", json={"provider": "mal", "client_id": "cid", "client_secret": "x"}
+        )
+        account_id = int(response.json()["id"])
+        with db_module.session_scope() as session:
+            account = session.get(TrackerAccount, account_id)
+            assert account is not None
+            account.credentials = {**account.credentials, "access_token": "token"}
+        return account_id
+
+    def _stub(self, monkeypatch: pytest.MonkeyPatch, mal_id: str, gelezen: int) -> None:
+        monkeypatch.setattr(
+            MyAnimeListTracker,
+            "read_list",
+            lambda self, status=None, *, limit=100: [
+                {
+                    "mal_id": mal_id,
+                    "title": "One Piece",
+                    "chapters": 0,
+                    "status": "reading",
+                    "chapters_read": gelezen,
+                    "score": 0,
+                }
+            ],
+        )
+
+    def _serie(self, session: Session, nummers: list[float]) -> Series:
+        series = Series(title="One Piece (Official Colored)", sort_title="o")
+        series.tracker_ids = {"mal": "13"}
+        session.add(series)
+        session.flush()
+        for nummer in nummers:
+            session.add(
+                Book(
+                    series_id=series.id,
+                    kind=BookKind.COMIC,
+                    title=f"Hoofdstuk {nummer:g}",
+                    number=f"{nummer:g}",
+                    sort_number=nummer,
+                    page_count=20,
+                )
+            )
+        session.commit()
+        return series
+
+    def test_chapters_up_to_the_tracker_count_are_marked_read(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        series = self._serie(session, [1.0, 2.0, 3.0, 4.0])
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 3)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.status_code == 200
+        assert response.json()["marked"] == 3
+
+        gelezen = {
+            row.book_id: row.finished
+            for row in session.scalars(select(Progress).where(Progress.user_id == 1))
+        }
+        boeken = list(
+            session.scalars(
+                select(Book).where(Book.series_id == series.id).order_by(Book.sort_number)
+            )
+        )
+        assert [gelezen.get(book.id, False) for book in boeken] == [True, True, True, False]
+
+    def test_a_gap_in_the_library_does_not_shift_the_boundary(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Hoofdstuk 2 mis je; dan hoort 4 nog steeds ongelezen te blijven."""
+        series = self._serie(session, [1.0, 3.0, 4.0])
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 3)
+
+        client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+
+        boeken = list(
+            session.scalars(
+                select(Book).where(Book.series_id == series.id).order_by(Book.sort_number)
+            )
+        )
+        gelezen = {
+            row.book_id: row.finished
+            for row in session.scalars(select(Progress).where(Progress.user_id == 1))
+        }
+        assert [gelezen.get(book.id, False) for book in boeken] == [True, True, False]
+
+    def test_your_own_progress_is_never_thrown_away(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Verder dan de tracker? Dan blijft jouw stand staan."""
+        series = self._serie(session, [1.0, 2.0])
+        boek = session.scalars(
+            select(Book).where(Book.series_id == series.id).order_by(Book.sort_number.desc())
+        ).first()
+        assert boek is not None
+        session.add(
+            Progress(user_id=1, book_id=boek.id, percent=100.0, finished=True, device="kobo")
+        )
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 1)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.json()["marked"] == 1
+
+        row = session.scalars(select(Progress).where(Progress.book_id == boek.id)).one()
+        assert row.finished is True
+        assert row.device == "kobo"
+
+    def test_a_series_without_a_link_is_left_alone(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        session.add(Series(title="Oishinbo", sort_title="o"))
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 124)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.status_code == 409
+
+    def test_one_series_can_be_singled_out(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._serie(session, [1.0, 2.0])
+        andere = Series(title="Andere", sort_title="a")
+        andere.tracker_ids = {"mal": "13"}
+        session.add(andere)
+        session.flush()
+        session.add(
+            Book(series_id=andere.id, kind=BookKind.COMIC, title="H1", number="1", sort_number=1.0)
+        )
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 2)
+
+        response = client.post(
+            f"/api/trackers/{account_id}/mal/import-progress", json={"series_id": andere.id}
+        )
+        assert response.json()["marked"] == 1

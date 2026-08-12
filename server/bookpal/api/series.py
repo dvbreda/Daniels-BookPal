@@ -19,20 +19,29 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
+from bookpal.library import editions
 from bookpal.library import merge as merge_module
 from bookpal.models import (
     Book,
     BookKind,
+    Edition,
     File,
     LibraryRoot,
     OriginRegion,
     OriginSource,
+    Progress,
     Series,
     Source,
+    User,
 )
 from bookpal.schemas import (
     AttachCoverIn,
+    BookAlternativeOut,
+    BookSlotIn,
     ContinueOut,
+    EditionOrderIn,
+    EditionOut,
+    EditionPatch,
     ImportSeriesIn,
     ImportSeriesOut,
     MarkReadBeforeOut,
@@ -106,10 +115,25 @@ def list_series(
 
 
 @router.get("/{series_id}", response_model=SeriesDetailOut)
-def get_series(series_id: int, session: Session = Depends(get_session)) -> SeriesDetailOut:
+def get_series(
+    series_id: int,
+    all_editions: bool = Query(
+        default=False,
+        description="Elk bestand apart tonen in plaats van één regel per aflevering.",
+    ),
+    session: Session = Depends(get_session),
+) -> SeriesDetailOut:
+    """Eén serie met zijn leeslijst.
+
+    Standaard samengevouwen tot één regel per aflevering: heb je dezelfde reeks
+    in kleur én zwart-wit, dan is hoofdstuk 5 één ding om te lezen. Met
+    ``all_editions`` krijg je alles los, om te zien wat waar vandaan komt.
+    """
     series = deps.get_series(session, series_id)
     user = current_user(session)
     books = list(series.books)
+    uitgaven = list(series.editions)
+    namen = {edition.id: edition.name for edition in uitgaven}
     progress = deps.progress_for(session, user, [book.id for book in books])
     extensions = {
         row.id: row.extension
@@ -123,11 +147,77 @@ def get_series(series_id: int, session: Session = Depends(get_session)) -> Serie
             series, len(books), sorted({book.kind.value for book in books})
         ).model_dump()
     )
-    detail.books = [
-        deps.to_book_out(book, progress.get(book.id), extensions.get(book.file_id or -1))
-        for book in books
-    ]
+
+    gekozen: list[editions.Slot] = editions.slots(books, uitgaven)
+    if all_editions:
+        regels = [
+            deps.to_book_out(book, progress.get(book.id), extensions.get(book.file_id or -1))
+            for book in books
+        ]
+        for regel in regels:
+            regel.edition_name = namen.get(regel.edition_id or -1)
+    else:
+        regels = []
+        for slot in gekozen:
+            book = slot.chosen
+            regel = deps.to_book_out(
+                book,
+                editions.best_progress(slot, progress),
+                extensions.get(book.file_id or -1),
+            )
+            regel.edition_name = namen.get(book.edition_id or -1)
+            regel.alternatives = [
+                BookAlternativeOut(
+                    id=andere.id,
+                    title=andere.title,
+                    edition_id=andere.edition_id,
+                    edition_name=namen.get(andere.edition_id or -1),
+                    has_file=andere.file_id is not None,
+                )
+                for andere in slot.alternatives
+            ]
+            regels.append(regel)
+
+    detail.books = regels
+    detail.editions = _editions_out(uitgaven, books, gekozen)
     return detail
+
+
+def _editions_out(
+    uitgaven: list[Edition], books: list[Book], gekozen: list[editions.Slot]
+) -> list[EditionOut]:
+    """De uitgaven met hun aandeel in de leeslijst.
+
+    Dat aandeel is het nuttige getal: een uitgave die 0 van de 300 delen levert
+    doet niets, en een die er 40 aanvult vertelt je precies waar je eerste keus
+    ophoudt.
+    """
+    per_uitgave: dict[int, int] = {}
+    for book in books:
+        if book.edition_id is not None:
+            per_uitgave[book.edition_id] = per_uitgave.get(book.edition_id, 0) + 1
+
+    zichtbaar: dict[int, int] = {}
+    for slot in gekozen:
+        key = slot.chosen.edition_id
+        if key is not None:
+            zichtbaar[key] = zichtbaar.get(key, 0) + 1
+
+    return [
+        EditionOut(
+            **{
+                **{
+                    veld: getattr(edition, veld)
+                    for veld in ("id", "series_id", "name", "rank", "note")
+                },
+                "subscription_id": edition.subscription_id,
+                "folder_path": edition.folder_path,
+                "book_count": per_uitgave.get(edition.id, 0),
+                "chosen_count": zichtbaar.get(edition.id, 0),
+            }
+        )
+        for edition in sorted(uitgaven, key=lambda edition: edition.rank)
+    ]
 
 
 @router.patch("/{series_id}/origin", response_model=SeriesOut)
@@ -275,19 +365,48 @@ def _cover_response(rendered: RenderedImage) -> Response:
     )
 
 
-def _readable_books(session: Session, series_id: int) -> list[Book]:
-    """De hoofdstukken in leesvolgorde, alleen wat je daadwerkelijk kunt openen.
+def _readable_slots(session: Session, series_id: int) -> list[editions.Slot]:
+    """De afleveringen in leesvolgorde, alleen wat je kunt openen.
+
+    Eén regel per aflevering, niet per bestand: heb je dezelfde reeks in kleur
+    én zwart-wit, dan is hoofdstuk 5 één ding om te lezen en niet twee. Welke
+    uitgave je krijgt bepaalt de volgorde van de uitgaven.
 
     Hoofdstukken zonder bestand (een abonnement dat nog niet is opgehaald)
-    slaan we over: "lees verder" hoort je niet op een lege pagina te zetten.
+    vallen af: "lees verder" hoort je niet op een lege pagina te zetten.
     """
-    return list(
+    books = list(
         session.scalars(
             select(Book)
-            .where(Book.series_id == series_id, Book.file_id.isnot(None))
+            .where(Book.series_id == series_id)
             .order_by(Book.sort_volume, Book.sort_number)
         )
     )
+    uitgaven = list(session.scalars(select(Edition).where(Edition.series_id == series_id)))
+    return editions.readable(editions.slots(books, uitgaven))
+
+
+def _readable_books(session: Session, series_id: int) -> list[Book]:
+    return [slot.chosen for slot in _readable_slots(session, series_id)]
+
+
+def _slot_progress(
+    session: Session, user: User, slots: list[editions.Slot]
+) -> dict[int, Progress]:
+    """Voortgang per aflevering, op de naam van het deel dat je te zien krijgt.
+
+    Uitgelezen in de gekleurde uitgave telt ook als je nu de zwart-witte leest;
+    anders zou het omzetten van je voorkeur een halve serie weer ongelezen
+    maken.
+    """
+    alle = [book.id for slot in slots for book in slot.books]
+    rows = deps.progress_for(session, user, alle)
+    gevonden: dict[int, Progress] = {}
+    for slot in slots:
+        beste = editions.best_progress(slot, rows)
+        if beste is not None:
+            gevonden[slot.chosen.id] = beste
+    return gevonden
 
 
 @router.get("/{series_id}/continue", response_model=ContinueOut)
@@ -305,12 +424,13 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
     pagina. Is het uit, dan het eerstvolgende hoofdstuk dat nog niet uit is.
     """
     deps.get_series(session, series_id)
-    books = _readable_books(session, series_id)
-    if not books:
+    slots = _readable_slots(session, series_id)
+    if not slots:
         raise HTTPException(status_code=404, detail="deze serie heeft nog niets te lezen")
 
     user = current_user(session)
-    progress = deps.progress_for(session, user, [book.id for book in books])
+    books = [slot.chosen for slot in slots]
+    progress = _slot_progress(session, user, slots)
 
     anchor_index: int | None = None
     for index, book in enumerate(books):
@@ -370,8 +490,9 @@ def mark_read_before(
         raise HTTPException(status_code=400, detail="dit hoofdstuk hoort niet bij deze serie")
 
     user = current_user(session)
-    books = _readable_books(session, series_id)
-    progress = deps.progress_for(session, user, [book.id for book in books])
+    slots = _readable_slots(session, series_id)
+    books = [slot.chosen for slot in slots]
+    progress = _slot_progress(session, user, slots)
 
     marked = 0
     for book in books:
@@ -481,4 +602,117 @@ def merge_series(
     except merge_module.MergeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return get_series(series_id, session)
+    return get_series(series_id, False, session)
+
+
+@router.get("/{series_id}/editions", response_model=list[EditionOut])
+def list_editions(series_id: int, session: Session = Depends(get_session)) -> list[EditionOut]:
+    """De uitgaven van deze serie, eerste keus vooraan."""
+    series = deps.get_series(series_id=series_id, session=session)
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    return _editions_out(uitgaven, books, editions.slots(books, uitgaven))
+
+
+@router.post("/{series_id}/editions/order", response_model=list[EditionOut])
+def order_editions(
+    series_id: int, payload: EditionOrderIn, session: Session = Depends(get_session)
+) -> list[EditionOut]:
+    """Bepaal welke uitgave wint waar er meerdere hetzelfde deel hebben.
+
+    Wat je niet noemt schuift er achteraan; zo hoeft een client die één uitgave
+    naar boven sleept niet de hele lijst mee te sturen.
+    """
+    series = deps.get_series(series_id=series_id, session=session)
+    per_id = {edition.id: edition for edition in series.editions}
+    onbekend = [edition_id for edition_id in payload.edition_ids if edition_id not in per_id]
+    if onbekend:
+        raise HTTPException(
+            status_code=400, detail="die uitgave hoort niet bij deze serie"
+        )
+
+    rang = 0
+    for edition_id in payload.edition_ids:
+        per_id.pop(edition_id).rank = rang
+        rang += 1
+    for edition in sorted(per_id.values(), key=lambda edition: edition.rank):
+        edition.rank = rang
+        rang += 1
+    session.commit()
+
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    return _editions_out(uitgaven, books, editions.slots(books, uitgaven))
+
+
+@router.patch("/{series_id}/editions/{edition_id}", response_model=EditionOut)
+def rename_edition(
+    series_id: int,
+    edition_id: int,
+    payload: EditionPatch,
+    session: Session = Depends(get_session),
+) -> EditionOut:
+    """Een uitgave een naam geven die jou iets zegt: "kleur", "de mooie scan"."""
+    edition = session.get(Edition, edition_id)
+    if edition is None or edition.series_id != series_id:
+        raise HTTPException(status_code=404, detail="uitgave niet gevonden")
+    if payload.name is not None:
+        naam = payload.name.strip()
+        if not naam:
+            raise HTTPException(status_code=400, detail="een uitgave heeft een naam nodig")
+        edition.name = naam
+    if payload.note is not None:
+        edition.note = payload.note.strip() or None
+    session.commit()
+
+    series = deps.get_series(series_id=series_id, session=session)
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    for regel in _editions_out(uitgaven, books, editions.slots(books, uitgaven)):
+        if regel.id == edition.id:
+            return regel
+    raise HTTPException(status_code=404, detail="uitgave niet gevonden")
+
+
+@router.post("/{series_id}/slots", response_model=SeriesDetailOut)
+def bind_slot(
+    series_id: int, payload: BookSlotIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Zeg dat deze boeken dezelfde uitgave van hetzelfde zijn.
+
+    Bij hoofdstukken regelt het nummer dat vanzelf. Bij losse boeken niet: drie
+    drukken van hetzelfde boek heten net iets anders, en alleen jij weet dat het
+    er één is. Daarna gelden ze als één regel in je lijst, en telt gelezen in de
+    ene ook voor de andere.
+    """
+    deps.get_series(series_id=series_id, session=session)
+    if len(payload.book_ids) < 2:
+        raise HTTPException(status_code=400, detail="hier horen minstens twee boeken bij")
+
+    books = list(session.scalars(select(Book).where(Book.id.in_(payload.book_ids))))
+    if len(books) != len(set(payload.book_ids)):
+        raise HTTPException(status_code=404, detail="niet elk boek bestaat")
+    if any(book.series_id != series_id for book in books):
+        raise HTTPException(status_code=400, detail="deze boeken staan niet in dezelfde serie")
+
+    # De eerste bepaalt het slot: bestaat die al als groep, dan voegen de rest
+    # zich daarbij in plaats van dat er een nieuwe groep ontstaat.
+    sleutel = books[0].slot or editions.slot_of(books[0])
+    for book in books:
+        book.slot = sleutel
+    session.commit()
+    return get_series(series_id, False, session)
+
+
+@router.post("/{series_id}/slots/unbind", response_model=SeriesDetailOut)
+def unbind_slot(
+    series_id: int, payload: BookSlotIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Haal boeken weer uit elkaar; ze krijgen hun eigen regel terug."""
+    deps.get_series(series_id=series_id, session=session)
+    books = list(session.scalars(select(Book).where(Book.id.in_(payload.book_ids))))
+    for book in books:
+        if book.series_id == series_id:
+            book.slot = None
+    session.commit()
+    return get_series(series_id, False, session)

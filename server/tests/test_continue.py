@@ -73,9 +73,7 @@ class TestContinue:
         assert body["page"] == 0
         assert body["resuming"] is False
 
-    def test_a_half_read_chapter_resumes_on_its_page(
-        self, client: TestClient, session: Session
-    ):
+    def test_a_half_read_chapter_resumes_on_its_page(self, client: TestClient, session: Session):
         series = _series_with_chapters(session, 3)
         books = _books(session, series)
         _progress(session, books[0], 100.0, True)
@@ -87,9 +85,7 @@ class TestContinue:
         assert body["page"] == 7
         assert body["resuming"] is True
 
-    def test_after_finishing_one_it_moves_to_the_next(
-        self, client: TestClient, session: Session
-    ):
+    def test_after_finishing_one_it_moves_to_the_next(self, client: TestClient, session: Session):
         series = _series_with_chapters(session, 3)
         books = _books(session, series)
         _progress(session, books[0], 100.0, True)
@@ -116,15 +112,13 @@ class TestContinue:
         body = client.get(f"/api/series/{series.id}/continue").json()
         assert body["book_id"] == books[2].id
 
-    def test_an_old_half_open_chapter_does_not_trap_you(
-        self, client: TestClient, session: Session
-    ):
+    def test_an_old_half_open_chapter_does_not_trap_you(self, client: TestClient, session: Session):
         """Het geval uit de praktijk: 7% op een hoofdstuk uit deel 1 dat ooit
         even openging, terwijl je allang in deel 3 zit. Dat oude restje hoorde
         je niet terug te trekken."""
         series = _series_with_chapters(session, 6)
         books = _books(session, series)
-        _progress(session, books[0], 7.0, False, page=1)   # ooit even opengeslagen
+        _progress(session, books[0], 7.0, False, page=1)  # ooit even opengeslagen
         _progress(session, books[3], 89.0, False, page=18)  # waar je echt bent
         session.commit()
 
@@ -182,9 +176,7 @@ class TestContinue:
         body = client.get(f"/api/series/{series.id}/continue").json()
         assert body["book_id"] == readable.id
 
-    def test_it_counts_what_is_still_unread_before_it(
-        self, client: TestClient, session: Session
-    ):
+    def test_it_counts_what_is_still_unread_before_it(self, client: TestClient, session: Session):
         series = _series_with_chapters(session, 4)
         books = _books(session, series)
         _progress(session, books[0], 100.0, True)
@@ -243,9 +235,7 @@ class TestMarkReadBefore:
         body = client.post(f"/api/series/{series.id}/mark-read-before/{books[0].id}").json()
         assert body["marked"] == 0
 
-    def test_a_chapter_from_another_series_is_refused(
-        self, client: TestClient, session: Session
-    ):
+    def test_a_chapter_from_another_series_is_refused(self, client: TestClient, session: Session):
         first = _series_with_chapters(session, 2, naam="Eerste")
         second = _series_with_chapters(session, 2, naam="Tweede")
         session.commit()
@@ -283,9 +273,7 @@ class TestNextChapter:
 
         assert client.get(f"/api/books/{books[-1].id}/next").status_code == 404
 
-    def test_a_chapter_still_to_download_is_offered_too(
-        self, client: TestClient, session: Session
-    ):
+    def test_a_chapter_still_to_download_is_offered_too(self, client: TestClient, session: Session):
         """Juist als je er een uit hebt wil je weten dat het volgende bestaat,
         ook al staat het nog niet op schijf."""
         series = _series_with_chapters(session, 1, naam="Ophalen")
@@ -306,3 +294,75 @@ class TestNextChapter:
         body = client.get(f"/api/books/{books[0].id}/next").json()
         assert body["title"] == "Nog op te halen"
         assert body["has_file"] is False
+
+
+class TestOpeningIsNotReading:
+    """Een hoofdstuk aanklikken en meteen wegklikken is geen voortgang."""
+
+    def test_the_first_page_does_not_create_progress(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 2)
+        session.commit()
+        boek = _books(session, series)[0]
+
+        response = client.put(
+            "/api/progress",
+            json={"book_id": boek.id, "position": {"page": 0}, "percent": 0.0, "device": "web"},
+        )
+        assert response.status_code == 200
+
+        session.expire_all()
+        assert session.query(Progress).count() == 0
+
+    def test_turning_one_page_does_create_progress(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 2)
+        session.commit()
+        boek = _books(session, series)[0]
+
+        client.put(
+            "/api/progress",
+            json={"book_id": boek.id, "position": {"page": 1}, "percent": 5.0, "device": "web"},
+        )
+
+        session.expire_all()
+        assert session.query(Progress).count() == 1
+
+    def test_going_back_to_page_one_keeps_what_you_had(self, client: TestClient, session: Session):
+        """Terugbladeren in een boek waar je al in zat is wél nieuws."""
+        series = _series_with_chapters(session, 2)
+        session.commit()
+        boek = _books(session, series)[0]
+        _progress(session, boek, 60.0, False, page=12)
+        session.commit()
+
+        client.put(
+            "/api/progress",
+            json={"book_id": boek.id, "position": {"page": 0}, "percent": 0.0, "device": "web"},
+        )
+
+        session.expire_all()
+        row = session.query(Progress).one()
+        assert row.position == {"page": 0}
+
+    def test_an_opened_chapter_is_not_where_you_continue(
+        self, client: TestClient, session: Session
+    ):
+        """Zonder deze regel wees verder-lezen naar het even opengeslagen deel."""
+        series = _series_with_chapters(session, 3)
+        session.commit()
+        boeken = _books(session, series)
+        _progress(session, boeken[0], 100.0, True, page=19)
+        session.commit()
+
+        client.put(
+            "/api/progress",
+            json={
+                "book_id": boeken[2].id,
+                "position": {"page": 0},
+                "percent": 0.0,
+                "device": "web",
+            },
+        )
+
+        verder = client.get(f"/api/series/{series.id}/continue").json()
+        assert verder["book_id"] == boeken[1].id
+        assert verder["resuming"] is False

@@ -40,6 +40,11 @@ export interface Book {
   extension: string | null;
   added_at: string;
   progress: Progress | null;
+  /** Uit welke uitgave dit deel komt; alleen gevuld in de seriepagina. */
+  edition_id: number | null;
+  edition_name: string | null;
+  /** Hetzelfde hoofdstuk uit een andere uitgave. */
+  alternatives: BookAlternative[];
 }
 
 export interface TocEntry {
@@ -78,7 +83,9 @@ export interface Series {
 }
 
 export interface SeriesDetail extends Series {
+  /** Eén regel per aflevering, tenzij je om alle uitgaven vraagt. */
   books: Book[];
+  editions: Edition[];
 }
 
 export interface WikiHit {
@@ -356,6 +363,36 @@ export interface MergeSuggestion {
   absorb_id: number;
   absorb_title: string;
   absorb_books: number;
+}
+
+export interface BookAlternative {
+  id: number;
+  title: string;
+  edition_id: number | null;
+  edition_name: string | null;
+  has_file: boolean;
+}
+
+/**
+ * Eén uitgave binnen een serie. `book_count` is wat deze uitgave heeft,
+ * `chosen_count` wat je er daadwerkelijk van te zien krijgt — het verschil is
+ * wat een hoger gerangschikte uitgave al levert.
+ */
+export interface Edition {
+  id: number;
+  series_id: number;
+  name: string;
+  rank: number;
+  note: string | null;
+  subscription_id: number | null;
+  folder_path: string | null;
+  book_count: number;
+  chosen_count: number;
+}
+
+export interface MalImportProgress {
+  marked: number;
+  series: string[];
 }
 
 export interface MalListItem {

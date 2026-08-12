@@ -13,7 +13,16 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bookpal.models import Book, BookKind, OriginRegion, Progress, Series, TrackerAccount, User
+from bookpal.models import (
+    Book,
+    BookKind,
+    OriginRegion,
+    Progress,
+    Series,
+    TrackerAccount,
+    User,
+    utcnow,
+)
 from bookpal.trackers.base import (
     PushReport,
     PushResult,
@@ -211,3 +220,54 @@ def suits_provider(session: Session, series: Series, provider: str) -> bool:
     if kinds and not kinds <= {BookKind.COMIC}:
         return False
     return series.origin_region not in _MAL_SKIP_REGIONS
+
+
+def import_progress(
+    session: Session, user: User, series: Series, chapters_read: int
+) -> tuple[int, int]:
+    """Markeer wat je bij de tracker al gelezen had als gelezen.
+
+    Op hoofdstuk**nummer** en niet op positie: als je bibliotheek gaten heeft
+    (een ontbrekend hoofdstuk, een extra omnibus) zou tellen de grens
+    verschuiven en zou je net te veel of te weinig als gelezen wegzetten.
+
+    Wat al uitgelezen is blijft ongemoeid, en er wordt nooit iets terug op
+    'ongelezen' gezet — dit vult aan, het overschrijft niet.
+    """
+    if chapters_read <= 0:
+        return 0, 0
+
+    books = list(
+        session.scalars(
+            select(Book)
+            .where(Book.series_id == series.id, Book.sort_number <= float(chapters_read))
+            .order_by(Book.sort_volume, Book.sort_number)
+        )
+    )
+    bestaand = {
+        row.book_id: row
+        for row in session.scalars(
+            select(Progress).where(
+                Progress.user_id == user.id,
+                Progress.book_id.in_([book.id for book in books]),
+            )
+        )
+    }
+
+    gemarkeerd = 0
+    for book in books:
+        row = bestaand.get(book.id)
+        if row is not None and row.finished:
+            continue
+        if row is None:
+            row = Progress(user_id=user.id, book_id=book.id)
+            session.add(row)
+        row.percent = 100.0
+        row.finished = True
+        row.position = {"page": max(0, (book.page_count or 1) - 1)}
+        row.device = "mal"
+        row.updated_at = utcnow()
+        gemarkeerd += 1
+
+    session.commit()
+    return gemarkeerd, len(books)

@@ -545,12 +545,30 @@ function MalListPanel({
 
   const bron = sources?.[0];
 
+  // Welke regel zijn eigen koppelpaneel open heeft staan.
+  const [kiezen, setKiezen] = useState<string | null>(null);
+
+  const overnemen = useMutation({
+    mutationFn: (seriesId: number) => api.malImportProgress(accountId, seriesId),
+    onSuccess: (result) => {
+      void queryClient.invalidateQueries({ queryKey: ["series"] });
+      setMessage(
+        result.marked > 0
+          ? `${result.marked} hoofdstukken als gelezen gezet: ${result.series.join(", ")}.`
+          : "Je stond hier al even ver of verder.",
+      );
+    },
+    onError: (error: unknown) =>
+      setMessage(error instanceof ApiError ? error.message : "Overnemen mislukt."),
+  });
+
   const link = useMutation({
     mutationFn: ({ seriesId, malId }: { seriesId: number; malId: string }) =>
       api.malLink(accountId, seriesId, malId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["mal-list"] });
       void queryClient.invalidateQueries({ queryKey: ["shelves"] });
+      setKiezen(null);
       setMessage("Gekoppeld; je voortgang loopt nu mee.");
     },
   });
@@ -602,12 +620,24 @@ function MalListPanel({
               </span>
             )}
             {item.series_id ? (
-              <button
-                onClick={() => navigate(`/serie/${item.series_id}`)}
-                className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
-              >
-                In je bibliotheek
-              </button>
+              <>
+                {item.chapters_read > 0 && (
+                  <button
+                    onClick={() => overnemen.mutate(item.series_id!)}
+                    disabled={overnemen.isPending}
+                    className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300 disabled:opacity-50"
+                    title="Zet hier de eerste hoofdstukken als gelezen, tot waar je bij MyAnimeList stond"
+                  >
+                    Neem {item.chapters_read} over
+                  </button>
+                )}
+                <button
+                  onClick={() => navigate(`/serie/${item.series_id}`)}
+                  className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
+                >
+                  In je bibliotheek
+                </button>
+              </>
             ) : item.match_series_id ? (
               <button
                 onClick={() =>
@@ -620,18 +650,35 @@ function MalListPanel({
                 Koppelen aan {item.match_title}
               </button>
             ) : (
-              <button
-                onClick={() => {
-                  if (!bron) {
-                    setMessage("Voeg eerst een bron toe onder Bronnen.");
-                    return;
-                  }
-                  navigate(`/bronnen?zoek=${encodeURIComponent(item.title)}`);
-                }}
-                className="rounded bg-accent px-2 py-1 text-xs text-ink-900"
-              >
-                Zoek bij bron
-              </button>
+              <>
+                {/* Een titel als "One Piece (Official Colored)" haalt de
+                    automatische vergelijking nooit; dan wijs je hem zelf aan. */}
+                <button
+                  onClick={() => setKiezen(kiezen === item.mal_id ? null : item.mal_id)}
+                  className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
+                >
+                  Zelf koppelen
+                </button>
+                <button
+                  onClick={() => {
+                    if (!bron) {
+                      setMessage("Voeg eerst een bron toe onder Bronnen.");
+                      return;
+                    }
+                    navigate(`/bronnen?zoek=${encodeURIComponent(item.title)}`);
+                  }}
+                  className="rounded bg-accent px-2 py-1 text-xs text-ink-900"
+                >
+                  Zoek bij bron
+                </button>
+              </>
+            )}
+            {kiezen === item.mal_id && (
+              <SeriesKiezer
+                zoek={item.title}
+                pending={link.isPending}
+                onKies={(seriesId) => link.mutate({ seriesId, malId: item.mal_id })}
+              />
             )}
           </li>
         ))}
@@ -640,5 +687,56 @@ function MalListPanel({
         )}
       </ul>
     </section>
+  );
+}
+
+/**
+ * Zelf een serie in je bibliotheek aanwijzen.
+ *
+ * De automatische vergelijking kijkt naar de titel, en die loopt stuk zodra
+ * jouw map een editie noemt: "One Piece (Official Colored)" is voor een
+ * computer iets anders dan "One Piece". Beginnen doen we met de titel van de
+ * tracker als zoekterm, want daar zit het gemeenschappelijke deel in.
+ */
+function SeriesKiezer({
+  zoek,
+  pending,
+  onKies,
+}: {
+  zoek: string;
+  pending: boolean;
+  onKies: (seriesId: number) => void;
+}) {
+  const [term, setTerm] = useState(zoek);
+  const { data } = useQuery({
+    queryKey: ["series", "kiezer", term],
+    queryFn: () => api.series({ search: term, limit: 8 }),
+  });
+
+  return (
+    <div className="mt-2 w-full rounded bg-ink-900 p-2">
+      <input
+        value={term}
+        onChange={(event) => setTerm(event.target.value)}
+        placeholder="Zoek in je bibliotheek"
+        className="w-full rounded bg-ink-700 px-2 py-1 text-xs text-slate-100 placeholder:text-slate-500"
+      />
+      <ul className="mt-1 space-y-1">
+        {(data?.items ?? []).map((series) => (
+          <li key={series.id}>
+            <button
+              onClick={() => onKies(series.id)}
+              disabled={pending}
+              className="w-full truncate rounded px-2 py-1 text-left text-xs text-slate-300 hover:bg-ink-700 disabled:opacity-50"
+            >
+              {series.title}
+            </button>
+          </li>
+        ))}
+        {data && data.items.length === 0 && (
+          <li className="px-2 py-1 text-xs text-slate-500">Niets gevonden.</li>
+        )}
+      </ul>
+    </div>
   );
 }

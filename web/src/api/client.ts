@@ -12,6 +12,8 @@ import type {
   GoodreadsSyncResult,
   LibraryRoot,
   MalAuthorize,
+  Edition,
+  MalImportProgress,
   MalListItem,
   MergeSuggestion,
   NextChapter,
@@ -102,7 +104,28 @@ export const api = {
 
   series: (query: SeriesQuery = {}) =>
     request<Paginated<Series>>(`/api/series${queryString({ ...query })}`),
-  seriesDetail: (id: number) => request<SeriesDetail>(`/api/series/${id}`),
+  seriesDetail: (id: number, allEditions = false) =>
+    request<SeriesDetail>(`/api/series/${id}${queryString({ all_editions: allEditions || undefined })}`),
+  orderEditions: (seriesId: number, editionIds: number[]) =>
+    request<Edition[]>(`/api/series/${seriesId}/editions/order`, {
+      method: "POST",
+      body: JSON.stringify({ edition_ids: editionIds }),
+    }),
+  renameEdition: (seriesId: number, editionId: number, body: { name?: string; note?: string }) =>
+    request<Edition>(`/api/series/${seriesId}/editions/${editionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  bindSlot: (seriesId: number, bookIds: number[]) =>
+    request<SeriesDetail>(`/api/series/${seriesId}/slots`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
+  unbindSlot: (seriesId: number, bookIds: number[]) =>
+    request<SeriesDetail>(`/api/series/${seriesId}/slots/unbind`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
   importSeries: (id: number, body: { root_id: number; download_missing?: boolean }) =>
     request<ImportResult>(`/api/series/${id}/import`, {
       method: "POST",
@@ -250,6 +273,11 @@ export const api = {
     request<MalListItem>(`/api/trackers/${accountId}/mal/link`, {
       method: "POST",
       body: JSON.stringify({ series_id: seriesId, mal_id: malId }),
+    }),
+  malImportProgress: (accountId: number, seriesId?: number) =>
+    request<MalImportProgress>(`/api/trackers/${accountId}/mal/import-progress`, {
+      method: "POST",
+      body: JSON.stringify({ series_id: seriesId ?? null }),
     }),
   malList: (accountId: number, status?: string) =>
     request<MalListItem[]>(`/api/trackers/${accountId}/mal/list${queryString({ status })}`),

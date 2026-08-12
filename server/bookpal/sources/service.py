@@ -19,10 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
+from bookpal.library import editions
 from bookpal.metadata.origin import Origin, from_online, resolve
 from bookpal.models import (
     Book,
     BookKind,
+    Edition,
     File,
     LibraryRoot,
     Progress,
@@ -208,10 +210,14 @@ def sync_chapters(
     blijft staan. Anders zou een verandering in de bron — of het omzetten van
     je voorkeur — zomaar iets weghalen wat je al had.
     """
+    edition: Edition | None = None
     if subscription is not None:
         # Vastleggen wat er te kiezen viel, vóór het ontdubbelen: daarna
         # bestaan de afgevallen hoofdstukken niet meer.
         subscription.available_groups = group_summary(chapters)
+        # Alles van deze bron hoort bij één uitgave. Zo blijft "de gekleurde
+        # versie" bij elkaar als er straks een tweede bron bij komt.
+        edition = editions.for_subscription(session, series, subscription, name=series.title)
 
     preferred = subscription.preferred_group_id if subscription is not None else None
     chapters = pick_best_chapters(chapters, preferred)
@@ -242,6 +248,9 @@ def sync_chapters(
             # deze kolommen weten nog niet wie ze vertaald heeft.
             known.source_group_id = known.source_group_id or chapter.group_id
             known.source_group_name = known.source_group_name or chapter.group_name
+            # Hoofdstukken van vóór dit model horen alsnog bij hun uitgave.
+            if known.edition_id is None and edition is not None:
+                known.edition_id = edition.id
             continue
         session.add(
             Book(
@@ -260,6 +269,7 @@ def sync_chapters(
                 source_ref=chapter.ref,
                 source_group_id=chapter.group_id,
                 source_group_name=chapter.group_name,
+                edition_id=edition.id if edition is not None else None,
             )
         )
         added += 1

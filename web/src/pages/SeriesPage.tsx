@@ -5,6 +5,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { ApiError, api, imageUrl } from "../api/client";
 import type { Book, OriginRegion, SeriesDetail } from "../api/types";
 import { CoverPicker } from "../components/CoverPicker";
+import { EditionsPanel } from "../components/EditionsPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
 import { useStoredState } from "../lib/useStoredState";
@@ -250,6 +251,7 @@ function SeriesSettings({
             </div>
           </section>
 
+          <EditionsPanel seriesId={seriesId} editions={series.editions} />
           <CoverPicker series={series} />
           <TranslationPicker seriesId={seriesId} books={series.books} />
           {series.from_source && <ImportPanel series={series} seriesId={seriesId} />}
@@ -261,6 +263,7 @@ function SeriesSettings({
 
 function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   const queryClient = useQueryClient();
+  const [toonVersies, setVersies] = useState(false);
   const percent = book.progress?.percent ?? 0;
   // Alles leest nu in de app: strips en pdf als beeld van de server, epub met
   // foliate-js in de browser (M6).
@@ -315,12 +318,55 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             {book.source_group_name}
           </p>
         )}
+        {/* Alleen tonen als er iets te kiezen viel: bij één uitgave zegt de
+            naam niets, en dan is het ruis onder elk deel. */}
+        {book.edition_name && book.alternatives.length > 0 && (
+          <p className="truncate text-xs text-slate-600">{book.edition_name}</p>
+        )}
       </div>
     </>
   );
 
   const className =
     "block overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent";
+
+  // Andere versies van precies dit deel. Buiten de kaartlink gehouden: een link
+  // in een link is geen geldige HTML, en een klik zou naar de verkeerde versie
+  // gaan.
+  const versies = book.alternatives.length > 0 && (
+    <div className="px-2 pb-2">
+      <button
+        onClick={() => setVersies(!toonVersies)}
+        aria-expanded={toonVersies}
+        className="w-full rounded bg-ink-700 px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+      >
+        {book.alternatives.length + 1} versies
+      </button>
+      {toonVersies && (
+        <ul className="mt-1 space-y-1">
+          {book.alternatives.map((andere) => (
+            <li key={andere.id}>
+              {andere.has_file ? (
+                <Link
+                  to={`/lezen/${andere.id}`}
+                  className="block truncate rounded px-2 py-1 text-xs text-slate-300 hover:bg-ink-700"
+                >
+                  {andere.edition_name ?? andere.title}
+                </Link>
+              ) : (
+                <span
+                  className="block truncate px-2 py-1 text-xs text-slate-600"
+                  title="Nog niet opgehaald"
+                >
+                  {andere.edition_name ?? andere.title}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
 
   // Een hoofdstuk van een bron dat nog niet is opgehaald heeft niets om naartoe
   // te linken; daar hoort een knop, geen dode link.
@@ -342,14 +388,18 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             </p>
           )}
         </div>
+        {versies}
       </div>
     );
   }
 
   return (
-    <Link to={target} className={className}>
-      {inner}
-    </Link>
+    <div className={className}>
+      <Link to={target} className="block">
+        {inner}
+      </Link>
+      {versies}
+    </div>
   );
 }
 

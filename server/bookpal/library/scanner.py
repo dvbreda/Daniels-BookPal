@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from bookpal.formats import FORMAT_KINDS, SUPPORTED_EXTENSIONS, detect_format, open_book
 from bookpal.formats.base import BookMetadata
+from bookpal.library import editions
 from bookpal.metadata import (
     from_embedded,
     from_root_default,
@@ -223,6 +224,11 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
     # Manga leest van rechts naar links; het ComicInfo-veld is de enige plek
     # waar dat expliciet in staat.
     book.right_to_left = meta.right_to_left or series.origin_region is OriginRegion.JAPAN
+    # Je eigen bestanden vormen samen één uitgave. Dat is pas zichtbaar zodra
+    # er een tweede bij komt — een online bron of een tweede druk — maar het
+    # moet er wel vanaf het begin staan, anders valt er later niets te ordenen.
+    if book.edition_id is None:
+        book.edition_id = editions.for_local_files(session, series).id
     session.flush()
 
 

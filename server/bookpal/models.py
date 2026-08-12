@@ -214,8 +214,49 @@ class Series(Base):
         cascade="all, delete-orphan",
         order_by="Book.sort_volume, Book.sort_number",
     )
+    editions: Mapped[list[Edition]] = relationship(
+        back_populates="series",
+        cascade="all, delete-orphan",
+        order_by="Edition.rank",
+    )
 
     __table_args__ = (UniqueConstraint("library_root_id", "title", name="uq_series_root_title"),)
+
+
+class Edition(Base):
+    """Eén uitgave binnen een serie: dezelfde reeks, andere herkomst.
+
+    Van één serie bestaan vaak meerdere versies naast elkaar: de gekleurde
+    uitgave online, de zwart-witte met meer delen, je eigen bestanden op de
+    NAS, en van een boek soms gewoon drie drukken. Dat zijn geen aparte series
+    — je wilt ze in één lijst lezen, met een voorkeur die zegt welke versie
+    wint als beide een deel hebben.
+
+    ``rank`` legt die voorkeur vast: 0 is eerste keus. Een lager gerangschikte
+    uitgave verdwijnt daarmee niet, hij vult aan waar je eerste keus niets
+    heeft — precies wat je nodig hebt bij een gekleurde uitgave die achterloopt
+    op het zwart-witte origineel.
+    """
+
+    __tablename__ = "edition"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[int] = mapped_column(ForeignKey("series.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Waar deze uitgave vandaan komt — precies één van beide is gevuld.
+    subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subscription.id", ondelete="SET NULL"), default=None
+    )
+    folder_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+
+    # Vrij label voor jezelf: "kleur", "zwart-wit", "hardcover".
+    note: Mapped[str | None] = mapped_column(String(100), default=None)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    series: Mapped[Series] = relationship(back_populates="editions")
 
 
 class Book(Base):
@@ -244,6 +285,17 @@ class Book(Base):
     # dan allemaal naast elkaar te staan in scan-volgorde in plaats van
     # leesvolgorde. Eerst op deel, dan pas op hoofdstuk.
     sort_volume: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Uit welke uitgave dit deel komt. Leeg voor alles wat er stond voordat een
+    # serie meerdere uitgaven kon hebben; dat telt als de eerste keus.
+    edition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("edition.id", ondelete="SET NULL"), default=None, index=True
+    )
+    # Welke aflevering dit ís, los van de uitgave. Normaal afgeleid van het
+    # nummer, zodat hoofdstuk 5 uit de gekleurde en de zwart-witte uitgave
+    # hetzelfde vakje vullen. Handmatig te zetten voor boeken zonder nummer:
+    # drie drukken van één boek horen ook bij elkaar.
+    slot: Mapped[str | None] = mapped_column(String(200), default=None)
 
     page_count: Mapped[int | None] = mapped_column(Integer, default=None)
     right_to_left: Mapped[bool] = mapped_column(Boolean, default=False)

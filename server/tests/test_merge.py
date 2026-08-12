@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.library.merge import MergeError, merge, suggest
-from bookpal.models import Book, BookKind, Series, Source, Subscription
+from bookpal.models import Book, BookKind, Edition, Series, Source, Subscription
 
 
 def _series(session: Session, titel: str, **velden) -> Series:
@@ -101,8 +101,13 @@ class TestMerge:
         assert blijver.source_id == bron.id
         assert blijver.source_ref == "abc"
 
-    def test_two_subscriptions_do_not_both_survive(self, session: Session):
-        """Twee abonnementen op één serie zou dubbel downloaden."""
+    def test_both_subscriptions_survive_as_editions(self, session: Session):
+        """Twee bronnen op één serie is precies de bedoeling.
+
+        De gekleurde uitgave loopt achter op de zwart-witte; samen vormen ze
+        pas een complete reeks. Welke je te zien krijgt bepaalt de volgorde van
+        de uitgaven, niet welk abonnement de merge overleeft.
+        """
         bron = Source(type="mangadex", name="MD")
         session.add(bron)
         session.flush()
@@ -117,7 +122,26 @@ class TestMerge:
         abos = list(
             session.scalars(select(Subscription).where(Subscription.series_id == blijver.id))
         )
-        assert len(abos) == 1
+        assert len(abos) == 2
+
+    def test_the_editions_of_both_series_end_up_in_one_order(self, session: Session):
+        """Wat je al las blijft eerste keus; het nieuwe schuift erachter."""
+        blijver = _series(session, "A")
+        opgaand = _series(session, "A")
+        session.add(Edition(series_id=blijver.id, name="Kleur", rank=0))
+        session.add(Edition(series_id=opgaand.id, name="Zwart-wit", rank=0))
+        session.flush()
+
+        merge(session, blijver, opgaand)
+
+        uitgaven = sorted(
+            session.scalars(select(Edition).where(Edition.series_id == blijver.id)),
+            key=lambda edition: edition.rank,
+        )
+        assert [(edition.name, edition.rank) for edition in uitgaven] == [
+            ("Kleur", 0),
+            ("Zwart-wit", 1),
+        ]
 
 
 class TestSuggest:
@@ -175,3 +199,19 @@ class TestApi:
         body = client.get("/api/series/merge/suggestions").json()
         assert len(body) == 1
         assert body[0]["keep_title"].lower() == "crayon shin-chan"
+
+    def test_two_editions_with_the_same_name_are_told_apart(self, session: Session):
+        """Twee keer "Eigen bestanden" onder elkaar zegt niets."""
+        blijver = _series(session, "Dragon Ball Super (Colored)")
+        opgaand = _series(session, "Dragon Ball Super")
+        session.add(Edition(series_id=blijver.id, name="Eigen bestanden", rank=0))
+        session.add(Edition(series_id=opgaand.id, name="Eigen bestanden", rank=0))
+        session.flush()
+
+        merge(session, blijver, opgaand)
+
+        namen = sorted(
+            edition.name
+            for edition in session.scalars(select(Edition).where(Edition.series_id == blijver.id))
+        )
+        assert namen == ["Eigen bestanden", "Eigen bestanden — Dragon Ball Super"]

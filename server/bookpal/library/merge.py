@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.metadata.titles import normalise as normalise_title
-from bookpal.models import Book, Series, Subscription
+from bookpal.models import Book, Edition, Series, Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +41,39 @@ def merge(session: Session, keep: Series, absorb: Series) -> Series:
     for book in books:
         book.series_id = keep.id
 
-    # Abonnementen verhuizen mee, zodat nieuwe hoofdstukken binnen blijven
-    # komen. Heeft de blijver er al een, dan houdt die de zijne: twee
-    # abonnementen op één serie zou dubbel downloaden.
-    keep_subscription = session.scalar(
-        select(Subscription).where(Subscription.series_id == keep.id)
-    )
+    # Abonnementen verhuizen allemaal mee. Ze blijven naast elkaar bestaan,
+    # want dat is juist de bedoeling: de gekleurde uitgave loopt achter op de
+    # zwart-witte, en die twee samen maken pas een complete serie. Welke van de
+    # twee je te zien krijgt bepaalt de volgorde van de uitgaven, niet welk
+    # abonnement de merge heeft overleefd.
     for subscription in session.scalars(
         select(Subscription).where(Subscription.series_id == absorb.id)
     ):
-        if keep_subscription is None:
-            subscription.series_id = keep.id
-            keep_subscription = subscription
-        else:
-            session.delete(subscription)
+        subscription.series_id = keep.id
+
+    # De uitgaven schuiven achter die van de blijver aan: wat je al las blijft
+    # eerste keus, het nieuwe vult aan.
+    volgende = max(
+        (edition.rank for edition in session.scalars(
+            select(Edition).where(Edition.series_id == keep.id)
+        )),
+        default=-1,
+    ) + 1
+    bezet = {
+        edition.name
+        for edition in session.scalars(select(Edition).where(Edition.series_id == keep.id))
+    }
+    for edition in session.scalars(
+        select(Edition).where(Edition.series_id == absorb.id).order_by(Edition.rank)
+    ):
+        edition.series_id = keep.id
+        edition.rank = volgende
+        # Twee keer "Eigen bestanden" onder elkaar zegt niets. Pas hier wordt
+        # de naam dubbelzinnig, dus pas hier hoort hij te veranderen.
+        if edition.name in bezet:
+            edition.name = f"{edition.name} — {absorb.title}"
+        bezet.add(edition.name)
+        volgende += 1
 
     _merge_fields(keep, absorb)
 
