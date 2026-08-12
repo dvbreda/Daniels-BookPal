@@ -160,3 +160,23 @@ def goodreads_rows(session: Session, user: User) -> Iterable[GoodreadsRow]:
         entry = entry_for_series(session, user, series, "goodreads")
         author = series.authors[0] if series.authors else None
         yield GoodreadsRow(title=series.title, author=author, status=entry.status)
+
+
+def shelf_rows(
+    session: Session, user: User, provider: str = "goodreads"
+) -> list[tuple[Series, TrackerEntry, int, float]]:
+    """Elke serie met zijn leesstatus, voortgang en aantal hoofdstukken.
+
+    Gedeeld door de export en het overzicht in de instellingen, zodat wat je op
+    het scherm ziet precies is wat er de deur uit zou gaan. De ``provider``
+    bepaalt of er een id bij zit: bij MyAnimeList kan alleen gepusht worden wat
+    zo'n id heeft, en dat wil je juist zien.
+    """
+    rows: list[tuple[Series, TrackerEntry, int, float]] = []
+    for series in session.scalars(select(Series)).all():
+        entry = entry_for_series(session, user, series, provider)
+        books = list(session.scalars(select(Book).where(Book.series_id == series.id)))
+        total = len(books)
+        percent = (entry.chapters_read / total * 100.0) if total else 0.0
+        rows.append((series, entry, total, percent))
+    return rows

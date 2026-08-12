@@ -407,6 +407,35 @@ class GoodreadsLoginIn(BaseModel):
     password: str = Field(max_length=200)
 
 
+class ShelfRowOut(BaseModel):
+    """Eén serie zoals hij op een leeslijst zou staan."""
+
+    series_id: int
+    title: str
+    author: str | None = None
+    status: str
+    shelf: str
+    chapters_read: int = 0
+    chapters_total: int = 0
+    percent: float = 0.0
+    # Het id bij deze tracker, als het bekend is. Zonder id kan er niet
+    # gepusht worden — bij MyAnimeList is dat het gangbare geval voor series
+    # die niet van een bron komen.
+    remote_id: str | None = None
+    pushable: bool = True
+
+
+class ShelvesOut(BaseModel):
+    """Wat er naar een tracker zou gaan, per plank gegroepeerd."""
+
+    provider: str = "goodreads"
+    # Hoeveel er niet gepusht kan worden omdat er geen id bij deze tracker is.
+    without_id: int = 0
+    reading: list[ShelfRowOut] = Field(default_factory=list)
+    to_read: list[ShelfRowOut] = Field(default_factory=list)
+    read: list[ShelfRowOut] = Field(default_factory=list)
+
+
 class GoodreadsStatusOut(BaseModel):
     # Is er een browser beschikbaar? Chromium wordt pas op verzoek gedownload.
     browser_ready: bool

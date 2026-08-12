@@ -604,3 +604,91 @@ class TestGoodreadsBrowser:
         report = SyncReport(updated=["Boek A"], errors=["Boek B: knop niet gevonden"])
         assert report.updated == ["Boek A"]
         assert len(report.errors) == 1
+
+
+class TestShelves:
+    """Wat er op je leeslijsten staat, precies zoals het de deur uit gaat."""
+
+    def _series_met_voortgang(self, session: Session) -> None:
+        root = LibraryRoot(name="R", path="/tmp/r-planken")
+        session.add(root)
+        session.flush()
+
+        for naam, uit in (("Uitgelezen reeks", True), ("Halve reeks", False)):
+            series = Series(title=naam, sort_title=naam.lower(), authors=["A. Auteur"])
+            session.add(series)
+            session.flush()
+            file_row = File(
+                library_root_id=root.id,
+                path=f"/tmp/r-planken/{naam}.cbz",
+                size=1,
+                mtime=0.0,
+                extension=".cbz",
+            )
+            session.add(file_row)
+            session.flush()
+            book = Book(
+                series_id=series.id, kind=BookKind.COMIC, title="Deel", file_id=file_row.id
+            )
+            session.add(book)
+            session.flush()
+            session.add(
+                Progress(
+                    user_id=current_user(session).id,
+                    book_id=book.id,
+                    percent=100.0 if uit else 40.0,
+                    finished=uit,
+                )
+            )
+        # Eentje zonder enige voortgang.
+        session.add(Series(title="Onbegonnen", sort_title="onbegonnen"))
+        session.commit()
+
+    def test_each_series_lands_on_the_right_shelf(self, client: TestClient, session: Session):
+        self._series_met_voortgang(session)
+        body = client.get("/api/trackers/shelves").json()
+
+        assert [row["title"] for row in body["read"]] == ["Uitgelezen reeks"]
+        assert [row["title"] for row in body["reading"]] == ["Halve reeks"]
+        assert [row["title"] for row in body["to_read"]] == ["Onbegonnen"]
+
+    def test_progress_is_shown_per_series(self, client: TestClient, session: Session):
+        self._series_met_voortgang(session)
+        body = client.get("/api/trackers/shelves").json()
+        halve = body["reading"][0]
+        assert halve["chapters_total"] == 1
+        assert halve["chapters_read"] == 0  # nog niet uit, dus nog niet meegeteld
+
+    def test_the_author_comes_along(self, client: TestClient, session: Session):
+        self._series_met_voortgang(session)
+        body = client.get("/api/trackers/shelves").json()
+        assert body["read"][0]["author"] == "A. Auteur"
+
+    def test_an_empty_library_gives_empty_shelves(self, client: TestClient):
+        body = client.get("/api/trackers/shelves").json()
+        assert body["reading"] == [] and body["to_read"] == [] and body["read"] == []
+
+    def test_mal_marks_series_without_an_id_as_not_pushable(
+        self, client: TestClient, session: Session
+    ):
+        """Bij MyAnimeList kan alleen gepusht worden wat een id heeft; dat wil
+        je zien vóór je op pushen drukt, niet erna."""
+        session.add(Series(title="Zonder id", sort_title="z"))
+        session.add(Series(title="Met id", sort_title="m", tracker_ids={"mal": "2435"}))
+        session.commit()
+
+        body = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        rijen = {row["title"]: row for row in body["to_read"]}
+        assert rijen["Met id"]["pushable"] is True
+        assert rijen["Met id"]["remote_id"] == "2435"
+        assert rijen["Zonder id"]["pushable"] is False
+        assert body["without_id"] == 1
+
+    def test_goodreads_needs_no_id_to_be_pushable(self, client: TestClient, session: Session):
+        """Goodreads zoekt op titel, dus daar is een id niet nodig."""
+        session.add(Series(title="Zonder id", sort_title="z"))
+        session.commit()
+
+        body = client.get("/api/trackers/shelves").json()
+        assert body["to_read"][0]["pushable"] is True
+        assert body["without_id"] == 0

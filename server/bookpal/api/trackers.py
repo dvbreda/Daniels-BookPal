@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import secrets
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -24,12 +24,15 @@ from bookpal.schemas import (
     MalCallbackIn,
     PushReportOut,
     PushResultOut,
+    ShelfRowOut,
+    ShelvesOut,
     TrackerAccountIn,
     TrackerAccountOut,
     TrackerAccountPatch,
 )
 from bookpal.trackers import REGISTRY, TrackerError, export_csv, get_tracker, goodreads_browser
 from bookpal.trackers import service as tracker_service
+from bookpal.trackers.base import ReadingStatus
 from bookpal.trackers.mal import MyAnimeListTracker, authorize_url, make_code_verifier
 
 router = APIRouter(prefix="/api/trackers", tags=["trackers"])
@@ -269,6 +272,24 @@ def goodreads_export(session: Session = Depends(get_session)) -> Response:
 
 GOODREADS = "goodreads"
 
+# De plank waar een leesstatus op uitkomt, en onder welke sleutel hij in het
+# overzicht valt. "on hold" en "gestopt" gaan bij Goodreads ook naar to-read:
+# die kent geen aparte planken daarvoor.
+_SHELF_NAMES = {
+    ReadingStatus.READING: "currently-reading",
+    ReadingStatus.COMPLETED: "read",
+    ReadingStatus.PLAN_TO_READ: "to-read",
+    ReadingStatus.ON_HOLD: "to-read",
+    ReadingStatus.DROPPED: "to-read",
+}
+_SHELF_KEYS = {
+    ReadingStatus.READING: "reading",
+    ReadingStatus.COMPLETED: "read",
+    ReadingStatus.PLAN_TO_READ: "to_read",
+    ReadingStatus.ON_HOLD: "to_read",
+    ReadingStatus.DROPPED: "to_read",
+}
+
 
 def _goodreads_account(session: Session) -> TrackerAccount | None:
     return session.scalar(select(TrackerAccount).where(TrackerAccount.provider == GOODREADS))
@@ -362,3 +383,48 @@ def goodreads_sync(session: Session = Depends(get_session)) -> GoodreadsSyncOut:
     account.last_sync_at = utcnow()
     session.commit()
     return GoodreadsSyncOut(updated=report.updated, errors=report.errors)
+
+
+@router.get("/shelves", response_model=ShelvesOut)
+def shelves(
+    provider: str = Query(default="goodreads", max_length=20),
+    session: Session = Depends(get_session),
+) -> ShelvesOut:
+    """Wat er op je leeslijsten zou staan, per plank.
+
+    Precies dezelfde afleiding als de export en de push gebruiken, zodat wat je
+    hier ziet is wat er de deur uit gaat — en je kunt controleren of de
+    leesstatus klopt voordat je iets pusht. Bij MyAnimeList staat erbij wat er
+    géén id heeft, want dat is precies wat overgeslagen wordt.
+    """
+    user = current_user(session)
+    per_shelf: dict[str, list[ShelfRowOut]] = {"reading": [], "to_read": [], "read": []}
+    without_id = 0
+
+    for series, entry, total, percent in tracker_service.shelf_rows(session, user, provider):
+        # Goodreads zoekt op titel en heeft geen id nodig; MyAnimeList wel.
+        pushable = provider != "mal" or entry.remote_id is not None
+        if not pushable:
+            without_id += 1
+        per_shelf[_SHELF_KEYS[entry.status]].append(
+            ShelfRowOut(
+                series_id=series.id,
+                title=series.title,
+                author=series.authors[0] if series.authors else None,
+                status=str(entry.status),
+                shelf=_SHELF_NAMES[entry.status],
+                chapters_read=entry.chapters_read,
+                chapters_total=total,
+                percent=round(percent, 1),
+                remote_id=entry.remote_id,
+                pushable=pushable,
+            )
+        )
+
+    # Bezig bovenaan op voortgang, de rest op naam: bij "aan het lezen" wil je
+    # zien waar je het verst bent, bij de andere twee zoek je op titel.
+    per_shelf["reading"].sort(key=lambda row: -row.percent)
+    for key in ("to_read", "read"):
+        per_shelf[key].sort(key=lambda row: row.title.lower())
+
+    return ShelvesOut(provider=provider, without_id=without_id, **per_shelf)

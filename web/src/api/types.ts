@@ -327,6 +327,29 @@ export interface ImportResult {
   errors: string[];
 }
 
+export interface ShelfRow {
+  series_id: number;
+  title: string;
+  author: string | null;
+  status: string;
+  shelf: string;
+  chapters_read: number;
+  chapters_total: number;
+  percent: number;
+  /** Het id bij deze tracker; zonder id kan MyAnimeList niet gepusht worden. */
+  remote_id: string | null;
+  pushable: boolean;
+}
+
+export interface Shelves {
+  provider: string;
+  /** Hoeveel series er geen id hebben bij deze tracker. */
+  without_id: number;
+  reading: ShelfRow[];
+  to_read: ShelfRow[];
+  read: ShelfRow[];
+}
+
 export interface GoodreadsStatus {
   /** Chromium wordt pas op verzoek gedownload. */
   browser_ready: boolean;

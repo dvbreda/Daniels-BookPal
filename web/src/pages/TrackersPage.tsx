@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
-import type { TrackerAccountRow } from "../api/types";
+import type { ShelfRow, TrackerAccountRow } from "../api/types";
 
 /**
  * Trackers: MyAnimeList koppelen en pushen, Goodreads als CSV-export (M7).
@@ -73,6 +73,8 @@ export function TrackersPage() {
       </section>
 
       <GoodreadsPanel setMessage={setMessage} />
+
+      <ShelvesPanel />
 
       {message && (
         <p className="mt-4 rounded bg-ink-800 p-3 text-sm text-slate-300">{message}</p>
@@ -398,6 +400,111 @@ function GoodreadsPanel({ setMessage }: { setMessage: (message: string | null) =
           CSV downloaden
         </a>
       </p>
+    </section>
+  );
+}
+
+
+const PLANK_TITELS: Record<string, string> = {
+  reading: "Aan het lezen",
+  to_read: "Wil ik lezen",
+  read: "Uitgelezen",
+};
+
+/**
+ * Wat er op je leeslijsten zou staan.
+ *
+ * Dezelfde afleiding als de export gebruikt, dus dit is precies wat er de deur
+ * uit gaat — je kunt hier controleren of de leesstatus klopt vóór je iets
+ * pusht, in plaats van het bij de tracker te ontdekken.
+ */
+function ShelvesPanel() {
+  const [provider, setProvider] = useState<"goodreads" | "mal">("goodreads");
+  const { data } = useQuery({
+    queryKey: ["shelves", provider],
+    queryFn: () => api.shelves(provider),
+  });
+  const [open, setOpen] = useState<string>("reading");
+
+  if (!data) return null;
+
+  const planken: [string, ShelfRow[]][] = [
+    ["reading", data.reading],
+    ["to_read", data.to_read],
+    ["read", data.read],
+  ];
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <h2 className="font-medium text-slate-200">Je leeslijsten</h2>
+        <div className="ml-auto flex gap-1">
+          {(["goodreads", "mal"] as const).map((key) => (
+            <button
+              key={key}
+              onClick={() => setProvider(key)}
+              className={`rounded px-2 py-1 text-xs ${
+                provider === key ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+              }`}
+            >
+              {key === "mal" ? "MyAnimeList" : "Goodreads"}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Afgeleid uit je voortgang, precies zoals het naar deze tracker gaat.
+        {data.without_id > 0 &&
+          ` ${data.without_id} ${data.without_id === 1 ? "serie heeft" : "series hebben"} ` +
+            "geen MyAnimeList-id en wordt overgeslagen; koppel er een omslag van een bron aan " +
+            "om die op te halen."}
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-2">
+        {planken.map(([key, rows]) => (
+          <button
+            key={key}
+            onClick={() => setOpen(key)}
+            className={`rounded px-3 py-1.5 text-sm ${
+              open === key ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+            }`}
+          >
+            {PLANK_TITELS[key]} ({rows.length})
+          </button>
+        ))}
+      </div>
+
+      <ul className="mt-3 space-y-1">
+        {(planken.find(([key]) => key === open)?.[1] ?? []).map((row) => (
+          <li key={row.series_id}>
+            <Link
+              to={`/serie/${row.series_id}`}
+              className="flex flex-wrap items-baseline gap-2 rounded bg-ink-800 px-3 py-2 hover:bg-ink-700"
+            >
+              <span className="min-w-0 flex-1 truncate text-sm text-slate-100">
+                {row.title}
+                {!row.pushable && (
+                  <span className="ml-2 text-xs text-warning" title="Geen id bij deze tracker">
+                    geen id
+                  </span>
+                )}
+              </span>
+              {row.author && (
+                <span className="truncate text-xs text-slate-500">{row.author}</span>
+              )}
+              {row.chapters_total > 0 && (
+                <span className="tabular-nums text-xs text-slate-400">
+                  {row.chapters_read}/{row.chapters_total}
+                  {row.percent > 0 && ` · ${Math.round(row.percent)}%`}
+                </span>
+              )}
+            </Link>
+          </li>
+        ))}
+        {(planken.find(([key]) => key === open)?.[1] ?? []).length === 0 && (
+          <li className="px-3 py-2 text-sm text-slate-500">Niets op deze plank.</li>
+        )}
+      </ul>
     </section>
   );
 }

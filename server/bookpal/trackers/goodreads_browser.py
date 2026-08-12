@@ -27,6 +27,7 @@ import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from bookpal.config import settings
 from bookpal.trackers.base import ReadingStatus, TrackerError
@@ -124,6 +125,17 @@ def _detect_challenge(page: Any) -> None:
     voor bedoeld is. De vraag gaat naar de accounteigenaar.
     """
     html = page.content().lower()
+
+    # AWS WAF: Goodreads geeft dan een vrijwel lege pagina met een
+    # javascript-uitdaging terug in plaats van de site. Gemeten op een echte
+    # ingelogde sessie — inloggen lukt, maar elke pagina daarna is dit.
+    if "awswafcookiedomainlist" in html or "gokuprops" in html:
+        raise GoodreadsChallenge(
+            "waf",
+            "Goodreads herkent de geautomatiseerde browser en serveert een botcontrole "
+            "(AWS WAF). Inloggen lukt wel, maar de site zelf blijft dicht.",
+            _shot(page, "waf"),
+        )
 
     if page.locator("#auth-captcha-image").count() or "enter the characters you see" in html:
         raise GoodreadsChallenge(
@@ -242,12 +254,23 @@ def push(state: dict[str, Any], entries: list[tuple[str, str, ReadingStatus]]) -
 
 
 def _set_shelf(page: Any, title: str, author: str, status: ReadingStatus) -> None:
-    query = f"{title} {author}".strip()
+    query = quote(f"{title} {author}".strip())
     page.goto(f"{SEARCH_URL}?q={query}", wait_until="networkidle", timeout=45_000)
     _detect_challenge(page)
 
     first = page.locator("a.bookTitle").first
     if not first.count():
+        # Een lege pagina betekent hier zelden "niet gevonden": Goodreads
+        # serveert dan een botcontrole in plaats van zoekresultaten. Dat
+        # onderscheid hoort in de melding, anders ga je selectors debuggen
+        # terwijl er iets heel anders aan de hand is.
+        if len(page.content()) < 5_000:
+            raise GoodreadsChallenge(
+                "waf",
+                "Goodreads serveert een botcontrole (AWS WAF) in plaats van de pagina. "
+                "De geautomatiseerde sessie wordt herkend; gebruik de CSV-export.",
+                _shot(page, "waf"),
+            )
         raise TrackerError("niet gevonden op Goodreads")
     first.click()
     page.wait_for_load_state("networkidle", timeout=45_000)

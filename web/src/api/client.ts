@@ -21,6 +21,7 @@ import type {
   Series,
   SeriesDetail,
   SeriesQuery,
+  Shelves,
   SourceRow,
   SubscribeResult,
   SubscriptionPolicy,
@@ -229,6 +230,8 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  shelves: (provider = "goodreads") =>
+    request<Shelves>(`/api/trackers/shelves${queryString({ provider })}`),
   goodreadsStatus: () => request<GoodreadsStatus>("/api/trackers/goodreads/status"),
   goodreadsInstallBrowser: () =>
     request<GoodreadsStatus>("/api/trackers/goodreads/install-browser", { method: "POST" }),
