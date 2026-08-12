@@ -547,3 +547,161 @@ class TestRenamingASeries:
 
         response = client.patch(f"/api/series/{series.id}/title", json={"title": "   "})
         assert response.status_code == 400
+
+
+class TestWhatEachChapterTellsYou:
+    """Taal en kleur horen per hoofdstuk zichtbaar te zijn."""
+
+    def test_the_language_and_label_land_on_every_chapter(self, client, session: Session):
+        from bookpal.models import Source, Subscription
+
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        series = _series(session)
+        abo = Subscription(source_id=bron.id, series_id=series.id, language="ja")
+        session.add(abo)
+        session.flush()
+        uitgave = Edition(
+            series_id=series.id, name="Kleureditie", rank=0, subscription_id=abo.id, note="kleur"
+        )
+        session.add(uitgave)
+        session.flush()
+        _book(session, series, uitgave, 1.0)
+        session.commit()
+
+        [regel] = client.get(f"/api/series/{series.id}").json()["books"]
+        assert regel["edition_language"] == "ja"
+        assert regel["edition_note"] == "kleur"
+        assert regel["edition_name"] == "Kleureditie"
+
+    def test_your_own_files_have_no_language(self, client, session: Session):
+        series = _series(session)
+        uitgave = _edition(session, series, "Eigen bestanden", 0)
+        _book(session, series, uitgave, 1.0)
+        session.commit()
+
+        [regel] = client.get(f"/api/series/{series.id}").json()["books"]
+        assert regel["edition_language"] is None
+
+    def test_an_older_edition_gets_its_label_from_its_name(self, client, session: Session):
+        """Uitgaven van vóór dit label horen ook gewoon "kleur" te tonen."""
+        series = _series(session)
+        uitgave = _edition(session, series, "One Piece (Official Colored)", 0)
+        _book(session, series, uitgave, 1.0)
+        session.commit()
+
+        [regel] = client.get(f"/api/series/{series.id}").json()["books"]
+        assert regel["edition_note"] == "kleur"
+
+    def test_a_coloured_source_is_labelled_by_itself(self):
+        from bookpal.sources.service import edition_note
+
+        assert edition_note("One Piece (Official Colored)") == "kleur"
+        assert edition_note("Dragon Ball Super (Coloured Edition)") == "kleur"
+        assert edition_note("Oishinbo") is None
+
+
+class TestRenamingOntoAnExistingName:
+    def test_it_offers_to_merge(self, client, session: Session):
+        session.add(Series(title="Shinya Shokudou", sort_title="s"))
+        hernoemd = Series(title="Iets anders", sort_title="i")
+        session.add(hernoemd)
+        session.commit()
+
+        body = client.patch(
+            f"/api/series/{hernoemd.id}/title", json={"title": "Shinya Shokudo"}
+        ).json()
+        assert body["title"] == "Shinya Shokudo"
+        assert body["merge_candidate"]["title"] == "Shinya Shokudou"
+
+    def test_a_unique_name_offers_nothing(self, client, session: Session):
+        series = Series(title="Iets", sort_title="i")
+        session.add(series)
+        session.commit()
+
+        body = client.patch(f"/api/series/{series.id}/title", json={"title": "Iets nieuws"}).json()
+        assert body["merge_candidate"] is None
+
+    def test_renaming_to_its_own_name_offers_nothing(self, client, session: Session):
+        """Zichzelf is geen naamgenoot."""
+        series = Series(title="Iets", sort_title="i")
+        session.add(series)
+        session.commit()
+
+        body = client.patch(f"/api/series/{series.id}/title", json={"title": "Iets"}).json()
+        assert body["merge_candidate"] is None
+
+
+class TestFetchingCovers:
+    """Omslagen per deel ophalen, per uitgave apart."""
+
+    def _opzet(self, session: Session):
+        from bookpal.models import Source, Subscription
+
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        series = _series(session)
+        series.source_id = bron.id
+        series.source_ref = "kleur-ref"
+
+        uitgaven = {}
+        for naam, ref, rang in (("Kleur", "kleur-ref", 0), ("Zwart-wit", "zw-ref", 1)):
+            abo = Subscription(source_id=bron.id, series_id=series.id, source_ref=ref)
+            session.add(abo)
+            session.flush()
+            uitgave = Edition(series_id=series.id, name=naam, rank=rang, subscription_id=abo.id)
+            session.add(uitgave)
+            session.flush()
+            boek = _book(session, series, uitgave, 1.0, titel=f"H1 {naam}")
+            boek.volume = "1"
+            uitgaven[naam] = uitgave
+        session.commit()
+        return series, uitgaven
+
+    def test_each_edition_gets_its_own_cover(self, client, session: Session, monkeypatch):
+        from bookpal.sources.base import CoverInfo
+        from bookpal.sources.mangadex import MangaDexSource
+
+        series, uitgaven = self._opzet(session)
+        monkeypatch.setattr(
+            MangaDexSource,
+            "covers",
+            lambda self, ref, *, limit=100: [
+                CoverInfo(url=f"https://voorbeeld.test/{ref}-v1.jpg", volume="1")
+            ],
+        )
+
+        body = client.post(f"/api/series/{series.id}/covers").json()
+        assert body["updated"] == 2
+
+        session.expire_all()
+        per_uitgave = {
+            book.edition_id: book.cover_url
+            for book in session.scalars(select(Book).where(Book.series_id == series.id))
+        }
+        assert per_uitgave[uitgaven["Kleur"].id] == "https://voorbeeld.test/kleur-ref-v1.jpg"
+        assert per_uitgave[uitgaven["Zwart-wit"].id] == "https://voorbeeld.test/zw-ref-v1.jpg"
+
+    def test_a_series_without_a_source_says_so(self, client, session: Session):
+        series = _series(session)
+        session.commit()
+        assert client.post(f"/api/series/{series.id}/covers").status_code == 409
+
+    def test_a_source_that_fails_does_not_take_the_rest_down(
+        self, client, session: Session, monkeypatch
+    ):
+        from bookpal.sources.base import SourceError
+        from bookpal.sources.mangadex import MangaDexSource
+
+        series, _ = self._opzet(session)
+
+        def stuk(self, ref, *, limit=100):
+            raise SourceError("bron doet niet mee")
+
+        monkeypatch.setattr(MangaDexSource, "covers", stuk)
+
+        response = client.post(f"/api/series/{series.id}/covers")
+        assert response.status_code == 200
+        assert response.json()["updated"] == 0

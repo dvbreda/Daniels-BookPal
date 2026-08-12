@@ -65,6 +65,8 @@ class BookAlternativeOut(BaseModel):
     title: str
     edition_id: int | None = None
     edition_name: str | None = None
+    edition_language: str | None = None
+    edition_note: str | None = None
     has_file: bool = False
 
 
@@ -98,6 +100,11 @@ class BookOut(BaseModel):
     # uitgaven samengevouwen tot één leeslijst.
     edition_id: int | None = None
     edition_name: str | None = None
+    # Waarin deze uitgave zich onderscheidt: de taal van het abonnement en een
+    # label als "kleur". Per hoofdstuk zichtbaar, want dat is precies wat je
+    # wilt weten voordat je hem opent.
+    edition_language: str | None = None
+    edition_note: str | None = None
     alternatives: list[BookAlternativeOut] = Field(default_factory=list)
 
 
@@ -140,12 +147,31 @@ class EditionOut(BaseModel):
     name: str
     rank: int
     note: str | None = None
+    # De taal van het abonnement waar deze uitgave bij hoort; leeg voor je
+    # eigen bestanden, want daar zegt niets wat de taal is.
+    language: str | None = None
     subscription_id: int | None = None
     folder_path: str | None = None
     # Hoeveel delen deze uitgave heeft, en hoeveel daarvan je te zien krijgt.
     # Het verschil is precies wat een lager gerangschikte uitgave aanvult.
     book_count: int = 0
     chosen_count: int = 0
+
+
+class MergeCandidateOut(BaseModel):
+    """Een serie die na het hernoemen dezelfde naam blijkt te hebben."""
+
+    id: int
+    title: str
+    books: int
+
+
+class SyncCoversOut(BaseModel):
+    """Hoeveel omslagen er zijn bijgewerkt, en waar het misging."""
+
+    updated: int = 0
+    editions: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
 
 
 class SeriesRenameIn(BaseModel):
@@ -157,6 +183,17 @@ class SeriesRenameIn(BaseModel):
     """
 
     title: str = Field(min_length=1, max_length=500)
+
+
+class SeriesRenameOut(SeriesOut):
+    """De hernoemde serie, plus wat je er waarschijnlijk mee wilde.
+
+    Hernoemen naar een naam die al bestaat betekent bijna altijd dat het
+    hetzelfde ding is. Dat is een vraag en geen automatisme: gelijknamig is niet
+    hetzelfde, en samenvoegen laat zich niet met één druk terugdraaien.
+    """
+
+    merge_candidate: MergeCandidateOut | None = None
 
 
 class EditionPatch(BaseModel):

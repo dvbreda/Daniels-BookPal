@@ -223,6 +223,19 @@ def pick_best_chapters(
     return [chapter for chapter in chapters if chapter in chosen]
 
 
+# Bronnen zetten het in de titel: "One Piece (Official Colored)". Dat is het
+# enige signaal dat er is — of een scan kleur heeft valt niet aan de metadata te
+# zien, en elke pagina bekijken is er niet aan.
+_COLOUR_IN_TITLE = re.compile(r"\b(colou?red|colou?r|kleur)\b", re.IGNORECASE)
+
+
+def edition_note(source_title: str | None) -> str | None:
+    """Een kort label bij de uitgave, als de bron het prijsgeeft."""
+    if source_title and _COLOUR_IN_TITLE.search(source_title):
+        return "kleur"
+    return None
+
+
 def _edition_name(
     session: Session, series: Series, subscription: Subscription, source_title: str | None
 ) -> str:
@@ -281,6 +294,9 @@ def sync_chapters(
             subscription,
             name=_edition_name(session, series, subscription, source_title),
         )
+        # Alleen invullen als je er zelf nog niets van gemaakt hebt.
+        if edition.note is None:
+            edition.note = edition_note(source_title)
 
     preferred = subscription.preferred_group_id if subscription is not None else None
     chapters = pick_best_chapters(chapters, preferred)
@@ -431,6 +447,12 @@ def subscribe(
         session, series, chapters, subscription=subscription, source_title=detail.title
     )
     session.flush()
+
+    # Omslagen erbij, nu de delen bestaan. Zonder dit toont elk deel "pagina 1",
+    # en dat is bij scanlations vaak een credits-pagina van de vertaalgroep.
+    edition = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
+    sync_covers(session, implementation, series, ref=ref, edition=edition)
+    session.flush()
     return series, subscription, added
 
 
@@ -554,21 +576,32 @@ def expire_downloads(session: Session, *, now: datetime | None = None) -> int:
     return removed
 
 
-def sync_covers(session: Session, implementation: SourceImpl, series: Series) -> int:
+def sync_covers(
+    session: Session,
+    implementation: SourceImpl,
+    series: Series,
+    *,
+    ref: str | None = None,
+    edition: Edition | None = None,
+) -> int:
     """Haal de omslagen per deel op en hang ze aan de bijbehorende boeken.
 
     MangaDex heeft er meestal één per volume. Zonder dit toont elk deel
     "pagina 1", en dat is bij scanlations vaak een credits-pagina van de
     vertaalgroep in plaats van de echte omslag.
 
+    ``ref`` en ``edition`` horen bij elkaar: bij een serie met meerdere
+    uitgaven hoort de gekleurde omslag alleen bij de gekleurde delen.
+
     Faalt zacht: een serie zonder omslagen is nog steeds prima leesbaar.
     """
     getter = getattr(implementation, "covers", None)
-    if getter is None or not series.source_ref:
+    ref = ref or series.source_ref
+    if getter is None or not ref:
         return 0
 
     try:
-        covers = getter(series.source_ref)
+        covers = getter(ref)
     except SourceError as exc:
         logger.warning("omslagen ophalen voor %s: %s", series.title, exc)
         return 0
@@ -577,8 +610,12 @@ def sync_covers(session: Session, implementation: SourceImpl, series: Series) ->
     if not per_volume:
         return 0
 
+    statement = select(Book).where(Book.series_id == series.id)
+    if edition is not None:
+        statement = statement.where(Book.edition_id == edition.id)
+
     aantal = 0
-    for book in session.scalars(select(Book).where(Book.series_id == series.id)):
+    for book in session.scalars(statement):
         url = per_volume.get(book.volume) if book.volume else None
         if url and book.cover_url != url:
             book.cover_url = url

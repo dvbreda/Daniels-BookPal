@@ -70,7 +70,9 @@ export function EpubReader({
   saveProgress = true,
 }: {
   book: BookDetail;
-  onClose: () => void;
+  /** De huidige stand geeft de aanroeper mee: die bepaalt of je nog moet
+   * worden gevraagd of dit als ongelezen mag. */
+  onClose: (percent: number) => void;
   /** Een epub die niet uit de bibliotheek komt, bv. een Wikipedia-artikel. */
   fileUrl?: string;
   /** Voortgang wegschrijven. Uit voor iets wat geen boek in je bibliotheek is. */
@@ -95,6 +97,10 @@ export function EpubReader({
   const [theme, setTheme] = useStoredState<ThemeName>("epub.theme", defaultReaderTheme());
 
   const pending = useRef<{ cfi: string; percent: number } | null>(null);
+  // De laatste stand buiten de render om, zodat het sluiten er ook bij kan
+  // vanuit een toetsafhandelaar die niet opnieuw wordt opgebouwd.
+  const percentRef = useRef(percent);
+  percentRef.current = percent;
 
   // Het boek inladen. foliate definieert een custom element, dus dit gebeurt
   // één keer per boek en niet bij elke render.
@@ -203,7 +209,7 @@ export function EpubReader({
       if (event.key === "ArrowLeft" || event.key === "PageUp") goLeft();
       else if (event.key === "ArrowRight" || event.key === "PageDown" || event.key === " ")
         goRight();
-      else if (event.key === "Escape") onClose();
+      else if (event.key === "Escape") onClose(percentRef.current);
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -222,7 +228,7 @@ export function EpubReader({
           >
             Bestand downloaden
           </a>
-          <button onClick={onClose} className="rounded bg-ink-700 px-4 py-2 text-sm">
+          <button onClick={() => onClose(0)} className="rounded bg-ink-700 px-4 py-2 text-sm">
             Terug
           </button>
         </div>
@@ -265,7 +271,10 @@ export function EpubReader({
       {showChrome && (
         <>
           <header className="absolute inset-x-0 top-0 flex items-center gap-3 bg-ink-900/90 px-4 py-2 text-sm text-slate-200">
-            <button onClick={onClose} className="rounded bg-ink-700 px-3 py-1.5">
+            <button
+              onClick={() => onClose(percentRef.current)}
+              className="rounded bg-ink-700 px-3 py-1.5"
+            >
               ← Terug
             </button>
             <span className="min-w-0 flex-1 truncate">

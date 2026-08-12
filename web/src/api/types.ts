@@ -43,6 +43,9 @@ export interface Book {
   /** Uit welke uitgave dit deel komt; alleen gevuld in de seriepagina. */
   edition_id: number | null;
   edition_name: string | null;
+  /** Waarin die uitgave zich onderscheidt: taal en een label als "kleur". */
+  edition_language: string | null;
+  edition_note: string | null;
   /** Hetzelfde hoofdstuk uit een andere uitgave. */
   alternatives: BookAlternative[];
 }
@@ -80,6 +83,23 @@ export interface Series {
   has_cover_url: boolean;
   /** Handmatig gekozen paginanummer voor de omslag, als dat gezet is. */
   cover_page_index: number | null;
+}
+
+export interface MergeCandidate {
+  id: number;
+  title: string;
+  books: number;
+}
+
+export interface SeriesRenamed extends Series {
+  /** Een serie die na het hernoemen dezelfde naam blijkt te hebben. */
+  merge_candidate: MergeCandidate | null;
+}
+
+export interface SyncCoversResult {
+  updated: number;
+  editions: string[];
+  errors: string[];
 }
 
 export interface SeriesDetail extends Series {
@@ -400,6 +420,8 @@ export interface BookAlternative {
   title: string;
   edition_id: number | null;
   edition_name: string | null;
+  edition_language: string | null;
+  edition_note: string | null;
   has_file: boolean;
 }
 
@@ -414,6 +436,8 @@ export interface Edition {
   name: string;
   rank: number;
   note: string | null;
+  /** Taal van het abonnement; leeg voor je eigen bestanden. */
+  language: string | null;
   subscription_id: number | null;
   folder_path: string | null;
   book_count: number;

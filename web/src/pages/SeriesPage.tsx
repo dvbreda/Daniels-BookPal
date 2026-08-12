@@ -3,12 +3,23 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
-import type { Book, OriginRegion, SeriesDetail } from "../api/types";
+import type { Book, MergeCandidate, OriginRegion, SeriesDetail } from "../api/types";
 import { CoverPicker } from "../components/CoverPicker";
 import { EditionsPanel } from "../components/EditionsPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
 import { useStoredState } from "../lib/useStoredState";
+
+const TAALNAMEN: Record<string, string> = {
+  en: "Engels",
+  ja: "Japans",
+  nl: "Nederlands",
+  de: "Duits",
+  fr: "Frans",
+  es: "Spaans",
+  ko: "Koreaans",
+  zh: "Chinees",
+};
 
 const REGIONS: [OriginRegion, string][] = [
   ["europe", "Europa"],
@@ -287,6 +298,12 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
 
   const uit = book.progress?.finished ?? false;
 
+  const kenmerken = [
+    book.edition_language ? (TAALNAMEN[book.edition_language] ?? book.edition_language) : null,
+    book.edition_note,
+    book.alternatives.length > 0 ? book.edition_name : null,
+  ].filter(Boolean) as string[];
+
   const inner = (
     <>
       <div className="relative aspect-[2/3] bg-ink-700">
@@ -329,10 +346,13 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             {book.source_group_name}
           </p>
         )}
-        {/* Alleen tonen als er iets te kiezen viel: bij één uitgave zegt de
-            naam niets, en dan is het ruis onder elk deel. */}
-        {book.edition_name && book.alternatives.length > 0 && (
-          <p className="truncate text-xs text-slate-600">{book.edition_name}</p>
+        {/* Waar dit deel vandaan komt: taal en kleur staan er altijd bij als
+            ze bekend zijn, de naam van de uitgave alleen als er iets te kiezen
+            viel — anders is dat ruis onder elk hoofdstuk. */}
+        {kenmerken.length > 0 && (
+          <p className="truncate text-xs text-slate-600" title={kenmerken.join(" · ")}>
+            {kenmerken.join(" · ")}
+          </p>
         )}
       </div>
     </>
@@ -595,12 +615,29 @@ function ImportPanel({ series, seriesId }: { series: SeriesDetail; seriesId: num
 function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
   const queryClient = useQueryClient();
   const [naam, setNaam] = useState(title);
+  // Een serie die na het hernoemen dezelfde naam blijkt te hebben. Vragen en
+  // niet doen: gelijknamig is niet altijd hetzelfde, en samenvoegen laat zich
+  // niet met één druk terugdraaien.
+  const [naamgenoot, setNaamgenoot] = useState<MergeCandidate | null>(null);
+
+  const ververs = () => {
+    void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+    void queryClient.invalidateQueries({ queryKey: ["series"] });
+  };
 
   const rename = useMutation({
     mutationFn: () => api.renameSeries(seriesId, naam.trim()),
+    onSuccess: (result) => {
+      setNaamgenoot(result.merge_candidate);
+      ververs();
+    },
+  });
+
+  const samenvoegen = useMutation({
+    mutationFn: (absorbId: number) => api.mergeSeries(seriesId, absorbId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
-      void queryClient.invalidateQueries({ queryKey: ["series"] });
+      setNaamgenoot(null);
+      ververs();
     },
   });
 
@@ -631,6 +668,41 @@ function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
         <p className="mt-1 text-xs text-danger">
           {rename.error instanceof ApiError ? rename.error.message : "Hernoemen mislukt."}
         </p>
+      )}
+
+      {naamgenoot && (
+        <div className="mt-3 rounded bg-ink-800 p-3">
+          <p className="text-sm text-slate-200">
+            «{naamgenoot.title}» bestaat al ({naamgenoot.books}{" "}
+            {naamgenoot.books === 1 ? "deel" : "delen"}). Samenvoegen?
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            De delen en abonnementen verhuizen hierheen en worden uitgaven van deze serie. Er
+            gaat niets van schijf.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => samenvoegen.mutate(naamgenoot.id)}
+              disabled={samenvoegen.isPending}
+              className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+            >
+              {samenvoegen.isPending ? "Bezig…" : "Samenvoegen"}
+            </button>
+            <button
+              onClick={() => setNaamgenoot(null)}
+              className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-300"
+            >
+              Apart laten
+            </button>
+          </div>
+          {samenvoegen.isError && (
+            <p className="mt-2 text-xs text-danger">
+              {samenvoegen.error instanceof ApiError
+                ? samenvoegen.error.message
+                : "Samenvoegen mislukt."}
+            </p>
+          )}
+        </div>
       )}
     </section>
   );

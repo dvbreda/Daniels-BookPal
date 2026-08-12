@@ -29,7 +29,9 @@ const MAX_ZOOM = 4;
 
 interface Props {
   book: BookDetail;
-  onClose: () => void;
+  /** De huidige stand geeft de aanroeper mee: die bepaalt of je nog moet
+   * worden gevraagd of dit als ongelezen mag. */
+  onClose: (percent: number) => void;
 }
 
 export function ComicReader({ book, onClose }: Props) {
@@ -198,7 +200,7 @@ export function ComicReader({ book, onClose }: Props) {
           setFit(fit === "width" ? "height" : fit === "height" ? "screen" : "width");
           break;
         case "Escape":
-          onClose();
+          onClose(pendingPercent.current ?? 0);
           break;
       }
     }
@@ -244,7 +246,7 @@ export function ComicReader({ book, onClose }: Props) {
       <div className="flex h-screen items-center justify-center bg-ink-900 text-slate-300">
         <div className="text-center">
           <p>Dit boek heeft geen leesbare pagina's.</p>
-          <button className="mt-4 rounded bg-ink-700 px-4 py-2" onClick={onClose}>
+          <button className="mt-4 rounded bg-ink-700 px-4 py-2" onClick={() => onClose(0)}>
             Terug
           </button>
         </div>
@@ -344,7 +346,7 @@ export function ComicReader({ book, onClose }: Props) {
           translated={translated}
           setTranslated={setTranslated}
           onSeek={setPage}
-          onClose={onClose}
+          onClose={() => onClose(pendingPercent.current ?? 0)}
         />
       )}
     </div>

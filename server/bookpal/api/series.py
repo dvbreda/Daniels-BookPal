@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from typing import Any, NamedTuple, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Select, func, select
@@ -21,6 +21,7 @@ from bookpal.images import (
 )
 from bookpal.library import editions
 from bookpal.library import merge as merge_module
+from bookpal.metadata.titles import normalise
 from bookpal.models import (
     Book,
     BookKind,
@@ -32,11 +33,13 @@ from bookpal.models import (
     Progress,
     Series,
     Source,
+    Subscription,
     User,
 )
 from bookpal.schemas import (
     AttachCoverIn,
     BookAlternativeOut,
+    BookOut,
     BookSlotIn,
     ContinueOut,
     EditionOrderIn,
@@ -45,6 +48,7 @@ from bookpal.schemas import (
     ImportSeriesIn,
     ImportSeriesOut,
     MarkReadBeforeOut,
+    MergeCandidateOut,
     MergeSeriesIn,
     MergeSuggestionOut,
     OriginPatch,
@@ -52,7 +56,9 @@ from bookpal.schemas import (
     SeriesDetailOut,
     SeriesOut,
     SeriesRenameIn,
+    SeriesRenameOut,
     SetCoverPageIn,
+    SyncCoversOut,
 )
 from bookpal.sources import SourceError, importer
 from bookpal.sources import service as source_service
@@ -134,7 +140,7 @@ def get_series(
     user = current_user(session)
     books = list(series.books)
     uitgaven = list(series.editions)
-    namen = {edition.id: edition.name for edition in uitgaven}
+    kenmerken = _edition_traits(session, uitgaven)
     progress = deps.progress_for(session, user, [book.id for book in books])
     extensions = {
         row.id: row.extension
@@ -156,7 +162,7 @@ def get_series(
             for book in books
         ]
         for regel in regels:
-            regel.edition_name = namen.get(regel.edition_id or -1)
+            _apply_traits(regel, kenmerken.get(regel.edition_id or -1))
     else:
         regels = []
         for slot in gekozen:
@@ -166,26 +172,78 @@ def get_series(
                 editions.best_progress(slot, progress),
                 extensions.get(book.file_id or -1),
             )
-            regel.edition_name = namen.get(book.edition_id or -1)
+            _apply_traits(regel, kenmerken.get(book.edition_id or -1))
             regel.alternatives = [
-                BookAlternativeOut(
-                    id=andere.id,
-                    title=andere.title,
-                    edition_id=andere.edition_id,
-                    edition_name=namen.get(andere.edition_id or -1),
-                    has_file=andere.file_id is not None,
-                )
+                _alternative_out(andere, kenmerken.get(andere.edition_id or -1))
                 for andere in slot.alternatives
             ]
             regels.append(regel)
 
     detail.books = regels
-    detail.editions = _editions_out(uitgaven, books, gekozen)
+    detail.editions = _editions_out(
+        uitgaven, books, gekozen, {key: value.language for key, value in kenmerken.items()}
+    )
     return detail
 
 
+class _Traits(NamedTuple):
+    """Waarin een uitgave zich onderscheidt, klaar om te tonen."""
+
+    name: str
+    language: str | None
+    note: str | None
+
+
+def _edition_traits(session: Session, uitgaven: list[Edition]) -> dict[int, _Traits]:
+    """Naam, taal en label per uitgave.
+
+    De taal staat op het abonnement en niet op de uitgave zelf: hij hoort bij
+    waar de hoofdstukken vandaan komen, niet bij de ordening.
+    """
+    talen: dict[int, str] = {}
+    ids = [edition.subscription_id for edition in uitgaven if edition.subscription_id]
+    if ids:
+        talen = {
+            row.id: row.language
+            for row in session.scalars(select(Subscription).where(Subscription.id.in_(ids)))
+        }
+    return {
+        edition.id: _Traits(
+            name=edition.name,
+            language=talen.get(edition.subscription_id or -1),
+            # Zelf gezet wint; anders afgeleid uit de naam, zodat uitgaven van
+            # vóór dit label ook gewoon "kleur" tonen.
+            note=edition.note or source_service.edition_note(edition.name),
+        )
+        for edition in uitgaven
+    }
+
+
+def _apply_traits(regel: BookOut, traits: _Traits | None) -> None:
+    if traits is None:
+        return
+    regel.edition_name = traits.name
+    regel.edition_language = traits.language
+    regel.edition_note = traits.note
+
+
+def _alternative_out(book: Book, traits: _Traits | None) -> BookAlternativeOut:
+    return BookAlternativeOut(
+        id=book.id,
+        title=book.title,
+        edition_id=book.edition_id,
+        edition_name=traits.name if traits else None,
+        edition_language=traits.language if traits else None,
+        edition_note=traits.note if traits else None,
+        has_file=book.file_id is not None,
+    )
+
+
 def _editions_out(
-    uitgaven: list[Edition], books: list[Book], gekozen: list[editions.Slot]
+    uitgaven: list[Edition],
+    books: list[Book],
+    gekozen: list[editions.Slot],
+    talen: dict[int, str | None] | None = None,
 ) -> list[EditionOut]:
     """De uitgaven met hun aandeel in de leeslijst.
 
@@ -193,6 +251,7 @@ def _editions_out(
     doet niets, en een die er 40 aanvult vertelt je precies waar je eerste keus
     ophoudt.
     """
+    talen = talen or {}
     per_uitgave: dict[int, int] = {}
     for book in books:
         if book.edition_id is not None:
@@ -211,6 +270,7 @@ def _editions_out(
                     veld: getattr(edition, veld)
                     for veld in ("id", "series_id", "name", "rank", "note")
                 },
+                "language": talen.get(edition.id),
                 "subscription_id": edition.subscription_id,
                 "folder_path": edition.folder_path,
                 "book_count": per_uitgave.get(edition.id, 0),
@@ -221,14 +281,18 @@ def _editions_out(
     ]
 
 
-@router.patch("/{series_id}/title", response_model=SeriesOut)
+@router.patch("/{series_id}/title", response_model=SeriesRenameOut)
 def rename_series(
     series_id: int, payload: SeriesRenameIn, session: Session = Depends(get_session)
-) -> SeriesOut:
+) -> SeriesRenameOut:
     """Hernoem een serie.
 
     Blijft staan bij een nieuwe scan: alleen de titel verandert, de mappen en
     bestanden blijven waar ze zijn.
+
+    Kom je daarmee op de naam van een serie die je al hebt, dan komt die terug
+    als ``merge_candidate``. Bijna altijd is dat hetzelfde ding — je bent
+    tenslotte aan het opruimen — maar samenvoegen gebeurt pas als je het zegt.
     """
     series = deps.get_series(session, series_id)
     titel = payload.title.strip()
@@ -237,9 +301,33 @@ def rename_series(
     series.title = titel
     series.sort_title = titel.lower()
     session.commit()
-    return deps.to_series_out(
-        series, len(series.books), sorted({book.kind.value for book in series.books})
+
+    uit = SeriesRenameOut(
+        **deps.to_series_out(
+            series, len(series.books), sorted({book.kind.value for book in series.books})
+        ).model_dump()
     )
+    naamgenoot = _same_name(session, series)
+    if naamgenoot is not None:
+        uit.merge_candidate = MergeCandidateOut(
+            id=naamgenoot.id, title=naamgenoot.title, books=len(naamgenoot.books)
+        )
+    return uit
+
+
+def _same_name(session: Session, series: Series) -> Series | None:
+    """Een andere serie die na normaliseren dezelfde naam heeft.
+
+    Dezelfde vergelijking als bij het toevoegen van een bron, zodat "Shinya
+    Shokudou" en "Shinya Shokudo" hier ook als één ding gelden.
+    """
+    gezocht = normalise(series.title)
+    if not gezocht:
+        return None
+    for andere in session.scalars(select(Series).where(Series.id != series.id)):
+        if normalise(andere.title) == gezocht:
+            return andere
+    return None
 
 
 @router.patch("/{series_id}/origin", response_model=SeriesOut)
@@ -757,3 +845,53 @@ def unbind_slot(
             book.slot = None
     session.commit()
     return get_series(series_id, False, session)
+
+
+@router.post("/{series_id}/covers", response_model=SyncCoversOut)
+def sync_series_covers(
+    series_id: int, session: Session = Depends(get_session)
+) -> SyncCoversOut:
+    """Haal de omslagen per deel op bij de bron.
+
+    Voor series die je al volgde voordat dit bestond, en voor wanneer een bron
+    er later betere heeft. Per uitgave apart: de gekleurde omslag hoort bij de
+    gekleurde delen, niet bij de zwart-witte.
+    """
+    series = deps.get_series(session, series_id)
+    abonnementen = list(
+        session.scalars(select(Subscription).where(Subscription.series_id == series_id))
+    )
+    if not abonnementen:
+        raise HTTPException(
+            status_code=409, detail="deze serie heeft geen bron om omslagen bij te halen"
+        )
+
+    resultaat = SyncCoversOut()
+    for subscription in abonnementen:
+        source_row = session.get(Source, subscription.source_id)
+        if source_row is None or not source_row.enabled:
+            continue
+        edition = session.scalar(
+            select(Edition).where(Edition.subscription_id == subscription.id)
+        )
+        try:
+            implementation = deps.get_source_implementation(source_row)
+        except HTTPException as exc:
+            resultaat.errors.append(str(exc.detail))
+            continue
+
+        aantal = source_service.sync_covers(
+            session,
+            implementation,
+            series,
+            ref=subscription.source_ref or series.source_ref,
+            edition=edition,
+        )
+        if aantal:
+            resultaat.updated += aantal
+            resultaat.editions.append(
+                f"{edition.name if edition else series.title} ({aantal})"
+            )
+
+    session.commit()
+    return resultaat

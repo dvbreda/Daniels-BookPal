@@ -29,6 +29,8 @@ import type {
   SearchHit,
   Series,
   SeriesDetail,
+  SeriesRenamed,
+  SyncCoversResult,
   SeriesQuery,
   Shelves,
   SourceRow,
@@ -140,8 +142,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  syncCovers: (id: number) =>
+    request<SyncCoversResult>(`/api/series/${id}/covers`, { method: "POST" }),
   renameSeries: (id: number, title: string) =>
-    request<Series>(`/api/series/${id}/title`, {
+    request<SeriesRenamed>(`/api/series/${id}/title`, {
       method: "PATCH",
       body: JSON.stringify({ title }),
     }),

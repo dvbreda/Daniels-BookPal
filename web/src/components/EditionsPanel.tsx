@@ -22,6 +22,7 @@ export function EditionsPanel({
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [melding, setMelding] = useState<string | null>(null);
   const [hernoemen, setHernoemen] = useState<number | null>(null);
 
   const opnieuw = () => {
@@ -44,6 +45,21 @@ export function EditionsPanel({
     },
     onError: (fout: unknown) =>
       setError(fout instanceof ApiError ? fout.message : "Hernoemen mislukt."),
+  });
+
+  const omslagen = useMutation({
+    mutationFn: () => api.syncCovers(seriesId),
+    onSuccess: (result) => {
+      setError(null);
+      setMelding(
+        result.updated === 0
+          ? "Geen nieuwe omslagen gevonden bij de bron."
+          : `${result.updated} omslagen opgehaald: ${result.editions.join(", ")}.`,
+      );
+      opnieuw();
+    },
+    onError: (fout: unknown) =>
+      setError(fout instanceof ApiError ? fout.message : "Omslagen ophalen mislukt."),
   });
 
   const verplaats = (index: number, richting: -1 | 1) => {
@@ -112,8 +128,10 @@ export function EditionsPanel({
                   className="min-w-0 flex-1 truncate text-left text-slate-100 hover:text-accent"
                 >
                   {edition.name}
-                  {edition.note && (
-                    <span className="ml-2 text-xs text-slate-500">{edition.note}</span>
+                  {[edition.language, edition.note].filter(Boolean).length > 0 && (
+                    <span className="ml-2 text-xs text-slate-500">
+                      {[edition.language, edition.note].filter(Boolean).join(" · ")}
+                    </span>
                   )}
                 </button>
                 <span
@@ -146,6 +164,21 @@ export function EditionsPanel({
         ))}
       </ol>
 
+      {/* Bij een bron hoort meestal één omslag per deel. Zonder dat toont elk
+          deel "pagina 1", en dat is bij scanlations vaak een credits-pagina
+          van de vertaalgroep. */}
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => omslagen.mutate()}
+          disabled={omslagen.isPending}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+        >
+          {omslagen.isPending ? "Ophalen…" : "Alle omslagen ophalen"}
+        </button>
+        <span className="text-xs text-slate-500">Per uitgave bij de bron, één per deel.</span>
+      </div>
+
+      {melding && <p className="mt-2 text-xs text-slate-400">{melding}</p>}
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
     </section>
   );
