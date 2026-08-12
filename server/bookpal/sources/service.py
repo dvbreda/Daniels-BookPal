@@ -19,6 +19,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
+from bookpal.formats import FORMAT_KINDS, detect_format, open_book
+from bookpal.formats.base import UnsupportedOperation
 from bookpal.library import editions
 from bookpal.metadata.filename import sort_title
 from bookpal.metadata.origin import Origin, from_online, resolve
@@ -520,6 +522,19 @@ def download_book(
     # kwam een pdf van het Internet Archive als ".cbz" op schijf te staan, en
     # dan opent er niets — het is geen zip.
     target = implementation.download(book.source_ref, target, data_saver=data_saver)
+
+    # Uitlezen wat er nu op schijf staat. Zonder dit weet de lezer niet hoeveel
+    # pagina's er zijn — en bij een bron die hele bestanden levert weet hij ook
+    # niet dat het een pdf is in plaats van een strip. Beide komen anders pas
+    # bij de eerstvolgende scan goed, en tot dan opent het hoofdstuk niet.
+    fmt = detect_format(target)
+    if fmt is not None:
+        book.kind = FORMAT_KINDS[fmt]
+        try:
+            with open_book(target, fmt) as bestand:
+                book.page_count = bestand.page_count()
+        except (OSError, UnsupportedOperation, ValueError) as exc:
+            logger.warning("paginatelling van %s: %s", target.name, exc)
 
     stat = target.stat()
     file_row = session.scalar(select(File).where(File.path == str(target)))

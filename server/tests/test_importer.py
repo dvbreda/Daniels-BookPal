@@ -74,9 +74,7 @@ class TestNaming:
         series = Series(title="Shinya Shokudo", sort_title="s")
         assert target_dir(root, series).name == "Shinya Shokudo"
 
-    def test_unsafe_characters_are_stripped_from_the_folder(
-        self, session: Session, tmp_path: Path
-    ):
+    def test_unsafe_characters_are_stripped_from_the_folder(self, session: Session, tmp_path: Path):
         root = make_root(session, tmp_path / "manga", name="Manga")
         series = Series(title='Hij/Zij: "raar"', sort_title="h")
         assert "/" not in target_dir(root, series).name
@@ -212,3 +210,83 @@ class TestImport:
         report = import_series(session, FakeSource(), series, target, download_missing=False)
         assert report.moved == 1
         assert report.skipped == 1
+
+
+class TestImportingMakesItYours:
+    """Een vooruit opgehaald hoofdstuk is cache, geen eigen bestand.
+
+    Het staat er zolang het handig is en mag daarna weg. Importeren is precies
+    de handeling die er een eigen bestand van maakt — pas dán hoort het bij
+    "Eigen bestanden".
+    """
+
+    def _opzet(self, session: Session, tmp_path: Path):
+        from bookpal.models import Edition, Source, Subscription
+
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        series = Series(title="Reeks", sort_title="reeks", source_id=bron.id)
+        session.add(series)
+        session.flush()
+        abo = Subscription(source_id=bron.id, series_id=series.id)
+        session.add(abo)
+        session.flush()
+        uitgave = Edition(series_id=series.id, name="Reeks via MD", rank=0, subscription_id=abo.id)
+        session.add(uitgave)
+        session.flush()
+
+        from tests.conftest import make_root
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        cache_root = make_root(session, cache, name="Downloads")
+        session.flush()
+        pad = cache / "h1.cbz"
+        pad.write_bytes(b"PK\x03\x04nep")
+        bestand = File(
+            library_root_id=cache_root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            file_id=bestand.id,
+            source_id=bron.id,
+            source_ref="abc",
+            edition_id=uitgave.id,
+        )
+        session.add(boek)
+        session.flush()
+        return series, boek, uitgave
+
+    def test_a_cached_chapter_stays_with_its_subscription(self, session: Session, tmp_path: Path):
+        _series, boek, uitgave = self._opzet(session, tmp_path)
+        assert boek.edition_id == uitgave.id, "vooruit opgehaald is nog niet van jou"
+
+    def test_importing_moves_it_to_your_own_files(self, session: Session, tmp_path: Path):
+        from bookpal.library import editions
+        from bookpal.sources.importer import _move
+        from tests.conftest import make_root
+
+        series, boek, uitgave = self._opzet(session, tmp_path)
+        doel_map = tmp_path / "bibliotheek"
+        doel_map.mkdir()
+        root = make_root(session, doel_map, name="Strips")
+        session.flush()
+
+        verplaatst = _move(session, boek, doel_map / "Hoofdstuk 1.cbz", root)
+        session.flush()
+
+        assert verplaatst is True
+        assert boek.edition_id != uitgave.id
+        eigen = editions.for_local_files(session, series)
+        assert boek.edition_id == eigen.id

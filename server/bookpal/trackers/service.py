@@ -180,18 +180,38 @@ def remote_progress(tracker: Tracker) -> dict[str, int]:
         return {}
 
 
-def _would_go_backwards(entry: TrackerEntry, remote: dict[str, int]) -> bool:
-    """Staat de tracker al verder dan wij?
+def _ahead_at_tracker(entry: TrackerEntry, remote: dict[str, int]) -> int | None:
+    """Hoe ver de tracker staat, als dat verder is dan wij.
 
-    Dan is wat daar staat het hoogste, en dat hoort te winnen. Je leest ook
-    buiten BookPal om — op papier, in een app, op een ander apparaat — en zo'n
-    stand terugzetten naar wat wij toevallig lokaal hebben is verlies dat je
-    niet ziet gebeuren.
+    Je leest ook buiten BookPal om — op papier, in een app, op een ander
+    apparaat. Die stand terugzetten naar wat wij toevallig lokaal hebben is
+    verlies dat je niet ziet gebeuren.
     """
     if entry.remote_id is None:
-        return False
+        return None
     daar = remote.get(str(entry.remote_id))
-    return daar is not None and daar > entry.chapters_read
+    if daar is not None and daar > entry.chapters_read:
+        return daar
+    return None
+
+
+def _catch_up(
+    session: Session, user: User, entry: TrackerEntry, tot: int, report: PushReport
+) -> None:
+    """Neem over wat de tracker verder was.
+
+    Het hoogste wint, en dat betekent niet alleen "niet achteruit pushen" maar
+    ook: hier bijwerken. Anders blijf je elke ronde hetzelfde verschil zien
+    zonder dat het ooit gladgestreken wordt.
+    """
+    series = session.get(Series, entry.series_id)
+    if series is None:
+        return
+    gemarkeerd, _bekeken = import_progress(session, user, series, tot)
+    report.pulled.append(
+        f"{entry.title}: {tot} van de tracker overgenomen "
+        f"(wij stonden op {entry.chapters_read}, {gemarkeerd} bijgewerkt)"
+    )
 
 
 def push_series(
@@ -212,7 +232,11 @@ def push_series(
     if account.provider not in series.tracker_ids:
         return None
     entry = entry_for_series(session, user, series, account.provider)
-    if _would_go_backwards(entry, remote if remote is not None else remote_progress(tracker)):
+    kaart = remote if remote is not None else remote_progress(tracker)
+    verder = _ahead_at_tracker(entry, kaart)
+    if verder is not None:
+        if not account.dry_run:
+            import_progress(session, user, series, verder)
         return None
     return tracker.push(entry, dry_run=account.dry_run)
 
@@ -229,8 +253,17 @@ def push_all(session: Session, tracker: Tracker, account: TrackerAccount, user: 
     # de hele lijst.
     remote = remote_progress(tracker)
     for entry in entries:
-        if _would_go_backwards(entry, remote):
-            report.skipped.append(f"{entry.title}: de tracker staat al verder")
+        verder = _ahead_at_tracker(entry, remote)
+        if verder is not None:
+            # Niet alleen niet-achteruit-pushen: die hogere stand hoort hier ook
+            # binnen te komen, anders zie je elke ronde hetzelfde verschil.
+            if account.dry_run:
+                report.skipped.append(
+                    f"{entry.title}: de tracker staat op {verder}, wij op "
+                    f"{entry.chapters_read} — dat zou hier overgenomen worden"
+                )
+            else:
+                _catch_up(session, user, entry, verder, report)
             continue
         try:
             result = tracker.push(entry, dry_run=account.dry_run)

@@ -249,6 +249,8 @@ def run_tracker(account_id: int, session: Session = Depends(get_session)) -> Pus
             for result in report.results
         ],
         errors=report.errors,
+        skipped=report.skipped,
+        pulled=report.pulled,
     )
 
 

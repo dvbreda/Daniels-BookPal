@@ -833,6 +833,10 @@ class PushReportOut(BaseModel):
     pushed: int
     results: list[PushResultOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    # Niets te doen — bij een proefronde bijvoorbeeld.
+    skipped: list[str] = Field(default_factory=list)
+    # Andersom: de tracker stond verder en die stand is hier overgenomen.
+    pulled: list[str] = Field(default_factory=list)
 
 
 class BubbleOut(BaseModel):

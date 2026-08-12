@@ -542,7 +542,7 @@ class TestPickBestChapters:
         assert [c.ref for c in eerste] == [c.ref for c in tweede]
 
     def test_a_preferred_group_beats_the_bigger_one(self):
-        """"De meeste hoofdstukken" is niet hetzelfde als "de mooiste
+        """ "De meeste hoofdstukken" is niet hetzelfde als "de mooiste
         vertaling"; die keuze hoort bij de lezer."""
         chapters = [
             self._chapter("a1", "1", "vlijtig"),
@@ -577,16 +577,31 @@ class TestGroupSummary:
     def test_lists_groups_with_their_share(self):
         chapters = [
             ChapterInfo(
-                ref="a", number="1", volume="1", title=None, language="en",
-                group_id="g1", group_name="Vlijtig",
+                ref="a",
+                number="1",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g1",
+                group_name="Vlijtig",
             ),
             ChapterInfo(
-                ref="b", number="2", volume="1", title=None, language="en",
-                group_id="g1", group_name="Vlijtig",
+                ref="b",
+                number="2",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g1",
+                group_name="Vlijtig",
             ),
             ChapterInfo(
-                ref="c", number="1", volume="1", title=None, language="en",
-                group_id="g2", group_name="Mooier",
+                ref="c",
+                number="1",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g2",
+                group_name="Mooier",
             ),
         ]
         samenvatting = source_service.group_summary(chapters)
@@ -735,9 +750,7 @@ class TestSyncDeduplication:
         )
         session.add(gelezen)
         session.flush()
-        session.add(
-            Progress(user_id=current_user(session).id, book_id=gelezen.id, percent=30.0)
-        )
+        session.add(Progress(user_id=current_user(session).id, book_id=gelezen.id, percent=30.0))
         session.flush()
 
         source_service.sync_chapters(
@@ -948,3 +961,74 @@ class TestSourcesApi:
 
     def test_expire_endpoint_runs(self, client):
         assert client.post("/api/sources/downloads/expire").json() == {"removed": 0}
+
+
+class TestADownloadIsReadableRightAway:
+    """Zonder paginatelling weet de lezer niet hoeveel er is, en opent er niets.
+
+    Bij MangaDex vulde de bron dat getal zelf, maar een bron die hele bestanden
+    levert doet dat niet. Dan bleef het leeg tot de eerstvolgende scan.
+    """
+
+    def _boek_met_bron(self, session: Session, tmp_path: Path):
+        from bookpal.models import BookKind, Series, Source
+
+        bron = Source(type="archiveorg", name="IA")
+        session.add(bron)
+        session.flush()
+        series = Series(title="Darakuya", sort_title="darakuya", source_id=bron.id)
+        session.add(series)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Deel 1",
+            number="1",
+            sort_number=1.0,
+            source_id=bron.id,
+            source_ref="darakuya/deel_1.cbz",
+        )
+        session.add(boek)
+        session.flush()
+        return boek
+
+    def test_the_page_count_is_there_without_a_scan(
+        self, session: Session, tmp_path: Path, temp_settings
+    ):
+        from tests.conftest import make_cbz
+
+        boek = self._boek_met_bron(session, tmp_path)
+
+        class Nep:
+            def download(self, ref, target, *, data_saver=False):
+                make_cbz(target, pages=7)
+                return target
+
+        source_service.download_book(session, Nep(), boek)
+        assert boek.page_count == 7
+
+    def test_a_pdf_is_recognised_as_a_pdf(self, session: Session, tmp_path: Path, temp_settings):
+        """De bron levert hele bestanden; wat het ís blijkt pas uit het bestand."""
+        from bookpal.models import BookKind
+
+        boek = self._boek_met_bron(session, tmp_path)
+
+        class Nep:
+            def download(self, ref, target, *, data_saver=False):
+                doel = target.with_suffix(".pdf")
+                doel.parent.mkdir(parents=True, exist_ok=True)
+                doel.write_bytes(_MINIMALE_PDF)
+                return doel
+
+        source_service.download_book(session, Nep(), boek)
+        assert boek.kind is BookKind.PDF
+
+
+# Een pdf van één lege pagina — genoeg om te herkennen en te tellen.
+_MINIMALE_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+    b"trailer<</Root 1 0 R>>\n"
+)

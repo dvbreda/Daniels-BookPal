@@ -29,6 +29,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from bookpal.library import editions
 from bookpal.models import Book, File, LibraryRoot, Series
 from bookpal.sources.base import Source as SourceImpl
 from bookpal.sources.base import SourceError
@@ -180,4 +181,12 @@ def _move(session: Session, book: Book, destination: Path, root: LibraryRoot) ->
     file_row.mtime = stat.st_mtime
     # Blijvend: de TTL van het vooruitlezen geldt hier niet meer voor.
     book.expires_at = None
+
+    # En hiermee is het van jou. Een hoofdstuk dat een abonnement vooruit heeft
+    # gehaald is cache: het staat er zolang het handig is en mag daarna weg.
+    # Importeren is precies de handeling die daar een eigen bestand van maakt,
+    # dus verhuist het boek nu ook naar de uitgave "Eigen bestanden".
+    series = session.get(Series, book.series_id)
+    if series is not None:
+        book.edition_id = editions.for_local_files(session, series).id
     return True

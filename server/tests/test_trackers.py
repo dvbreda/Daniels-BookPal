@@ -1257,7 +1257,47 @@ class TestNeverGoingBackwards:
         report = push_all(session, tracker, account, current_user(session))
 
         assert tracker.geduwd == [], "er hoorde niets gepusht te worden"
-        assert report.skipped and "al verder" in report.skipped[0]
+        assert report.pulled and "overgenomen" in report.pulled[0]
+
+    def test_the_higher_number_comes_in_here(self, session: Session):
+        """Niet alleen niet-achteruit-pushen: die stand hoort hier binnen te komen.
+
+        Anders zie je elke ronde hetzelfde verschil zonder dat het ooit wordt
+        gladgestreken.
+        """
+        from bookpal.trackers.service import entry_for_series, push_all
+
+        series = self._serie(session, 22)
+        # De hoofdstukken 23 t/m 25 bestaan wel, maar staan nog niet als gelezen.
+        for nummer in range(23, 26):
+            self._genummerd(session, series, str(nummer))
+        session.flush()
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        push_all(session, self._tracker(25), account, current_user(session))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 25
+
+    def test_a_dry_run_changes_nothing_here_either(self, session: Session):
+        from bookpal.trackers.service import entry_for_series, push_all
+
+        series = self._serie(session, 22)
+        for nummer in range(23, 26):
+            self._genummerd(session, series, str(nummer))
+        session.flush()
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=True)
+        session.add(account)
+        session.flush()
+
+        report = push_all(session, self._tracker(25), account, current_user(session))
+
+        assert report.pulled == []
+        assert report.skipped and "overgenomen" in report.skipped[0]
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 22, "een proefronde raakt je bibliotheek niet aan"
 
     def test_our_own_higher_number_is_pushed(self, session: Session):
         from bookpal.trackers.service import push_all
