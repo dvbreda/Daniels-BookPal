@@ -423,3 +423,55 @@ class TestNoWebpForTheKobo:
         srcs = re.findall(r'src="/api/books/[^"]*profile=([^"&]+)', pagina)
         assert srcs, "er hoort een pagina-plaatje te staan"
         assert all(PROFILES[naam].format != "webp" for naam in srcs)
+
+
+class TestOldWebkitLayout:
+    """De browser van een Kobo is QtWebKit uit ongeveer 2012.
+
+    Die kent geen flexbox: `display: flex` valt daar terug op `block`, en dan
+    wordt een raster een kolom. Deze test bewaakt dat we het niet per ongeluk
+    weer gebruiken.
+    """
+
+    def test_the_stylesheet_has_no_flexbox(self, client: TestClient):
+        stijl = client.get("/lite").text
+        import re
+
+        blok = stijl.split("<style>")[1].split("</style>")[0]
+        # In commentaar mag het woord staan; als eigenschap niet.
+        code = re.sub(r"/\*.*?\*/", "", blok, flags=re.S)
+        assert "display: flex" not in code
+        assert "gap:" not in code
+        assert "flex:" not in code
+
+    def test_grid_cards_sit_next_to_each_other(self, client: TestClient, session: Session):
+        """inline-block in plaats van flex, en elke derde zonder rechtermarge."""
+        for naam in ("Een", "Twee", "Drie", "Vier"):
+            session.add(Series(title=naam, sort_title=naam.lower()))
+        session.commit()
+
+        pagina = client.get("/lite", params={"raster": 1}).text
+        assert 'class="raster"' in pagina
+        assert pagina.count('<li class="derde">') == 1
+
+
+class TestGridOnTheHome:
+    def test_the_library_can_be_a_grid_too(self, client: TestClient, session: Session):
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+
+        lijst = client.get("/lite").text
+        assert "Als raster" in lijst
+        assert 'class="raster"' not in lijst
+
+        raster = client.get("/lite", params={"raster": 1}).text
+        assert 'class="raster"' in raster
+        assert "Als lijst" in raster
+
+    def test_the_choice_travels_into_a_series(self, client: TestClient, session: Session):
+        series = Series(title="Iets", sort_title="iets")
+        session.add(series)
+        session.commit()
+
+        raster = client.get("/lite", params={"raster": 1}).text
+        assert f"/lite/series/{series.id}?raster=1" in raster

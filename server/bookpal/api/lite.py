@@ -38,52 +38,78 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/lite", tags=["lite"])
 
 _STYLE = """
-/* Kleiner dan de lezer zelf: in een lijst wil je zien wat je hebt, niet één
-   titel per scherm. De tapdoelen blijven wel groot — een e-inkscherm reageert
-   traag genoeg zonder dat je ook nog moet mikken. */
+/* Alles hier moet kloppen op de browser van een Kobo: QtWebKit uit ongeveer
+   2012. Die kent geen flexbox — een `display: flex` valt daar terug op `block`,
+   waardoor elk kaartje op een eigen regel belandt en je raster een kolom wordt.
+   Daarom float en inline-block, en marges in plaats van `gap`.
+
+   Kleiner lettertype dan de lezer zelf: in een lijst wil je zien wat je hebt,
+   niet één titel per scherm. De tapdoelen blijven groot — een e-inkscherm
+   reageert traag genoeg zonder dat je ook nog moet mikken. */
 body { font-family: sans-serif; margin: 0; padding: 0.8em; font-size: 1em; }
 h1 { font-size: 1.15em; margin: 0.2em 0 0.6em; }
 ul { list-style: none; padding: 0; margin: 0; }
 li { border-bottom: 1px solid #ccc; }
 a { display: block; padding: 0.7em 0.2em; color: #000; text-decoration: none; }
 .meta { color: #555; font-size: 0.8em; }
-.tools { display: flex; gap: 0.5em; margin: 0.8em 0; }
+
+/* Knoppenbalk: twee of drie naast elkaar, ongeacht hoeveel het er zijn. */
+.tools { margin: 0.8em 0; overflow: hidden; }
 .tools a {
-  flex: 1; text-align: center; border: 1px solid #888; padding: 0.6em 0.3em;
-  font-size: 0.9em;
+  float: left; box-sizing: border-box; text-align: center; border: 1px solid #888;
+  padding: 0.6em 0.3em; font-size: 0.9em; margin-right: 2%;
 }
-/* Omslagen: klein genoeg dat er een lijst op past, groot genoeg om een reeks
-   aan te herkennen. Vaste maat, zodat de lijst niet verspringt terwijl de
-   plaatjes binnenkomen. */
-li a.cover-row { display: flex; align-items: center; gap: 0.7em; padding: 0.5em 0.2em; }
-.cover-row img { width: 44px; height: 66px; object-fit: cover; background: #eee; flex: none; }
-.cover-row .naam { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tools.twee a { width: 49%; }
+.tools.twee a.laatste { margin-right: 0; }
+.tools.een a { width: 100%; margin-right: 0; }
+
+/* Omslag naast de titel. Een tabel-achtige opmaak omdat verticaal centreren
+   zonder flexbox anders niet lukt. */
+li a.cover-row { padding: 0.5em 0.2em; overflow: hidden; }
+.cover-row img {
+  width: 44px; height: 66px; float: left; margin-right: 0.7em; background: #eee;
+}
+.cover-row .naam { display: block; overflow: hidden; }
 .bar { height: 3px; background: #ddd; margin-top: 0.3em; }
 .bar span { display: block; height: 100%; background: #444; }
+
 /* Raster: drie op een rij past op elk Kobo-scherm zonder dat de omslag te
-   klein wordt om te herkennen. Geen flexbox-gedoe — dit moet ook op een oude
-   webkit kloppen. */
-ul.raster { display: flex; flex-wrap: wrap; gap: 0.6em; }
-ul.raster li { width: 30%; border: none; }
+   klein wordt om te herkennen. font-size 0 op de lijst haalt de witruimte
+   tussen inline-blocks weg; de kaartjes zetten hem weer terug. */
+ul.raster { font-size: 0; }
+ul.raster li {
+  display: inline-block; vertical-align: top; width: 31.3%; border: none;
+  margin: 0 3% 0.8em 0; font-size: 1rem;
+}
+ul.raster li.derde { margin-right: 0; }
 ul.raster a { padding: 0; }
-ul.raster img { width: 100%; height: auto; background: #eee; }
-ul.raster .naam { display: block; font-size: 0.8em; overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
+ul.raster img { width: 100%; height: auto; background: #eee; display: block; }
+ul.raster .naam {
+  display: block; font-size: 0.75em; line-height: 1.2; max-height: 2.4em;
+  overflow: hidden; margin-top: 0.2em;
+}
+
 /* Verder lezen: één blok bovenaan, want dat is bijna altijd wat je wilt. */
-.hero { display: flex; gap: 0.8em; border: 1px solid #888; padding: 0.6em; margin-bottom: 1em; }
-.hero img { width: 70px; height: 105px; object-fit: cover; background: #eee; flex: none; }
-.hero .wat { min-width: 0; }
+.hero { border: 1px solid #888; padding: 0.6em; margin-bottom: 1em; overflow: hidden; }
+.hero img { width: 70px; height: 105px; float: left; margin-right: 0.8em; background: #eee; }
+.hero .wat { overflow: hidden; }
 .hero .titel { font-size: 1.05em; font-weight: bold; }
 .hero a.knop { display: inline-block; border: 1px solid #444; padding: 0.5em 0.9em;
   margin-top: 0.4em; }
-.nav { display: flex; justify-content: space-between; margin: 1em 0; }
-.nav.rtl { flex-direction: row-reverse; }
-.nav a { flex: 1; text-align: center; border: 1px solid #888; margin: 0 0.3em; }
+
+/* Bladeren: vorige links, volgende rechts — omgedraaid bij manga. */
+.nav { margin: 1em 0; overflow: hidden; }
+.nav a { display: block; width: 47%; box-sizing: border-box; text-align: center;
+  border: 1px solid #888; float: left; }
+.nav a.verder { float: right; }
+.nav.rtl a { float: right; }
+.nav.rtl a.verder { float: left; }
+
 .page { text-align: center; }
 .page img { max-width: 100%; height: auto; }
 /* De vertaallaag is een doorzichtige PNG op exact dezelfde maat, dus hij hoeft
-   alleen over de pagina gelegd te worden. Geen JavaScript: aan- en uitzetten is
-   een gewone link naar dezelfde pagina zonder ?vertaal. */
+   alleen over de pagina gelegd te worden. Zonder JavaScript: aan- en uitzetten
+   is een gewone link naar dezelfde pagina zonder ?vertaal. */
 .stack { position: relative; display: inline-block; max-width: 100%; }
 .stack .layer { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
 .back { display: inline-block; margin-bottom: 0.5em; }
@@ -234,11 +260,47 @@ def _qs(profile: str | None, translated: bool = False, hide_read: bool = False) 
 HideReadParam = Query(default=False, description="Verberg wat je al uit hebt.")
 
 
+def _card(href: str, cover: str, naam: str, *, grid: bool, index: int) -> str:
+    """Eén regel of één tegel, afhankelijk van de weergave.
+
+    In het raster krijgt elke derde tegel geen rechtermarge; zonder dat past de
+    derde net niet meer op de regel en zakt hij een rij omlaag.
+    """
+    if grid:
+        rand = ' class="derde"' if index % 3 == 2 else ""
+        return (
+            f"<li{rand}><a href=\"{href}\">"
+            f'<img src="{cover}" alt="" loading="lazy">'
+            f'<span class="naam">{naam}</span></a></li>'
+        )
+    return (
+        f'<li><a class="cover-row" href="{href}">'
+        f'<img src="{cover}" alt="" loading="lazy">'
+        f'<span class="naam">{naam}</span></a></li>'
+    )
+
+
+def _toolbar(knoppen: list[tuple[str, str]]) -> str:
+    """Een rij knoppen die naast elkaar past.
+
+    De breedte staat in een klasse en niet in flexbox: de Kobo-browser kent dat
+    niet, en dan wordt elke knop een eigen regel.
+    """
+    if not knoppen:
+        return ""
+    klasse = {1: "een", 2: "twee"}.get(len(knoppen), "twee")
+    regels = []
+    for index, (label, href) in enumerate(knoppen):
+        # De laatste zonder rechtermarge, anders valt hij van de regel af.
+        rand = ' class="laatste"' if index == len(knoppen) - 1 else ""
+        regels.append(f'<a{rand} href="{href}">{escape(label)}</a>')
+    return f'<div class="tools {klasse}">{"".join(regels)}</div>' 
+
 def _hide_toggle(pad: str, opts: LiteOptions) -> str:
     """De schakelaar zelf: een gewone link naar dezelfde pagina."""
     doel = f"{pad}{opts.query(verberg=not opts.hide_read)}"
     label = "Alles tonen" if opts.hide_read else "Gelezen verbergen"
-    return f'<div class="tools"><a href="{doel}">{label}</a></div>' 
+    return _toolbar([(label, doel)])
 
 
 @router.get("", response_class=HTMLResponse)
@@ -273,10 +335,14 @@ def lite_home(
     ).all()
 
     items = "".join(
-        f'<li><a class="cover-row" href="/lite/series/{s.id}{opts.query()}">'
-        f'<img src="/api/series/{s.id}/cover{_cover_query(opts.profile)}" alt="" loading="lazy">'
-        f'<span class="naam">{escape(s.title)}</span></a></li>'
-        for s in rows
+        _card(
+            f"/lite/series/{s.id}{opts.query()}",
+            f"/api/series/{s.id}/cover{_cover_query(opts.profile)}",
+            escape(s.title),
+            grid=opts.grid,
+            index=index,
+        )
+        for index, s in enumerate(rows)
     )
     # De paginering plakt achter de bestaande instellingen aan.
     rest = opts.query().lstrip("?")
@@ -291,8 +357,9 @@ def lite_home(
         href = f"/lite?offset={next_offset}&limit={limit}{profile_bit}"
         nav += f'<a href="{href}">Volgende &raquo;</a>'
 
+    lijst = f'<ul class="raster">{items}</ul>' if opts.grid else f"<ul>{items}</ul>"
     body = f"<h1>BookPal</h1>{_continue_block(session, opts)}"
-    body += f"{_hide_toggle('/lite', opts)}<ul>{items}</ul>"
+    body += f"{_view_tools('/lite', opts)}{lijst}"
     if not rows:
         body += (
             "<p>Niets open.</p>"
@@ -321,7 +388,7 @@ def lite_series(
             if not ((row := progress.get(book.id)) is not None and row.finished)
         ]
 
-    rows = []
+    rows: list[str] = []
     for book in books:
         prog = progress.get(book.id)
         # Zonder het deel is de volgorde niet te volgen zodra hoofdstukken
@@ -337,19 +404,21 @@ def lite_series(
                 else ""
             )
             meta = f'<div class="meta">{escape(state)}</div>{balk}'
-        klasse = "" if opts.grid else ' class="cover-row"'
         rows.append(
-            f"<li><a{klasse} href=\"/lite/books/{book.id}{opts.query()}\">"
-            f'<img src="/api/books/{book.id}/cover{_cover_query(opts.profile)}"'
-            f' alt="" loading="lazy">'
-            f'<span class="naam">{escape(label)}{meta}</span></a></li>'
+            _card(
+                f"/lite/books/{book.id}{opts.query()}",
+                f"/api/books/{book.id}/cover{_cover_query(opts.profile)}",
+                f"{escape(label)}{meta}",
+                grid=opts.grid,
+                index=len(rows),
+            )
         )
 
     lijst = f'<ul class="raster">{"".join(rows)}</ul>' if opts.grid else f"<ul>{''.join(rows)}</ul>"
     body = (
         f'<a class="back" href="/lite{opts.query()}">&laquo; Bibliotheek</a>'
         f"<h1>{escape(series.title)}</h1>"
-        f"{_view_tools(series.id, opts)}"
+        f"{_view_tools(f'/lite/series/{series.id}', opts)}"
         f"{lijst}"
     )
     if not rows:
@@ -421,12 +490,11 @@ def lite_read(
     links = []
     if page > 0:
         links.append(f'<a href="/lite/books/{book.id}/read/{page - 1}{query}">&laquo; Vorige</a>')
-    else:
-        links.append("<span></span>")
     if page < book.page_count - 1:
-        links.append(f'<a href="/lite/books/{book.id}/read/{page + 1}{query}">Volgende &raquo;</a>')
-    else:
-        links.append("<span></span>")
+        links.append(
+            f'<a class="verder" href="/lite/books/{book.id}/read/{page + 1}{query}">'
+            "Volgende &raquo;</a>"
+        )
 
     # Alleen aanbieden als er iets te tonen valt: een link naar een vertaling
     # die nog niet bestaat, levert een lege laag en een verwarde lezer op.
@@ -512,20 +580,23 @@ def _reading_tools(book_id: int, page: int, opts: LiteOptions) -> str:
     return f'<div class="tools">{regels}</div>'
 
 
-def _view_tools(series_id: int, opts: LiteOptions) -> str:
+def _view_tools(basis: str, opts: LiteOptions) -> str:
     """Raster of lijst, en het verbergen van wat je uit hebt.
 
     Twee knoppen naast elkaar in plaats van twee balken onder elkaar: op een
     Kobo is verticale ruimte het schaarse goed.
     """
-    basis = f"/lite/series/{series_id}"
-    weergave = "Als lijst" if opts.grid else "Als raster"
-    verbergen = "Alles tonen" if opts.hide_read else "Gelezen verbergen"
-    return (
-        '<div class="tools">'
-        f'<a href="{basis}{opts.query(raster=not opts.grid)}">{weergave}</a>'
-        f'<a href="{basis}{opts.query(verberg=not opts.hide_read)}">{verbergen}</a>'
-        "</div>"
+    return _toolbar(
+        [
+            (
+                "Als lijst" if opts.grid else "Als raster",
+                f"{basis}{opts.query(raster=not opts.grid)}",
+            ),
+            (
+                "Alles tonen" if opts.hide_read else "Gelezen verbergen",
+                f"{basis}{opts.query(verberg=not opts.hide_read)}",
+            ),
+        ]
     )
 
 
