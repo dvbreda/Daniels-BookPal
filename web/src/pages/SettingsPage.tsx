@@ -146,6 +146,14 @@ export function SettingsPage() {
                   {root.last_scan_at &&
                     ` · laatst gescand ${new Date(root.last_scan_at).toLocaleString("nl-NL")}`}
                 </p>
+                {/* Dat je hier niets kunt neerzetten hoor je te zien vóórdat je
+                    iets probeert te importeren, niet daarna. Lezen en scannen
+                    werkt gewoon; alleen erin schrijven niet. */}
+                {root.writable === false && (
+                  <p className="mt-1 text-xs text-warning">
+                    Alleen lezen: {root.write_problem}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => scan.mutate(root.id)}
@@ -275,7 +283,8 @@ function TranslateModePanel() {
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["translate-mode"], queryFn: api.translateMode });
   const change = useMutation({
-    mutationFn: (mode: TranslateMode) => api.setTranslateMode(mode),
+    mutationFn: (body: { mode?: TranslateMode; button_mode?: TranslateMode }) =>
+      api.setTranslateMode(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["translate-mode"] }),
   });
 
@@ -291,40 +300,23 @@ function TranslateModePanel() {
         </p>
       ) : (
         <>
-          <p className="mt-1 text-xs text-slate-500">
-            Geldt voor de vertaalknop en de wachtrij die vooruitleest. Los daarvan kun je in
-            de lezer altijd één pagina met een duurder model doen — dat wordt bewaard, dus
-            een tweede keer kost niets.
-          </p>
-          <div className="mt-3 space-y-2">
-            {MODE_ORDER.map((mode) => (
-              <label
-                key={mode}
-                className={`flex cursor-pointer gap-3 rounded p-3 ${
-                  data.mode === mode ? "bg-ink-700" : "bg-ink-800"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="vertaalstand"
-                  className="mt-1"
-                  checked={data.mode === mode}
-                  onChange={() => change.mutate(mode)}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-slate-100">{MODE_LABELS[mode].naam}</span>
-                    <span className="tabular-nums text-xs text-slate-500">
-                      ± ${(data.costs[mode] ?? 0).toFixed(3)} per pagina
-                    </span>
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    {MODE_LABELS[mode].uitleg}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
+          <ModeChoice
+            titel="Vanzelf"
+            uitleg="Wat de wachtrij doet die vooruitleest terwijl je leest. Dit loopt zonder
+              dat je erom vraagt, dus hier hoort de goedkope stand te staan."
+            gekozen={data.mode}
+            kosten={data.costs}
+            onChange={(mode) => change.mutate({ mode })}
+          />
+          <ModeChoice
+            titel="De knop in de lezer"
+            uitleg="Wat er gebeurt als jij zelf op een pagina drukt. Dat doe je juist omdat
+              díé pagina het waard is, dus hier mag iets duurders staan. Het resultaat
+              wordt bewaard, dus een tweede keer kost niets."
+            gekozen={data.button_mode}
+            kosten={data.costs}
+            onChange={(button_mode) => change.mutate({ button_mode })}
+          />
         </>
       )}
     </section>
@@ -662,5 +654,60 @@ function SidecarPanel() {
       </button>
       {melding && <p className="mt-2 text-xs text-slate-400">{melding}</p>}
     </section>
+  );
+}
+
+
+/**
+ * Eén rij keuzes voor een vertaalstand.
+ *
+ * Twee keer dezelfde vorm, want het zijn twee losse instellingen die dezelfde
+ * standen delen: wat er vanzelf gebeurt, en wat er gebeurt als jij erom vraagt.
+ */
+function ModeChoice({
+  titel,
+  uitleg,
+  gekozen,
+  kosten,
+  onChange,
+}: {
+  titel: string;
+  uitleg: string;
+  gekozen: TranslateMode;
+  kosten: Record<string, number>;
+  onChange: (mode: TranslateMode) => void;
+}) {
+  return (
+    <div className="mt-4">
+      <p className="text-sm font-medium text-slate-200">{titel}</p>
+      <p className="mt-1 text-xs text-slate-500">{uitleg}</p>
+      <div className="mt-2 space-y-2">
+        {MODE_ORDER.map((mode) => (
+          <label
+            key={mode}
+            className={`flex cursor-pointer gap-3 rounded p-3 ${
+              gekozen === mode ? "bg-ink-700" : "bg-ink-800"
+            }`}
+          >
+            <input
+              type="radio"
+              name={`vertaalstand-${titel}`}
+              className="mt-1"
+              checked={gekozen === mode}
+              onChange={() => onChange(mode)}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-baseline gap-2">
+                <span className="text-slate-100">{MODE_LABELS[mode].naam}</span>
+                <span className="tabular-nums text-xs text-slate-500">
+                  ± ${(kosten[mode] ?? 0).toFixed(3)} per pagina
+                </span>
+              </span>
+              <span className="mt-1 block text-xs text-slate-500">{MODE_LABELS[mode].uitleg}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
   );
 }

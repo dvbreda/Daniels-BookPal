@@ -144,6 +144,10 @@ export interface ContinueInfo {
 }
 
 export interface LibraryRoot {
+  /** Kan BookPal hier zelf iets neerzetten? Zo niet staat de reden in
+   * write_problem — in gewone taal, want de oplossing verschilt per oorzaak. */
+  writable?: boolean;
+  write_problem?: string | null;
   id: number;
   name: string;
   path: string;
@@ -343,6 +347,8 @@ export interface PageTranslation {
 
 export interface TranslateModeInfo {
   mode: TranslateMode;
+  /** Wat de knop in de lezer doet; los van wat er vanzelf gebeurt. */
+  button_mode: TranslateMode;
   /** Zonder Gemini-sleutel is er niets te kiezen. */
   configured: boolean;
   /** Ruwe richtprijs per pagina in dollar, per stand. */

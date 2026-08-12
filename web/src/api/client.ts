@@ -375,10 +375,12 @@ export const api = {
       `/api/books/${bookId}/translation-status${queryString({ lang })}`,
     ),
   translateMode: () => request<TranslateModeInfo>("/api/translate/mode"),
-  setTranslateMode: (mode: TranslateMode) =>
+  // Twee losse standen: wat er vanzelf gebeurt en wat de knop in de lezer doet.
+  // Wat je niet meestuurt blijft staan.
+  setTranslateMode: (body: { mode?: TranslateMode; button_mode?: TranslateMode }) =>
     request<TranslateModeInfo>("/api/translate/mode", {
       method: "PUT",
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify(body),
     }),
   translatePageFully: (
     bookId: number,

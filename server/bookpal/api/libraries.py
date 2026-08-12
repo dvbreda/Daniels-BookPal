@@ -17,6 +17,7 @@ from bookpal.schemas import (
     ScanResultOut,
     SidecarSyncOut,
 )
+from bookpal.sources.importer import why_not_writable
 
 router = APIRouter(prefix="/api/libraries", tags=["libraries"])
 
@@ -38,6 +39,11 @@ def _to_out(session: Session, root: LibraryRoot) -> LibraryRootOut:
     out = LibraryRootOut.model_validate(root)
     out.series_count = series_count
     out.book_count = book_count
+    # Meteen meesturen: dat je hier niets kunt neerzetten hoor je te zien
+    # vóórdat je iets probeert te importeren, niet daarna.
+    probleem = why_not_writable(Path(root.path))
+    out.writable = probleem is None
+    out.write_problem = probleem
     return out
 
 

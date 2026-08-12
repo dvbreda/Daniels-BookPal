@@ -6,6 +6,7 @@ op wat er níet mag gebeuren: niets overschrijven, niets weggooien.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -101,15 +102,23 @@ class TestWritable:
         with pytest.raises(SourceError, match="bestaat niet"):
             check_writable(root)
 
-    def test_a_read_only_folder_names_the_likely_cause(self, session: Session, tmp_path: Path):
-        """Read-only aangekoppeld is de gangbare oorzaak; dat hoort in de
-        melding te staan in plaats van een kale OSError."""
+    def test_a_folder_you_may_not_write_in_names_the_command(
+        self, session: Session, tmp_path: Path
+    ):
+        """De melding hoort te zeggen wát je moet doen.
+
+        Geen schrijfrecht is iets anders dan read-only aangekoppeld: het eerste
+        los je op met chown, het tweede in compose.yml. Een kale OSError laat je
+        op de verkeerde plek zoeken.
+        """
         folder = tmp_path / "alleenlezen"
         folder.mkdir()
         folder.chmod(0o500)
         root = LibraryRoot(name="RO", path=str(folder))
         try:
-            with pytest.raises(SourceError, match=":ro"):
+            if os.access(folder, os.W_OK):
+                pytest.skip("deze test draait als root; dan mag alles toch")
+            with pytest.raises(SourceError, match="chown"):
                 check_writable(root)
         finally:
             folder.chmod(0o700)
@@ -290,3 +299,48 @@ class TestImportingMakesItYours:
         assert boek.edition_id != uitgave.id
         eigen = editions.for_local_files(session, series)
         assert boek.edition_id == eigen.id
+
+
+class TestWhyItCannotWrite:
+    """De reden telt: read-only repareer je in compose, eigendom met chown.
+
+    "Permission denied" alleen laat je raden, en dan zoek je op de verkeerde
+    plek.
+    """
+
+    def test_a_missing_folder_says_so(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        assert "bestaat niet" in (why_not_writable(tmp_path / "weg") or "")
+
+    def test_a_writable_folder_has_no_problem(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        assert why_not_writable(tmp_path) is None
+
+    def test_a_folder_owned_by_someone_else_names_the_command(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        vreemd = tmp_path / "vanroot"
+        vreemd.mkdir()
+        vreemd.chmod(0o555)
+        try:
+            reden = why_not_writable(vreemd)
+            if reden is None:
+                pytest.skip("deze test draait als root; dan mag alles toch")
+            assert "chown" in reden
+        finally:
+            vreemd.chmod(0o755)
+
+    def test_the_api_says_it_per_folder(self, client, session: Session, tmp_path: Path):
+        """Je hoort het te zien vóórdat je iets probeert te importeren."""
+        from tests.conftest import make_root
+
+        goed = tmp_path / "goed"
+        goed.mkdir()
+        make_root(session, goed, name="Goed")
+        session.commit()
+
+        [rij] = [r for r in client.get("/api/libraries").json() if r["name"] == "Goed"]
+        assert rij["writable"] is True
+        assert rij["write_problem"] is None

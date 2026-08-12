@@ -89,9 +89,7 @@ class TestGeminiTranslator:
                 ]
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert [b.translation for b in result.bubbles] == ["HOI", "DOEI"]
 
     def test_the_model_name_is_recorded(self):
@@ -116,9 +114,7 @@ class TestGeminiTranslator:
                 json={"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert len(result.bubbles) == 1
 
     def test_one_broken_bubble_does_not_lose_the_rest(self):
@@ -130,9 +126,7 @@ class TestGeminiTranslator:
                 ]
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert [b.translation for b in result.bubbles] == ["GOED"]
 
     def test_rate_limit_is_reported_clearly(self):
@@ -295,9 +289,11 @@ class TestService:
         """Net als het vooruitlezen van M5: wat je al voorbij bent hoeft niet
         meer vertaald te worden."""
         book = _comic(session, pages=6)
-        assert plan_pages(
-            session, book, target_lang="nl", provider="gemini", from_page=3
-        ) == [3, 4, 5]
+        assert plan_pages(session, book, target_lang="nl", provider="gemini", from_page=3) == [
+            3,
+            4,
+            5,
+        ]
 
     def test_plan_respects_the_limit(self, session: Session):
         book = _comic(session, pages=10)
@@ -449,9 +445,7 @@ class TestApi:
         assert asked.status_code == 200
         assert asked.content == plain.content
 
-    def test_asking_for_a_translated_page_bakes_it_in(
-        self, scanned: TestClient, session: Session
-    ):
+    def test_asking_for_a_translated_page_bakes_it_in(self, scanned: TestClient, session: Session):
         book_id = _comic_id(scanned)
         session.add(
             Translation(
@@ -459,9 +453,7 @@ class TestApi:
                 page_index=0,
                 target_lang="nl",
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -471,9 +463,7 @@ class TestApi:
         assert baked.status_code == 200
         assert baked.content != plain.content
 
-    def test_the_overlay_is_a_png_the_size_of_the_page(
-        self, scanned: TestClient, session: Session
-    ):
+    def test_the_overlay_is_a_png_the_size_of_the_page(self, scanned: TestClient, session: Session):
         book_id = _comic_id(scanned)
         session.add(
             Translation(
@@ -481,9 +471,7 @@ class TestApi:
                 page_index=0,
                 target_lang="nl",
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -755,3 +743,37 @@ class TestSidecarPersistence:
         assert [b.translation for b in result.bubbles] == ["B"]
         # En de database is bijgewerkt, zodat de statusteller weer klopt.
         assert find(session, book.id, 1, "nl", "gemini") is not None
+
+
+class TestTwoTranslateModes:
+    """Vanzelf mag goedkoop zijn, de knop mag duur zijn.
+
+    Dat zijn twee losse keuzes: de wachtrij loopt zonder dat je erom vraagt, en
+    als jij zelf op een pagina drukt is dat juist omdat díé pagina het waard is.
+    """
+
+    def test_they_start_apart(self, client: TestClient):
+        body = client.get("/api/translate/mode").json()
+        assert body["mode"] == "text", "vanzelf hoort goedkoop te zijn"
+        assert body["button_mode"] == "image_fast", "de knop een stap hoger"
+
+    def test_setting_one_leaves_the_other_alone(self, client: TestClient):
+        client.put("/api/translate/mode", json={"button_mode": "image_pro"})
+        body = client.get("/api/translate/mode").json()
+        assert body["button_mode"] == "image_pro"
+        assert body["mode"] == "text"
+
+        client.put("/api/translate/mode", json={"mode": "image_fast"})
+        body = client.get("/api/translate/mode").json()
+        assert body["mode"] == "image_fast"
+        assert body["button_mode"] == "image_pro", "de knopstand bleef staan"
+
+    def test_an_unknown_mode_is_refused(self, client: TestClient):
+        response = client.put("/api/translate/mode", json={"button_mode": "gratis"})
+        assert response.status_code == 400
+
+    def test_sending_nothing_changes_nothing(self, client: TestClient):
+        voor = client.get("/api/translate/mode").json()
+        na = client.put("/api/translate/mode", json={}).json()
+        assert na["mode"] == voor["mode"]
+        assert na["button_mode"] == voor["button_mode"]

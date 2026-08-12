@@ -808,9 +808,20 @@ function TranslateControl({
     refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 4000 : false),
   });
 
+  // Wat de knop doet staat in de instellingen, los van wat er vanzelf gebeurt:
+  // vanzelf mag goedkoop zijn, en als jij zelf op een pagina drukt is dat juist
+  // omdat díé pagina het waard is.
+  const { data: standen } = useQuery({
+    queryKey: ["translate-mode"],
+    queryFn: api.translateMode,
+    staleTime: 5 * 60 * 1000,
+  });
+
   const [busy, setBusy] = useState<string | null>(null);
 
   if (!status?.configured) return null;
+
+  const knopStand = standen?.button_mode ?? "image_fast";
 
   const total = status.page_count ?? 0;
   const done = status.translated;
@@ -858,22 +869,19 @@ function TranslateControl({
       >
         {busy === "tekst" ? "Bezig…" : "Deze pagina"}
       </Toggle>
-      <Toggle
-        active={false}
-        disabled={busy !== null}
-        onClick={() => void translateFully("image_fast")}
-        title="Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)"
-      >
-        {busy === "image_fast" ? "Bezig…" : "Volledig"}
-      </Toggle>
-      <Toggle
-        active={false}
-        disabled={busy !== null}
-        onClick={() => void translateFully("image_pro")}
-        title="Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)"
-      >
-        {busy === "image_pro" ? "Bezig…" : "Volledig+"}
-      </Toggle>
+      {/* Eén knop, met de stand die jij hebt gekozen. Eerder stonden hier
+          "Volledig" en "Volledig+" naast elkaar, en dat zei niet wat het deed
+          of wat het kostte. */}
+      {knopStand !== "text" && (
+        <Toggle
+          active={false}
+          disabled={busy !== null}
+          onClick={() => void translateFully(knopStand)}
+          title={`${BUTTON_LABELS[knopStand]} — te wijzigen bij Instellingen → Vertaling`}
+        >
+          {busy === knopStand ? "Bezig…" : BUTTON_SHORT[knopStand]}
+        </Toggle>
+      )}
       <Toggle
         active={false}
         disabled={status.queued > 0 || busy !== null}
@@ -923,3 +931,21 @@ function Toggle({
     </button>
   );
 }
+
+/**
+ * Wat de knop in de lezer doet, kort en in het lang.
+ *
+ * De richtprijs staat erbij omdat dit de enige plek in de app is waar één tik
+ * meteen geld kost. "Volledig+" zei dat niet — dit wel.
+ */
+const BUTTON_SHORT: Record<TranslateMode, string> = {
+  text: "Tekstvlakken",
+  image_fast: "Hertekenen",
+  image_pro: "Hertekenen (zwaar)",
+};
+
+const BUTTON_LABELS: Record<TranslateMode, string> = {
+  text: "Tekstvlakken over de pagina (~$0,002 per pagina)",
+  image_fast: "Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)",
+  image_pro: "Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)",
+};

@@ -36,6 +36,10 @@ class LibraryRootOut(BaseModel):
     last_scan_at: datetime | None
     series_count: int = 0
     book_count: int = 0
+    # Kan BookPal hier zelf iets neerzetten? Zo niet, dan staat hier waarom —
+    # in gewone taal, want de oplossing verschilt per oorzaak.
+    writable: bool = True
+    write_problem: str | None = None
 
 
 class ProgressOut(BaseModel):
@@ -869,6 +873,10 @@ class PageTranslationOut(BaseModel):
 
 class TranslateModeOut(BaseModel):
     mode: str
+    # Wat de knop in de lezer doet. Losgekoppeld van de automatische stand:
+    # vanzelf vertalen mag goedkoop zijn, maar als jij zelf op een pagina drukt
+    # is dat juist omdat die ene het waard is.
+    button_mode: str = "image_fast"
     # Zonder sleutel kan er niets; de client verbergt de keuze dan.
     configured: bool
     # Waar vertalingen bewaard worden, en of dat ook echt lukt. Een vertaling
@@ -880,7 +888,10 @@ class TranslateModeOut(BaseModel):
 
 
 class TranslateModeIn(BaseModel):
-    mode: str = Field(max_length=20)
+    """Beide standen zijn los te zetten; wat je niet meestuurt blijft staan."""
+
+    mode: str | None = Field(default=None, max_length=20)
+    button_mode: str | None = Field(default=None, max_length=20)
 
 
 class TranslatePageIn(BaseModel):
