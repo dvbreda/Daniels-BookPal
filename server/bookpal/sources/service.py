@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from bookpal.config import settings
 from bookpal.library import editions
+from bookpal.metadata.filename import sort_title
 from bookpal.metadata.origin import Origin, from_online, resolve
 from bookpal.metadata.titles import normalise
 from bookpal.models import (
@@ -103,7 +104,7 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
     if series is None:
         series = Series(
             title=result.title,
-            sort_title=result.title.lower(),
+            sort_title=sort_title(result.title),
             library_root_id=download_root(session).id,
             source_id=source.id,
             source_ref=result.ref,

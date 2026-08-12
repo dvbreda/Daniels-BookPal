@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { ScanResult, TranslateMode } from "../api/types";
+import { KoboPanel } from "../components/KoboPanel";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
@@ -70,6 +71,8 @@ export function SettingsPage() {
       )}
 
       <IntakePanel />
+
+      <KoboPanel />
 
       <MergePanel />
 

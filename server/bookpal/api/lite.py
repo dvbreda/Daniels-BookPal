@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.db import current_user, get_session
 from bookpal.images import get_profile
-from bookpal.models import BookKind, Series
+from bookpal.models import Book, BookKind, Progress, Series
 from bookpal.translate import service as translation_service
 
 from . import deps
@@ -31,12 +31,20 @@ from . import deps
 router = APIRouter(prefix="/lite", tags=["lite"])
 
 _STYLE = """
-body { font-family: sans-serif; margin: 0; padding: 1em; font-size: 1.2em; }
-h1 { font-size: 1.3em; }
+/* Kleiner dan de lezer zelf: in een lijst wil je zien wat je hebt, niet één
+   titel per scherm. De tapdoelen blijven wel groot — een e-inkscherm reageert
+   traag genoeg zonder dat je ook nog moet mikken. */
+body { font-family: sans-serif; margin: 0; padding: 0.8em; font-size: 1em; }
+h1 { font-size: 1.15em; margin: 0.2em 0 0.6em; }
 ul { list-style: none; padding: 0; margin: 0; }
 li { border-bottom: 1px solid #ccc; }
-a { display: block; padding: 0.9em 0.2em; color: #000; text-decoration: none; }
-.meta { color: #555; font-size: 0.85em; }
+a { display: block; padding: 0.7em 0.2em; color: #000; text-decoration: none; }
+.meta { color: #555; font-size: 0.8em; }
+.tools { display: flex; gap: 0.5em; margin: 0 0 0.8em; }
+.tools a {
+  flex: 1; text-align: center; border: 1px solid #888; padding: 0.6em 0.3em;
+  font-size: 0.9em;
+}
 .nav { display: flex; justify-content: space-between; margin: 1em 0; }
 .nav.rtl { flex-direction: row-reverse; }
 .nav a { flex: 1; text-align: center; border: 1px solid #888; margin: 0 0.3em; }
@@ -80,13 +88,27 @@ def _profile_param(
 ProfileParam = Depends(_profile_param)
 
 
-def _qs(profile: str | None, translated: bool = False) -> str:
+def _qs(profile: str | None, translated: bool = False, hide_read: bool = False) -> str:
     parts = []
     if profile:
         parts.append(f"profile={profile}")
     if translated:
         parts.append("vertaal=1")
+    if hide_read:
+        # Blijft aan over links heen: zonder JavaScript is de URL de enige
+        # plek waar een schakelaar kan wonen.
+        parts.append("verberg=1")
     return f"?{'&'.join(parts)}" if parts else ""
+
+
+HideReadParam = Query(default=False, description="Verberg wat je al uit hebt.")
+
+
+def _hide_toggle(pad: str, profile: str | None, hide_read: bool) -> str:
+    """De schakelaar zelf: een gewone link naar dezelfde pagina."""
+    doel = f"{pad}{_qs(profile, hide_read=not hide_read)}"
+    label = "Alles tonen" if hide_read else "Gelezen verbergen"
+    return f'<div class="tools"><a href="{doel}">{label}</a></div>' 
 
 
 @router.get("", response_class=HTMLResponse)
@@ -94,18 +116,41 @@ def lite_home(
     profile: str | None = ProfileParam,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=40, ge=1, le=200),
+    verberg: bool = HideReadParam,
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     """Alle series. Tabs (M3) filteren dit later; nu nog de volle lijst."""
-    total = int(session.scalar(select(func.count(Series.id))) or 0)
+    user = current_user(session)
+    statement = select(Series)
+    telling = select(func.count(Series.id))
+    if verberg:
+        # Een serie is "uit" als er geen enkel deel meer openstaat. Als
+        # voorwaarde op de query en niet achteraf, anders klopt het paginanummer
+        # niet meer.
+        openstaand = (
+            select(Book.series_id)
+            .outerjoin(
+                Progress,
+                (Progress.book_id == Book.id) & (Progress.user_id == user.id),
+            )
+            .where((Progress.id.is_(None)) | (Progress.finished.is_(False)))
+        )
+        statement = statement.where(Series.id.in_(openstaand))
+        telling = telling.where(Series.id.in_(openstaand))
+
+    total = int(session.scalar(telling) or 0)
     rows = session.scalars(
-        select(Series).order_by(Series.sort_title).offset(offset).limit(limit)
+        statement.order_by(Series.sort_title).offset(offset).limit(limit)
     ).all()
 
     items = "".join(
-        f'<li><a href="/lite/series/{s.id}{_qs(profile)}">{escape(s.title)}</a></li>' for s in rows
+        f'<li><a href="/lite/series/{s.id}{_qs(profile, hide_read=verberg)}">'
+        f"{escape(s.title)}</a></li>"
+        for s in rows
     )
     profile_bit = f"&profile={profile}" if profile else ""
+    if verberg:
+        profile_bit += "&verberg=1"
     nav = ""
     if offset > 0:
         prev_offset = max(0, offset - limit)
@@ -116,7 +161,13 @@ def lite_home(
         href = f"/lite?offset={next_offset}&limit={limit}{profile_bit}"
         nav += f'<a href="{href}">Volgende &raquo;</a>'
 
-    body = f"<h1>BookPal</h1><ul>{items}</ul>"
+    body = f"<h1>BookPal</h1>{_hide_toggle('/lite', profile, verberg)}<ul>{items}</ul>"
+    if not rows:
+        body += (
+            "<p>Niets open."
+            if verberg
+            else "<p>Nog geen series; draai een scan.</p>"
+        )
     if nav:
         body += f'<div class="nav">{nav}</div>'
     return _page("BookPal", body)
@@ -126,12 +177,19 @@ def lite_home(
 def lite_series(
     series_id: int,
     profile: str | None = ProfileParam,
+    verberg: bool = HideReadParam,
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     series = deps.get_series(session, series_id)
     user = current_user(session)
     books = list(series.books)
     progress = deps.progress_for(session, user, [b.id for b in books])
+    if verberg:
+        books = [
+            book
+            for book in books
+            if not ((row := progress.get(book.id)) is not None and row.finished)
+        ]
 
     rows = []
     for book in books:
@@ -145,13 +203,18 @@ def lite_series(
             state = "uitgelezen" if prog.finished else f"{prog.percent:.0f}%"
             meta = f'<div class="meta">{escape(state)}</div>'
         rows.append(
-            f'<li><a href="/lite/books/{book.id}{_qs(profile)}">{escape(label)}{meta}</a></li>'
+            f'<li><a href="/lite/books/{book.id}{_qs(profile, hide_read=verberg)}">'
+            f"{escape(label)}{meta}</a></li>"
         )
 
     body = (
-        f'<a class="back" href="/lite{_qs(profile)}">&laquo; Bibliotheek</a>'
-        f"<h1>{escape(series.title)}</h1><ul>{''.join(rows)}</ul>"
+        f'<a class="back" href="/lite{_qs(profile, hide_read=verberg)}">&laquo; Bibliotheek</a>'
+        f"<h1>{escape(series.title)}</h1>"
+        f"{_hide_toggle(f'/lite/series/{series.id}', profile, verberg)}"
+        f"<ul>{''.join(rows)}</ul>"
     )
+    if not rows:
+        body += "<p>Niets open in deze serie.</p>"
     return _page(series.title, body)
 
 

@@ -166,6 +166,58 @@ class MergeCandidateOut(BaseModel):
     books: int
 
 
+class KoboStatusOut(BaseModel):
+    """Wat er van de Kobo-koppeling aanstaat, en of het apparaat er is."""
+
+    mount: str | None = None
+    connected: bool = False
+    writable: bool = False
+    error: str | None = None
+    folder: str = "BookPal"
+    ahead: int = 3
+    series_ids: list[int] = Field(default_factory=list)
+    export_books: bool = True
+    write_shelves: bool = True
+    read_progress: bool = True
+    dry_run: bool = True
+
+
+class KoboSettingsIn(BaseModel):
+    """Alleen wat je meestuurt wordt aangepast."""
+
+    mount: str | None = None
+    folder: str | None = None
+    ahead: int | None = Field(default=None, ge=1, le=50)
+    series_ids: list[int] | None = None
+    export_books: bool | None = None
+    write_shelves: bool | None = None
+    read_progress: bool | None = None
+    dry_run: bool | None = None
+
+
+class KoboPlanOut(BaseModel):
+    book_id: int
+    series_title: str
+    title: str
+    path: str
+
+
+class KoboSyncOut(BaseModel):
+    dry_run: bool = True
+    planned: int = 0
+    copied: int = 0
+    skipped: int = 0
+    removed: int = 0
+    shelves_created: list[str] = Field(default_factory=list)
+    shelf_entries: int = 0
+    not_imported: int = 0
+    progress_updated: int = 0
+    # De naam van de kopie die vóór het schrijven is gemaakt.
+    backup: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
 class SyncCoversOut(BaseModel):
     """Hoeveel omslagen er zijn bijgewerkt, en waar het misging."""
 

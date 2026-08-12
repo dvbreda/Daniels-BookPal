@@ -406,6 +406,44 @@ export interface ReadState {
   affected: number;
 }
 
+export interface KoboStatus {
+  mount: string | null;
+  connected: boolean;
+  writable: boolean;
+  error: string | null;
+  folder: string;
+  ahead: number;
+  series_ids: number[];
+  export_books: boolean;
+  write_shelves: boolean;
+  read_progress: boolean;
+  /** Standaard aan: dit schrijft in de database van je lezer. */
+  dry_run: boolean;
+}
+
+export interface KoboPlanItem {
+  book_id: number;
+  series_title: string;
+  title: string;
+  path: string;
+}
+
+export interface KoboSyncResult {
+  dry_run: boolean;
+  planned: number;
+  copied: number;
+  skipped: number;
+  removed: number;
+  shelves_created: string[];
+  shelf_entries: number;
+  not_imported: number;
+  progress_updated: number;
+  /** De kopie die vóór het schrijven is gemaakt. */
+  backup: string | null;
+  errors: string[];
+  notes: string[];
+}
+
 export interface IntakeUpload {
   path: string;
   name: string;

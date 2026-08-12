@@ -6,6 +6,7 @@ from bookpal.api import (
     books,
     collections,
     intake,
+    kobo,
     libraries,
     lite,
     opds,
@@ -28,6 +29,7 @@ router.include_router(progress.router)
 router.include_router(tabs.router)
 router.include_router(collections.router)
 router.include_router(intake.router)
+router.include_router(kobo.router)
 router.include_router(sources.router)
 router.include_router(trackers.router)
 router.include_router(translate.router)

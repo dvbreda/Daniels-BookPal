@@ -9,6 +9,9 @@ import type {
   IntakeImportResult,
   IntakeFetch,
   IntakeScan,
+  KoboPlanItem,
+  KoboStatus,
+  KoboSyncResult,
   IntakeUpload,
   GoodreadsStatus,
   GoodreadsSyncResult,
@@ -279,6 +282,11 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  koboStatus: () => request<KoboStatus>("/api/kobo/status"),
+  koboSettings: (body: Partial<Omit<KoboStatus, "connected" | "writable" | "error">>) =>
+    request<KoboStatus>("/api/kobo/settings", { method: "PUT", body: JSON.stringify(body) }),
+  koboPlan: () => request<KoboPlanItem[]>("/api/kobo/plan"),
+  koboSync: () => request<KoboSyncResult>("/api/kobo/sync", { method: "POST" }),
   intakeScan: () => request<IntakeScan>("/api/intake"),
   intakeImport: (body: { paths: string[]; root_id: number; folder?: string | null }) =>
     request<IntakeImportResult>("/api/intake/import", {

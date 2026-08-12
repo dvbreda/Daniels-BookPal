@@ -71,9 +71,9 @@ class TestLiteReading:
         book_id = self._comic_book_id(scanned)
         response = scanned.get(f"/lite/books/{book_id}/read/0")
         assert response.status_code == 200
-        assert f'/api/books/{book_id}/pages/0' in response.text
-        assert f'/lite/books/{book_id}/read/1' in response.text
-        assert f'/lite/books/{book_id}/read/-1' not in response.text
+        assert f"/api/books/{book_id}/pages/0" in response.text
+        assert f"/lite/books/{book_id}/read/1" in response.text
+        assert f"/lite/books/{book_id}/read/-1" not in response.text
 
     def test_read_page_records_progress(self, scanned: TestClient):
         book_id = self._comic_book_id(scanned)
@@ -158,9 +158,7 @@ class TestLiteTranslation:
                 page_index=page,
                 target_lang=settings.translate_lang,
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.4, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.4, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -184,7 +182,7 @@ class TestLiteTranslation:
         book_id = self._comic_book_id(scanned)
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
-        assert f'/api/books/{book_id}/pages/0/overlay' in response.text
+        assert f"/api/books/{book_id}/pages/0/overlay" in response.text
         assert 'class="stack"' in response.text
         assert "Origineel" in response.text
 
@@ -193,7 +191,7 @@ class TestLiteTranslation:
         book_id = self._comic_book_id(scanned)
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
-        assert f'/lite/books/{book_id}/read/1?vertaal=1' in response.text
+        assert f"/lite/books/{book_id}/read/1?vertaal=1" in response.text
 
     def test_the_page_image_itself_is_not_baked(self, scanned: TestClient, session: Session):
         """De pagina blijft één gedeelde afbeelding; alleen de laag komt erbij.
@@ -202,3 +200,88 @@ class TestLiteTranslation:
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
         assert "translate=" not in response.text
+
+
+class TestHidingWhatYouRead:
+    """Op een Kobo scroll je niet graag langs honderd uitgelezen hoofdstukken."""
+
+    def _reeks(self, session: Session, aantal: int, gelezen: int, naam: str = "Reeks") -> Series:
+        from bookpal.db import current_user
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Progress
+
+        root = LibraryRoot(name=naam, path=f"/tmp/lite-{naam}")
+        session.add(root)
+        session.flush()
+        series = Series(title=naam, sort_title=naam.lower())
+        session.add(series)
+        session.flush()
+        for index in range(aantal):
+            bestand = File(
+                library_root_id=root.id,
+                path=f"/tmp/lite-{naam}/{index}.cbz",
+                size=1,
+                mtime=0.0,
+                extension=".cbz",
+            )
+            session.add(bestand)
+            session.flush()
+            boek = Book(
+                series_id=series.id,
+                kind=BookKind.COMIC,
+                title=f"Hoofdstuk {index + 1}",
+                number=str(index + 1),
+                sort_number=float(index + 1),
+                page_count=10,
+                file_id=bestand.id,
+            )
+            session.add(boek)
+            session.flush()
+            if index < gelezen:
+                session.add(
+                    Progress(
+                        user_id=current_user(session).id,
+                        book_id=boek.id,
+                        percent=100.0,
+                        finished=True,
+                    )
+                )
+        session.commit()
+        return series
+
+    def test_the_switch_hides_finished_chapters(self, client: TestClient, session: Session):
+        series = self._reeks(session, 4, gelezen=2)
+
+        alles = client.get(f"/lite/series/{series.id}").text
+        assert "Hoofdstuk 1" in alles
+
+        verborgen = client.get(f"/lite/series/{series.id}", params={"verberg": 1}).text
+        assert "Hoofdstuk 1" not in verborgen
+        assert "Hoofdstuk 3" in verborgen
+
+    def test_the_switch_stays_on_across_links(self, client: TestClient, session: Session):
+        """Zonder JavaScript is de URL de enige plek waar een stand kan wonen."""
+        series = self._reeks(session, 2, gelezen=1)
+        pagina = client.get("/lite", params={"verberg": 1}).text
+        assert f"/lite/series/{series.id}?verberg=1" in pagina
+
+    def test_a_series_you_finished_disappears_from_the_library(
+        self, client: TestClient, session: Session
+    ):
+        self._reeks(session, 2, gelezen=2, naam="Uit")
+        self._reeks(session, 2, gelezen=1, naam="Bezig")
+
+        verborgen = client.get("/lite", params={"verberg": 1}).text
+        assert "Bezig" in verborgen
+        assert ">Uit<" not in verborgen
+
+    def test_without_the_switch_everything_is_there(self, client: TestClient, session: Session):
+        self._reeks(session, 2, gelezen=2, naam="Uit")
+        pagina = client.get("/lite").text
+        assert "Uit" in pagina
+
+    def test_the_switch_offers_the_way_back(self, client: TestClient, session: Session):
+        self._reeks(session, 1, gelezen=0)
+        aan = client.get("/lite", params={"verberg": 1}).text
+        assert "Alles tonen" in aan
+        uit = client.get("/lite").text
+        assert "Gelezen verbergen" in uit

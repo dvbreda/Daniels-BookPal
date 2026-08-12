@@ -51,9 +51,11 @@ class TestFilenameParsing:
         assert normalise_number(None) == float("inf")
 
     def test_sort_title_ignores_articles(self):
-        assert sort_title("De Testreeks") == "Testreeks"
-        assert sort_title("The Sandman") == "Sandman"
-        assert sort_title("Blake en Mortimer") == "Blake en Mortimer"
+        # Kleine letters, want SQLite sorteert op tekencode: anders komt
+        # "Claire" vóór "crayon" en valt de lijst in tweeën.
+        assert sort_title("De Testreeks") == "testreeks"
+        assert sort_title("The Sandman") == "sandman"
+        assert sort_title("Blake en Mortimer") == "blake en mortimer"
 
 
 class TestScanning:
@@ -209,7 +211,7 @@ class TestSeriesGrouping:
         series = session.scalars(select(Series)).all()
         assert len(series) == 1
         assert series[0].title == "De Testreeks"
-        assert series[0].sort_title == "Testreeks"
+        assert series[0].sort_title == "testreeks"
 
     def test_books_are_ordered_by_number(self, session: Session, library_root: Path):
         for number in ("10", "2", "1"):

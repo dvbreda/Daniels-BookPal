@@ -21,6 +21,7 @@ from bookpal.images import (
 )
 from bookpal.library import editions
 from bookpal.library import merge as merge_module
+from bookpal.metadata.filename import sort_title as sort_title_for
 from bookpal.metadata.titles import normalise
 from bookpal.models import (
     Book,
@@ -314,7 +315,7 @@ def rename_series(
     )
     if bezet is None:
         series.title = titel
-        series.sort_title = titel.lower()
+        series.sort_title = sort_title_for(titel)
         session.commit()
 
     uit = SeriesRenameOut(

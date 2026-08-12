@@ -766,3 +766,39 @@ class TestSimilarSeries:
         session.commit()
 
         assert client.get(f"/api/series/{kort.id}/similar").json() == []
+
+
+class TestSortTitles:
+    """Eén schrijfwijze, anders valt elke lijst in tweeën."""
+
+    def test_the_sort_title_is_lowercase(self):
+        from bookpal.metadata.filename import sort_title
+
+        assert sort_title("Claire") == "claire"
+        assert sort_title("Crayon Shin-chan") == "crayon shin-chan"
+
+    def test_a_leading_article_is_skipped(self):
+        from bookpal.metadata.filename import sort_title
+
+        assert sort_title("The One Piece") == "one piece"
+        assert sort_title("De Kleine Zeemeermin") == "kleine zeemeermin"
+
+    def test_renaming_writes_the_same_shape(self, client, session: Session):
+        series = Series(title="Iets", sort_title="iets")
+        session.add(series)
+        session.commit()
+
+        client.patch(f"/api/series/{series.id}/title", json={"title": "The Sandman"})
+        session.expire_all()
+        assert session.get(Series, series.id).sort_title == "sandman"
+
+    def test_the_library_list_is_in_one_order(self, client, session: Session):
+        """Het geval dat het opleverde: hoofdletters sorteren vóór kleine letters."""
+        for titel in ("Claire", "Crayon Shin-chan", "Dragon Ball Super", "Down to Earth"):
+            from bookpal.metadata.filename import sort_title
+
+            session.add(Series(title=titel, sort_title=sort_title(titel)))
+        session.commit()
+
+        titels = [item["title"] for item in client.get("/api/series").json()["items"]]
+        assert titels == ["Claire", "Crayon Shin-chan", "Down to Earth", "Dragon Ball Super"]
