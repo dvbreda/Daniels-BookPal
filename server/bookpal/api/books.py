@@ -16,6 +16,7 @@ from bookpal.images import (
     render_page,
     source_id_for,
 )
+from bookpal.images.adjust import Adjustments
 from bookpal.models import Book, BookKind, File, Series
 from bookpal.schemas import (
     BookDetailOut,
@@ -144,6 +145,7 @@ def get_page(
     book_id: int,
     index: int,
     profile: ImageProfile = deps.ProfileDep,
+    adjustments: Adjustments = deps.AdjustDep,
     translate: str | None = Query(default=None, max_length=8),
     session: Session = Depends(get_session),
 ) -> Response:
@@ -167,7 +169,9 @@ def get_page(
     path = deps.book_file_path(session, book)
     source = open_source(path)
     try:
-        rendered = render_page(source, index, profile, source_id=source_id_for(path))
+        rendered = render_page(
+            source, index, profile, source_id=source_id_for(path), adjustments=adjustments
+        )
     except IndexError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except UnsupportedOperation as exc:

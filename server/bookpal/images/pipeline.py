@@ -20,6 +20,8 @@ from PIL import Image, ImageOps
 from bookpal.config import settings
 from bookpal.formats import BookFile, book_cache
 from bookpal.formats.base import RawPage, UnsupportedOperation
+from bookpal.images import adjust
+from bookpal.images.adjust import Adjustments
 from bookpal.images.profiles import ImageProfile
 
 logger = logging.getLogger(__name__)
@@ -41,10 +43,16 @@ class RenderedImage:
     from_cache: bool
 
 
-def _cache_key(source_id: str, index: int, profile: ImageProfile) -> str:
+def _cache_key(
+    source_id: str,
+    index: int,
+    profile: ImageProfile,
+    adjustments: Adjustments | None = None,
+) -> str:
     raw = (
         f"{source_id}|{index}|{profile.name}|{profile.max_width}x{profile.max_height}|"
         f"{profile.format}|{profile.quality}|{profile.grayscale}|{profile.dither_levels}"
+        f"{(adjustments or Adjustments()).cache_key}"
     )
     return hashlib.sha256(raw.encode()).hexdigest()
 
@@ -80,11 +88,18 @@ def to_eink_gray(image: Image.Image, levels: int) -> Image.Image:
     return quantised.convert("L")
 
 
-def process_image(data: bytes, profile: ImageProfile) -> bytes:
+def process_image(
+    data: bytes, profile: ImageProfile, adjustments: Adjustments | None = None
+) -> bytes:
     with Image.open(BytesIO(data)) as source:
         # Sommige scans dragen een EXIF-rotatie; zonder dit staat de pagina scheef.
         image = ImageOps.exif_transpose(source) or source
         image.load()
+
+        # Bijsnijden vóór het verkleinen: anders schaal je eerst een witrand
+        # mee en gooi je daarna alsnog pixels weg die je net betaald hebt.
+        if adjustments is not None and adjustments.active:
+            image = adjust.apply(image, adjustments)
 
         if profile.max_width or profile.max_height:
             max_w = profile.max_width or image.width
@@ -132,9 +147,10 @@ def render_page(
     profile: ImageProfile,
     *,
     source_id: str,
+    adjustments: Adjustments | None = None,
 ) -> RenderedImage:
     """Lever pagina ``index`` in het gevraagde profiel."""
-    key = _cache_key(source_id, index, profile)
+    key = _cache_key(source_id, index, profile, adjustments)
     path = _cache_path(key, profile)
     if path.exists():
         return RenderedImage(path.read_bytes(), profile.media_type, from_cache=True)
@@ -142,7 +158,7 @@ def render_page(
     # De breedte-hint laat een pdf meteen op maat renderen in plaats van groot
     # renderen en daarna verkleinen.
     raw = book.get_page(index, target_width=profile.max_width)
-    data = process_image(raw.data, profile)
+    data = process_image(raw.data, profile, adjustments)
     _store(path, data)
     return RenderedImage(data, profile.media_type, from_cache=False)
 

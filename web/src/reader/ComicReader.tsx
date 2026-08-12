@@ -57,6 +57,11 @@ export function ComicReader({ book, onClose }: Props) {
   const [zoom, setZoom] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
   const [translated, setTranslated] = useStoredState("reader.translated", false);
+  // Leesinstellingen die het beeld zelf raken; de server snijdt en rekt op en
+  // cachet het resultaat, dus dit kost niets bij het omslaan.
+  const [crop, setCrop] = useStoredState("reader.crop", false);
+  const [contrast, setContrast] = useStoredState("reader.contrast", 100);
+  const adjust = useMemo(() => ({ crop, contrast }), [crop, contrast]);
   const [dismissedNext, setDismissedNext] = useState(false);
 
   const spreads = useMemo(
@@ -80,9 +85,9 @@ export function ComicReader({ book, onClose }: Props) {
     if (viewMode !== "paged") return;
     for (const page of pagesToPreload(spreads, spreadIndex, PRELOAD_SPREADS)) {
       const image = new Image();
-      image.src = imageUrl.page(book.id, page, profile);
+      image.src = imageUrl.page(book.id, page, profile, adjust);
     }
-  }, [book.id, profile, spreadIndex, spreads, viewMode]);
+  }, [adjust, book.id, profile, spreadIndex, spreads, viewMode]);
 
   // Voortgang wegschrijven, ontdaan van ruis tijdens snel doorbladeren.
   const pendingPercent = useRef<number | null>(null);
@@ -231,6 +236,7 @@ export function ComicReader({ book, onClose }: Props) {
           onVisiblePage={setPage}
           onAspect={noteAspect}
           translated={translated}
+          adjust={adjust}
         />
       ) : (
         <div
@@ -253,6 +259,7 @@ export function ComicReader({ book, onClose }: Props) {
                 profile={profile}
                 fitClass={fitClass}
                 translated={translated}
+                adjust={adjust}
                 onAspect={noteAspect}
               />
             ))}
@@ -281,6 +288,10 @@ export function ComicReader({ book, onClose }: Props) {
           spreadCount={spreads.length}
           currentPage={currentPage}
           pageCount={pageCount}
+          crop={crop}
+          setCrop={setCrop}
+          contrast={contrast}
+          setContrast={setContrast}
           translated={translated}
           setTranslated={setTranslated}
           onSeek={setPage}
@@ -299,6 +310,7 @@ interface VerticalProps {
   onVisiblePage: (page: number) => void;
   onAspect: (index: number, width: number, height: number) => void;
   translated: boolean;
+  adjust: { crop: boolean; contrast: number };
 }
 
 /** Doorlopende verticale weergave voor webtoons — daar zijn "pagina's" een
@@ -311,6 +323,7 @@ function VerticalReader({
   onVisiblePage,
   onAspect,
   translated,
+  adjust,
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);
@@ -380,7 +393,7 @@ function VerticalReader({
             style={loaded.has(index) ? undefined : { aspectRatio: "2 / 3" }}
           >
             <img
-              src={imageUrl.page(book.id, index, profile)}
+              src={imageUrl.page(book.id, index, profile, adjust)}
               alt={`Pagina ${index + 1}`}
               className="w-full"
               loading="lazy"
@@ -422,6 +435,10 @@ interface ChromeProps {
   spreadCount: number;
   currentPage: number;
   pageCount: number;
+  crop: boolean;
+  setCrop: (value: boolean) => void;
+  contrast: number;
+  setContrast: (value: number) => void;
   translated: boolean;
   setTranslated: (value: boolean) => void;
   onSeek: (page: number) => void;
@@ -445,6 +462,10 @@ function Chrome(props: ChromeProps) {
     spreadCount,
     currentPage,
     pageCount,
+    crop,
+    setCrop,
+    contrast,
+    setContrast,
     translated,
     setTranslated,
     onSeek,
@@ -490,6 +511,20 @@ function Chrome(props: ChromeProps) {
           </Toggle>
           <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
             {rightToLeft ? "Rechts → links" : "Links → rechts"}
+          </Toggle>
+          <Toggle
+            active={crop}
+            onClick={() => setCrop(!crop)}
+            title="Egale rand rond de pagina wegsnijden — scheelt op een klein scherm zo een vijfde"
+          >
+            Bijsnijden
+          </Toggle>
+          <Toggle
+            active={contrast > 100}
+            onClick={() => setContrast(contrast > 100 ? 100 : 140)}
+            title="Grijsbereik oprekken; helpt bij bleke scans"
+          >
+            Contrast
           </Toggle>
           <TranslateControl
             bookId={book.id}
@@ -595,6 +630,7 @@ function TranslatablePage({
   profile,
   fitClass,
   translated,
+  adjust,
   onAspect,
 }: {
   book: BookDetail;
@@ -602,6 +638,7 @@ function TranslatablePage({
   profile: string;
   fitClass: string;
   translated: boolean;
+  adjust: { crop: boolean; contrast: number };
   onAspect: (index: number, width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, page, translated);
@@ -615,7 +652,7 @@ function TranslatablePage({
         src={
           useFullPage
             ? imageUrl.fullTranslation(book.id, page)
-            : imageUrl.page(book.id, page, profile)
+            : imageUrl.page(book.id, page, profile, adjust)
         }
         alt={`Pagina ${page + 1}`}
         className={`object-contain ${fitClass}`}

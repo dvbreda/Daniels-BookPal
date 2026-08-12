@@ -257,8 +257,19 @@ export const imageUrl = {
   /** De officiële omslag van een bron — alleen zinvol als has_cover_url. */
   seriesCover: (seriesId: number, profile = "cover") =>
     `/api/series/${seriesId}/cover${queryString({ profile })}`,
-  page: (bookId: number, index: number, profile: string) =>
-    `/api/books/${bookId}/pages/${index}${queryString({ profile })}`,
+  page: (
+    bookId: number,
+    index: number,
+    profile: string,
+    adjust: { crop?: boolean; contrast?: number } = {},
+  ) =>
+    `/api/books/${bookId}/pages/${index}${queryString({
+      profile,
+      // Alleen meesturen als ze afwijken: anders krijgt elke pagina een
+      // andere URL dan de gecachete standaardversie.
+      crop: adjust.crop ? true : undefined,
+      contrast: adjust.contrast && adjust.contrast !== 100 ? adjust.contrast : undefined,
+    })}`,
   file: (bookId: number) => `/api/books/${bookId}/file`,
   /** De hele pagina hertekend mét vertaling (beeldstanden, M8). */
   fullTranslation: (bookId: number, index: number, lang?: string) =>

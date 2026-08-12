@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
+from bookpal.images.adjust import Adjustments
 from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 from bookpal.sources import Source as SourceImpl
@@ -35,6 +36,24 @@ def profile_param(
 
 
 ProfileDep = Depends(profile_param)
+
+
+def adjust_param(
+    crop: bool = Query(
+        default=False,
+        description="Egale rand rond de pagina wegsnijden (rakuyomi's 'page crop: auto').",
+    ),
+    contrast: int = Query(
+        default=100,
+        ge=50,
+        le=200,
+        description="100 is onbewerkt; hoger rekt het grijsbereik op voor bleke scans.",
+    ),
+) -> Adjustments:
+    return Adjustments(crop=crop, contrast=contrast)
+
+
+AdjustDep = Depends(adjust_param)
 
 
 def get_book(session: Session, book_id: int) -> Book:

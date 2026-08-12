@@ -22,8 +22,21 @@ from PIL import Image
 _COLORS = [(220, 60, 60), (60, 160, 220), (250, 210, 80), (120, 200, 120), (180, 120, 220)]
 
 
-def page_png(index: int, size: tuple[int, int] = (400, 600)) -> bytes:
-    image = Image.new("RGB", size, _COLORS[index % len(_COLORS)])
+def page_png(
+    index: int, size: tuple[int, int] = (400, 600), *, border: int = 0
+) -> bytes:
+    """Een effen pagina, of met ``border`` een witrand eromheen.
+
+    Die rand is er voor het bijsnijden en het contrast: op een effen vlak valt
+    er niets te croppen en niets op te rekken, dus zou zo'n test altijd slagen
+    zonder iets te bewijzen.
+    """
+    if border:
+        image = Image.new("RGB", size, (255, 255, 255))
+        inner = (size[0] - 2 * border, size[1] - 2 * border)
+        image.paste(Image.new("RGB", inner, _COLORS[index % len(_COLORS)]), (border, border))
+    else:
+        image = Image.new("RGB", size, _COLORS[index % len(_COLORS)])
     buffer = BytesIO()
     image.save(buffer, format="PNG")
     return buffer.getvalue()
@@ -63,6 +76,7 @@ def make_cbz(
     comicinfo: bytes | None = None,
     *,
     shuffled_names: bool = False,
+    border: int = 0,
 ) -> Path:
     """Schrijf een cbz.
 
@@ -73,7 +87,7 @@ def make_cbz(
     with zipfile.ZipFile(path, "w", zipfile.ZIP_STORED) as archive:
         for index in range(pages):
             name = f"page{index + 1}.png" if shuffled_names else f"{index + 1:03d}.png"
-            archive.writestr(name, page_png(index))
+            archive.writestr(name, page_png(index, border=border))
         # Ruis die de adapter moet negeren.
         archive.writestr("__MACOSX/._001.png", b"resource fork")
         archive.writestr("thumbs.db", b"nope")
