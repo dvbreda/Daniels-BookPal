@@ -380,6 +380,31 @@ class TrackerAccountPatch(BaseModel):
     dry_run: bool | None = None
 
 
+class GoodreadsLoginIn(BaseModel):
+    """Inloggen bij Goodreads via hun eigen site.
+
+    Het wachtwoord wordt gebruikt om in te loggen en daarna niet bewaard —
+    alleen de sessie gaat de database in, zodat er niet elke ronde opnieuw
+    ingelogd hoeft te worden.
+    """
+
+    email: str = Field(max_length=200)
+    password: str = Field(max_length=200)
+
+
+class GoodreadsStatusOut(BaseModel):
+    # Is er een browser beschikbaar? Chromium wordt pas op verzoek gedownload.
+    browser_ready: bool
+    browser_note: str = ""
+    connected: bool
+    last_sync_at: datetime | None = None
+
+
+class GoodreadsSyncOut(BaseModel):
+    updated: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
 class MalAuthorizeOut(BaseModel):
     url: str
     # Dit adres moet in je MAL-app-registratie staan; de client toont het.

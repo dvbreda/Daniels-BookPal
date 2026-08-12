@@ -5,6 +5,8 @@ import type {
   CollectionIn,
   Health,
   ImageProfile,
+  GoodreadsStatus,
+  GoodreadsSyncResult,
   LibraryRoot,
   MalAuthorize,
   NextChapter,
@@ -221,6 +223,18 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  goodreadsStatus: () => request<GoodreadsStatus>("/api/trackers/goodreads/status"),
+  goodreadsInstallBrowser: () =>
+    request<GoodreadsStatus>("/api/trackers/goodreads/install-browser", { method: "POST" }),
+  goodreadsLogin: (email: string, password: string) =>
+    request<GoodreadsStatus>("/api/trackers/goodreads/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  goodreadsLogout: () =>
+    request<void>("/api/trackers/goodreads/login", { method: "DELETE" }),
+  goodreadsSync: () =>
+    request<GoodreadsSyncResult>("/api/trackers/goodreads/sync", { method: "POST" }),
 
   pageTranslation: (bookId: number, index: number, lang?: string) =>
     request<PageTranslation>(

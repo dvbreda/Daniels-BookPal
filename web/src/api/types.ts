@@ -320,6 +320,19 @@ export interface TranslateBookResult {
   already_done: number;
 }
 
+export interface GoodreadsStatus {
+  /** Chromium wordt pas op verzoek gedownload. */
+  browser_ready: boolean;
+  browser_note: string;
+  connected: boolean;
+  last_sync_at: string | null;
+}
+
+export interface GoodreadsSyncResult {
+  updated: string[];
+  errors: string[];
+}
+
 export interface MalAuthorize {
   url: string;
   /** Dit adres moet in je MAL-app-registratie staan. */

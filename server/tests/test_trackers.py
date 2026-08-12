@@ -3,17 +3,19 @@ alleen "wat zou er naar buiten gaan" en "gaat dat ook echt uit"."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal import db as db_module
 from bookpal.db import current_user
 from bookpal.models import Book, BookKind, File, LibraryRoot, Progress, Series, TrackerAccount
-from bookpal.trackers import scheduler
+from bookpal.trackers import goodreads_browser, scheduler
 from bookpal.trackers.base import (
     PushResult,
     ReadingStatus,
@@ -505,3 +507,100 @@ class TestMalRedirectFlow:
             account = session.get(TrackerAccount, account_id)
             assert account is not None
             assert not any(key.startswith("_pending") for key in account.credentials)
+
+
+class TestGoodreadsBrowser:
+    """De browserkoppeling zelf is niet te testen zonder echte inloggegevens;
+    wat hier wél getest wordt is dat alles eromheen zacht faalt."""
+
+    def test_no_browser_is_reported_not_crashed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(
+            goodreads_browser, "available", lambda: (False, "de browser is nog niet gedownload")
+        )
+        body = client.get("/api/trackers/goodreads/status").json()
+        assert body["browser_ready"] is False
+        assert "gedownload" in body["browser_note"]
+        assert body["connected"] is False
+
+    def test_login_without_a_browser_is_a_clear_error(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        def geen_browser(email: str, password: str) -> dict:
+            raise TrackerError("de browser is nog niet gedownload")
+
+        monkeypatch.setattr(goodreads_browser, "log_in", geen_browser)
+        response = client.post(
+            "/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"}
+        )
+        assert response.status_code == 502
+        assert "gedownload" in response.json()["detail"]
+
+    def test_a_captcha_is_surfaced_not_bypassed(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Amazon wil een mens zien. Dat is terecht: de vraag hoort bij de
+        accounteigenaar terecht te komen, niet bij een omweg."""
+
+        def uitdaging(email: str, password: str) -> dict:
+            raise goodreads_browser.GoodreadsChallenge(
+                "captcha", "Amazon vraagt om een CAPTCHA.", "/data/playwright/schermen/captcha.png"
+            )
+
+        monkeypatch.setattr(goodreads_browser, "log_in", uitdaging)
+        response = client.post(
+            "/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"}
+        )
+        assert response.status_code == 409
+        assert response.headers["X-Goodreads-Challenge"] == "captcha"
+        assert "CAPTCHA" in response.json()["detail"]
+
+    def test_a_successful_login_stores_the_session_not_the_password(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Het wachtwoord hoort de database niet in te gaan."""
+        monkeypatch.setattr(
+            goodreads_browser, "log_in", lambda email, password: {"cookies": [{"name": "x"}]}
+        )
+        monkeypatch.setattr(goodreads_browser, "available", lambda: (True, ""))
+
+        response = client.post(
+            "/api/trackers/goodreads/login",
+            json={"email": "a@b.nl", "password": "geheim123"},
+        )
+        assert response.status_code == 200
+        assert response.json()["connected"] is True
+
+        with db_module.session_scope() as session:
+            account = session.scalar(
+                select(TrackerAccount).where(TrackerAccount.provider == "goodreads")
+            )
+            assert account is not None
+            opgeslagen = json.dumps(account.credentials)
+            assert "geheim123" not in opgeslagen
+            assert account.credentials["session"] == {"cookies": [{"name": "x"}]}
+
+    def test_syncing_without_a_login_is_refused(self, client: TestClient):
+        response = client.post("/api/trackers/goodreads/sync")
+        assert response.status_code == 409
+        assert "niet ingelogd" in response.json()["detail"]
+
+    def test_logging_out_removes_the_session(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setattr(goodreads_browser, "log_in", lambda email, password: {"cookies": []})
+        monkeypatch.setattr(goodreads_browser, "available", lambda: (True, ""))
+        client.post(
+            "/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"}
+        )
+        assert client.delete("/api/trackers/goodreads/login").status_code == 204
+        assert client.get("/api/trackers/goodreads/status").json()["connected"] is False
+
+    def test_a_broken_page_does_not_stop_the_whole_sync(self):
+        """Als Goodreads z'n HTML wijzigt, mag één boek de rest niet meeslepen."""
+        from bookpal.trackers.goodreads_browser import SyncReport
+
+        report = SyncReport(updated=["Boek A"], errors=["Boek B: knop niet gevonden"])
+        assert report.updated == ["Boek A"]
+        assert len(report.errors) == 1

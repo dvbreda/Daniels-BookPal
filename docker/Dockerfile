@@ -23,7 +23,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         fonts-comic-neue \
     && rm -rf /var/lib/apt/lists/*
 
-ENV PYTHONUNBUFFERED=1 \
+# M7: de Goodreads-koppeling stuurt een echte browser aan, omdat hun API dood
+# is en hun inlog via Amazon loopt. Alleen het pip-pakket zit in de image
+# (47 MB); Chromium zelf (~170 MB) wordt pas gehaald als je de koppeling
+# daadwerkelijk aanzet, en belandt in /data zodat het een herbouw overleeft.
+ENV PLAYWRIGHT_BROWSERS_PATH=/data/playwright \
+    PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     BOOKPAL_DATA_DIR=/data \

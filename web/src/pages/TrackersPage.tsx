@@ -72,22 +72,7 @@ export function TrackersPage() {
         )}
       </section>
 
-      <section className="mt-6 rounded border border-ink-600 p-4">
-        <h2 className="font-medium text-slate-200">Goodreads</h2>
-        <p className="mt-1 text-sm text-slate-500">
-          Inloggen kan hier niet: Goodreads heeft sinds eind 2020 geen publieke API meer, en
-          hun inlog loopt via Amazon — dat geautomatiseerd doen levert vooral een geblokkeerd
-          account op. Wat wél betrouwbaar werkt is deze CSV, die je bij My Books → Import and
-          Export inlaadt.
-        </p>
-        <a
-          href={api.goodreadsExportUrl()}
-          download
-          className="mt-3 inline-block rounded bg-accent px-4 py-2 text-sm text-ink-900"
-        >
-          CSV downloaden
-        </a>
-      </section>
+      <GoodreadsPanel setMessage={setMessage} />
 
       {message && (
         <p className="mt-4 rounded bg-ink-800 p-3 text-sm text-slate-300">{message}</p>
@@ -263,5 +248,156 @@ function MalAccount({
         </button>
       )}
     </div>
+  );
+}
+
+
+/**
+ * Goodreads koppelen via een echte browser.
+ *
+ * Hun API is dood sinds eind 2020 en de inlog loopt via Amazon; er bestaat ook
+ * geen derde-partij-API die kán schrijven. Dit is dus de enige weg, en meteen
+ * de breekbaarste koppeling in de app — vandaar dat er eerlijk bij staat wat
+ * de risico's zijn in plaats van dat het als "gewoon inloggen" wordt gebracht.
+ */
+function GoodreadsPanel({ setMessage }: { setMessage: (message: string | null) => void }) {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: ["goodreads-status"],
+    queryFn: api.goodreadsStatus,
+  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  function refresh() {
+    void queryClient.invalidateQueries({ queryKey: ["goodreads-status"] });
+  }
+
+  const installBrowser = useMutation({
+    mutationFn: api.goodreadsInstallBrowser,
+    onSuccess: refresh,
+    onError: (error: unknown) =>
+      setMessage(error instanceof ApiError ? error.message : "Browser downloaden mislukt."),
+  });
+
+  const login = useMutation({
+    mutationFn: () => api.goodreadsLogin(email.trim(), password),
+    onSuccess: () => {
+      setPassword("");
+      setMessage("Ingelogd bij Goodreads.");
+      refresh();
+    },
+    onError: (error: unknown) =>
+      setMessage(error instanceof ApiError ? error.message : "Inloggen mislukt."),
+  });
+
+  const logout = useMutation({
+    mutationFn: api.goodreadsLogout,
+    onSuccess: refresh,
+  });
+
+  const sync = useMutation({
+    mutationFn: api.goodreadsSync,
+    onSuccess: (result) => {
+      setMessage(
+        `${result.updated.length} boeken bijgewerkt op Goodreads.` +
+          (result.errors.length ? ` Niet gelukt: ${result.errors.slice(0, 3).join("; ")}` : ""),
+      );
+      refresh();
+    },
+    onError: (error: unknown) =>
+      setMessage(error instanceof ApiError ? error.message : "Synchroniseren mislukt."),
+  });
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Goodreads</h2>
+
+      {!status?.browser_ready ? (
+        <div className="mt-2 space-y-2">
+          <p className="text-sm text-slate-500">
+            Goodreads heeft geen API meer en logt in via Amazon, dus hiervoor stuurt BookPal een
+            echte browser aan. Die wordt pas gedownload als je hem nodig hebt (~170 MB, één keer).
+          </p>
+          <button
+            onClick={() => installBrowser.mutate()}
+            disabled={installBrowser.isPending}
+            className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-200 disabled:opacity-50"
+          >
+            {installBrowser.isPending ? "Downloaden… (kan een minuut duren)" : "Browser ophalen"}
+          </button>
+        </div>
+      ) : status.connected ? (
+        <div className="mt-2 space-y-2">
+          <p className="text-sm text-slate-300">
+            Ingelogd.
+            {status.last_sync_at
+              ? ` Laatst bijgewerkt: ${new Date(status.last_sync_at).toLocaleString("nl-NL")}`
+              : " Nog niet bijgewerkt."}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => sync.mutate()}
+              disabled={sync.isPending}
+              className="rounded bg-accent px-3 py-1.5 text-sm text-ink-900 disabled:opacity-50"
+            >
+              {sync.isPending ? "Bezig… (dit duurt even)" : "Planken bijwerken"}
+            </button>
+            <button
+              onClick={() => logout.mutate()}
+              className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-300"
+            >
+              Uitloggen
+            </button>
+          </div>
+        </div>
+      ) : (
+        <form
+          className="mt-2 space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            login.mutate();
+          }}
+        >
+          <p className="text-sm text-slate-500">
+            BookPal logt namens jou in op Goodreads. Twee dingen om te weten: je wachtwoord wordt
+            gebruikt om in te loggen en daarna <strong>niet</strong> bewaard (alleen de sessie),
+            en Amazon kan geautomatiseerd inloggen als verdacht aanmerken. Vraagt Amazon om een
+            CAPTCHA of code, dan stopt BookPal en krijg jij die vraag te zien.
+          </p>
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="E-mailadres"
+            type="email"
+            autoComplete="username"
+            className="w-full rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+          />
+          <input
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Wachtwoord"
+            type="password"
+            autoComplete="current-password"
+            className="w-full rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+          />
+          <button
+            type="submit"
+            disabled={login.isPending || !email.trim() || !password}
+            className="rounded bg-accent px-4 py-2 text-sm text-ink-900 disabled:opacity-50"
+          >
+            {login.isPending ? "Inloggen… (dit duurt even)" : "Inloggen bij Goodreads"}
+          </button>
+        </form>
+      )}
+
+      <p className="mt-3 border-t border-ink-700 pt-3 text-xs text-slate-500">
+        Werkt het inloggen niet? De CSV blijft de betrouwbare weg — die laad je in bij My Books →
+        Import and Export.{" "}
+        <a href={api.goodreadsExportUrl()} download className="text-accent underline">
+          CSV downloaden
+        </a>
+      </p>
+    </section>
   );
 }

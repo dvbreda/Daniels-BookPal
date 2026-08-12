@@ -17,6 +17,9 @@ dependencies = [
     "python-multipart>=0.0.12",
     # M5: bronnen zoals MangaDex bevragen en hoofdstukken ophalen.
     "httpx>=0.28",
+    # M7: Goodreads heeft geen API meer en logt in via Amazon, dus daar is een
+    # echte browser voor nodig. Chromium wordt pas op verzoek gedownload.
+    "playwright>=1.55",
 ]
 
 [project.optional-dependencies]

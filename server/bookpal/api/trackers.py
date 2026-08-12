@@ -15,8 +15,11 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
-from bookpal.models import TrackerAccount
+from bookpal.models import TrackerAccount, utcnow
 from bookpal.schemas import (
+    GoodreadsLoginIn,
+    GoodreadsStatusOut,
+    GoodreadsSyncOut,
     MalAuthorizeOut,
     MalCallbackIn,
     PushReportOut,
@@ -25,7 +28,7 @@ from bookpal.schemas import (
     TrackerAccountOut,
     TrackerAccountPatch,
 )
-from bookpal.trackers import REGISTRY, TrackerError, export_csv, get_tracker
+from bookpal.trackers import REGISTRY, TrackerError, export_csv, get_tracker, goodreads_browser
 from bookpal.trackers import service as tracker_service
 from bookpal.trackers.mal import MyAnimeListTracker, authorize_url, make_code_verifier
 
@@ -255,3 +258,107 @@ def goodreads_export(session: Session = Depends(get_session)) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=bookpal-goodreads.csv"},
     )
+
+
+# --- Goodreads via de browser -------------------------------------------------
+#
+# Goodreads heeft geen API meer en logt in via Amazon; er bestaat ook geen
+# derde-partij-API die kán schrijven. Dit is dus de enige weg, en tegelijk de
+# breekbaarste koppeling in de app — vandaar dat alles hier zacht faalt en een
+# controle van Amazon nooit omzeild wordt maar aan jou wordt voorgelegd.
+
+GOODREADS = "goodreads"
+
+
+def _goodreads_account(session: Session) -> TrackerAccount | None:
+    return session.scalar(select(TrackerAccount).where(TrackerAccount.provider == GOODREADS))
+
+
+@router.get("/goodreads/status", response_model=GoodreadsStatusOut)
+def goodreads_status(session: Session = Depends(get_session)) -> GoodreadsStatusOut:
+    ready, note = goodreads_browser.available()
+    account = _goodreads_account(session)
+    return GoodreadsStatusOut(
+        browser_ready=ready,
+        browser_note=note,
+        connected=bool(account and account.credentials.get("session")),
+        last_sync_at=account.last_sync_at if account else None,
+    )
+
+
+@router.post("/goodreads/install-browser", response_model=GoodreadsStatusOut)
+def goodreads_install_browser(session: Session = Depends(get_session)) -> GoodreadsStatusOut:
+    """Haal Chromium op. Duurt een minuut en gebeurt één keer."""
+    try:
+        goodreads_browser.install_browser()
+    except TrackerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return goodreads_status(session)
+
+
+@router.post("/goodreads/login", response_model=GoodreadsStatusOut)
+def goodreads_login(
+    payload: GoodreadsLoginIn, session: Session = Depends(get_session)
+) -> GoodreadsStatusOut:
+    """Log in bij Goodreads en bewaar de sessie.
+
+    Het wachtwoord gaat niet de database in: alleen de sessie wordt bewaard,
+    zodat er niet elke ronde opnieuw ingelogd hoeft te worden — herhaald
+    inloggen is precies wat Amazon als verdacht ziet.
+    """
+    try:
+        state = goodreads_browser.log_in(payload.email, payload.password)
+    except goodreads_browser.GoodreadsChallenge as exc:
+        # Amazon wil een mens zien. Dat is terecht, en niets om omheen te
+        # werken: de vraag hoort bij jou terecht te komen.
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+            headers={"X-Goodreads-Challenge": exc.kind},
+        ) from exc
+    except TrackerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    account = _goodreads_account(session)
+    if account is None:
+        account = TrackerAccount(provider=GOODREADS)
+        session.add(account)
+    account.credentials = {"session": state, "email": payload.email}
+    account.enabled = True
+    session.commit()
+    return goodreads_status(session)
+
+
+@router.delete("/goodreads/login", status_code=204)
+def goodreads_logout(session: Session = Depends(get_session)) -> None:
+    account = _goodreads_account(session)
+    if account is not None:
+        session.delete(account)
+        session.commit()
+
+
+@router.post("/goodreads/sync", response_model=GoodreadsSyncOut)
+def goodreads_sync(session: Session = Depends(get_session)) -> GoodreadsSyncOut:
+    """Zet je planken bij Goodreads bij."""
+    account = _goodreads_account(session)
+    state = account.credentials.get("session") if account is not None else None
+    if account is None or not state:
+        raise HTTPException(status_code=409, detail="nog niet ingelogd bij Goodreads")
+
+    user = current_user(session)
+    entries = [
+        (row.title, row.author or "", row.status)
+        for row in tracker_service.goodreads_rows(session, user)
+    ]
+    try:
+        report = goodreads_browser.push(state, entries)
+    except goodreads_browser.GoodreadsChallenge as exc:
+        raise HTTPException(
+            status_code=409, detail=str(exc), headers={"X-Goodreads-Challenge": exc.kind}
+        ) from exc
+    except TrackerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    account.last_sync_at = utcnow()
+    session.commit()
+    return GoodreadsSyncOut(updated=report.updated, errors=report.errors)
