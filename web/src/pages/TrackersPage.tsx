@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { TrackerAccountRow } from "../api/types";
@@ -13,10 +13,27 @@ import type { TrackerAccountRow } from "../api/types";
  * gedebouncede trigger na elke voortgangsupdate is daardoor onschadelijk
  * totdat je bewust "dry-run uit" zet.
  */
+const MAL_TERUG: Record<string, string> = {
+  gekoppeld: "MyAnimeList is gekoppeld.",
+  mislukt: "Koppelen met MyAnimeList is niet gelukt. Klopt de redirect-URL in je app-registratie?",
+  onbekend: "De terugkeer van MyAnimeList hoorde bij geen enkele koppelpoging; probeer opnieuw.",
+};
+
 export function TrackersPage() {
   const queryClient = useQueryClient();
   const { data: trackers } = useQuery({ queryKey: ["trackers"], queryFn: api.trackers });
-  const [message, setMessage] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  // MyAnimeList stuurt je hierheen terug met de uitkomst in de URL.
+  const [message, setMessage] = useState<string | null>(
+    MAL_TERUG[params.get("mal") ?? ""] ?? null,
+  );
+
+  useEffect(() => {
+    if (params.has("mal")) {
+      params.delete("mal");
+      setParams(params, { replace: true });
+    }
+  }, [params, setParams]);
 
   function refresh() {
     void queryClient.invalidateQueries({ queryKey: ["trackers"] });
@@ -58,8 +75,10 @@ export function TrackersPage() {
       <section className="mt-6 rounded border border-ink-600 p-4">
         <h2 className="font-medium text-slate-200">Goodreads</h2>
         <p className="mt-1 text-sm text-slate-500">
-          De publieke API is dood sinds eind 2020, dus geen live koppeling — wel
-          een CSV die je bij My Books → Import and Export kunt inladen.
+          Inloggen kan hier niet: Goodreads heeft sinds eind 2020 geen publieke API meer, en
+          hun inlog loopt via Amazon — dat geautomatiseerd doen levert vooral een geblokkeerd
+          account op. Wat wél betrouwbaar werkt is deze CSV, die je bij My Books → Import and
+          Export inlaadt.
         </p>
         <a
           href={api.goodreadsExportUrl()}
@@ -133,29 +152,20 @@ function MalAccount({
   onChanged: () => void;
   setMessage: (message: string | null) => void;
 }) {
-  const [authorizeUrl, setAuthorizeUrl] = useState<string | null>(null);
-  const [code, setCode] = useState("");
+  // Het terugkeeradres dat in je MAL-app-registratie moet staan. We tonen het
+  // pas als je op koppelen drukt, want eerder weet je niet waarvoor het is.
+  const [redirectUri, setRedirectUri] = useState<string | null>(null);
 
   const startAuth = useMutation({
     mutationFn: () => api.malAuthorizeUrl(account.id),
     onSuccess: (result) => {
-      setAuthorizeUrl(result.url);
-      window.open(result.url, "_blank", "noopener,noreferrer");
+      setRedirectUri(result.redirect_uri);
+      // Zelfde tabblad: MyAnimeList stuurt je hierna vanzelf terug, dus een
+      // tweede tabblad zou je alleen maar achterlaten op een lege pagina.
+      window.location.href = result.url;
     },
     onError: (error: unknown) =>
       setMessage(error instanceof ApiError ? error.message : "Kon geen autorisatie-URL ophalen."),
-  });
-
-  const confirmCode = useMutation({
-    mutationFn: () => api.malCallback(account.id, code.trim()),
-    onSuccess: () => {
-      setAuthorizeUrl(null);
-      setCode("");
-      setMessage("MyAnimeList gekoppeld.");
-      onChanged();
-    },
-    onError: (error: unknown) =>
-      setMessage(error instanceof ApiError ? error.message : "Koppelen mislukt."),
   });
 
   const toggle = useMutation({
@@ -222,41 +232,23 @@ function MalAccount({
       </div>
 
       {!account.connected && (
-        <div className="rounded bg-ink-800 p-3">
+        <div className="space-y-2 rounded bg-ink-800 p-3">
+          <p className="text-sm text-slate-400">
+            Je logt in op MyAnimeList zelf; BookPal ziet je wachtwoord nooit. Zet in je
+            app-registratie op{" "}
+            <span className="text-slate-300">myanimelist.net/apiconfig</span> dit adres als
+            redirect-URL:
+          </p>
+          <code className="block break-all rounded bg-ink-900 p-2 text-xs text-slate-300">
+            {redirectUri ?? `${window.location.origin}/api/trackers/mal/redirect`}
+          </code>
           <button
             onClick={() => startAuth.mutate()}
             disabled={startAuth.isPending}
             className="rounded bg-accent px-3 py-1.5 text-sm text-ink-900 disabled:opacity-50"
           >
-            Account koppelen
+            {startAuth.isPending ? "Bezig…" : "Inloggen bij MyAnimeList"}
           </button>
-          {authorizeUrl && (
-            <form
-              className="mt-3 flex flex-wrap gap-2"
-              onSubmit={(event) => {
-                event.preventDefault();
-                confirmCode.mutate();
-              }}
-            >
-              <p className="w-full text-sm text-slate-500">
-                Log in via het geopende tabblad en plak de <code>code</code> uit de
-                terugkeer-URL hieronder.
-              </p>
-              <input
-                value={code}
-                onChange={(event) => setCode(event.target.value)}
-                placeholder="code"
-                className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
-              />
-              <button
-                type="submit"
-                disabled={confirmCode.isPending || !code.trim()}
-                className="rounded bg-accent px-4 py-2 text-sm text-ink-900 disabled:opacity-50"
-              >
-                Bevestigen
-              </button>
-            </form>
-          )}
         </div>
       )}
 

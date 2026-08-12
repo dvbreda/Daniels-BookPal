@@ -7,8 +7,10 @@ from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from bookpal import db as db_module
 from bookpal.db import current_user
 from bookpal.models import Book, BookKind, File, LibraryRoot, Progress, Series, TrackerAccount
 from bookpal.trackers import scheduler
@@ -415,3 +417,91 @@ class TestScheduler:
         push_series(session, tracker, account, current_user(session), series_a)
         assert len(tracker.pushed) == 1
         assert tracker.pushed[0].series_id == series_a.id
+
+
+class TestMalRedirectFlow:
+    """De koppeling zonder overtypen: MyAnimeList stuurt je terug naar BookPal,
+    dat de code zelf inwisselt."""
+
+    def _account(self, client: TestClient) -> int:
+        response = client.post(
+            "/api/trackers",
+            json={"provider": "mal", "client_id": "cid", "client_secret": "geheim"},
+        )
+        assert response.status_code == 201
+        return int(response.json()["id"])
+
+    def test_the_authorize_url_carries_a_redirect_back_to_bookpal(self, client: TestClient):
+        account_id = self._account(client)
+        body = client.get(f"/api/trackers/{account_id}/mal/authorize-url").json()
+        assert "redirect_uri=" in body["url"]
+        assert body["redirect_uri"].endswith("/api/trackers/mal/redirect")
+        # Zonder state kan het terugkeer-endpoint niet zien wie er terugkomt.
+        assert "state=" in body["url"]
+
+    def test_a_returning_user_without_a_code_lands_on_a_message(self, client: TestClient):
+        response = client.get(
+            "/api/trackers/mal/redirect", params={"error": "access_denied"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "mal=mislukt" in response.headers["location"]
+
+    def test_an_unknown_state_is_refused(self, client: TestClient):
+        self._account(client)
+        response = client.get(
+            "/api/trackers/mal/redirect",
+            params={"code": "x", "state": "hoort-nergens-bij"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert "mal=onbekend" in response.headers["location"]
+
+    def test_a_failed_exchange_does_not_connect_the_account(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        """MyAnimeList weigert de uitwisseling; dan mag het account niet als
+        gekoppeld gaan gelden."""
+        account_id = self._account(client)
+        body = client.get(f"/api/trackers/{account_id}/mal/authorize-url").json()
+        state = body["url"].split("state=")[1].split("&")[0]
+
+        def boom(self, code, verifier, *, redirect_uri=None):
+            raise TrackerError("nee")
+
+        monkeypatch.setattr(MyAnimeListTracker, "exchange_code", boom)
+        response = client.get(
+            "/api/trackers/mal/redirect",
+            params={"code": "x", "state": state},
+            follow_redirects=False,
+        )
+        assert "mal=mislukt" in response.headers["location"]
+        assert client.get("/api/trackers").json()[0]["connected"] is False
+
+    def test_a_successful_exchange_connects_and_cleans_up(
+        self, client: TestClient, monkeypatch: pytest.MonkeyPatch
+    ):
+        account_id = self._account(client)
+        body = client.get(f"/api/trackers/{account_id}/mal/authorize-url").json()
+        state = body["url"].split("state=")[1].split("&")[0]
+
+        def ok(self, code, verifier, *, redirect_uri=None):
+            self.credentials["access_token"] = "token"
+            return self.credentials
+
+        monkeypatch.setattr(MyAnimeListTracker, "exchange_code", ok)
+        response = client.get(
+            "/api/trackers/mal/redirect",
+            params={"code": "x", "state": state},
+            follow_redirects=False,
+        )
+        assert "mal=gekoppeld" in response.headers["location"]
+        assert client.get("/api/trackers").json()[0]["connected"] is True
+
+        # De tijdelijke koppelgegevens horen niet te blijven staan.
+        from bookpal.models import TrackerAccount
+
+        with db_module.session_scope() as session:
+            account = session.get(TrackerAccount, account_id)
+            assert account is not None
+            assert not any(key.startswith("_pending") for key in account.credentials)

@@ -320,6 +320,12 @@ export interface TranslateBookResult {
   already_done: number;
 }
 
+export interface MalAuthorize {
+  url: string;
+  /** Dit adres moet in je MAL-app-registratie staan. */
+  redirect_uri: string;
+}
+
 export interface TrackerAccountRow {
   id: number;
   provider: string;

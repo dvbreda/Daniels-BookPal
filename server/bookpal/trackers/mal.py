@@ -47,10 +47,20 @@ def make_code_verifier() -> str:
     return secrets.token_urlsafe(64)[:128]
 
 
-def authorize_url(client_id: str, code_verifier: str, *, state: str | None = None) -> str:
+def authorize_url(
+    client_id: str,
+    code_verifier: str,
+    *,
+    state: str | None = None,
+    redirect_uri: str | None = None,
+) -> str:
     """De URL waar je je MyAnimeList-account koppelt.
 
     De challenge is gelijk aan de verifier: MyAnimeList kent alleen ``plain``.
+
+    ``redirect_uri`` laat MyAnimeList je na het inloggen terugsturen naar
+    BookPal, dat de code dan zelf inwisselt. Zonder dat moet je 'm met de hand
+    uit de adresbalk overtypen, en dat is geen koppeling die je iemand aandoet.
     """
     params = {
         "response_type": "code",
@@ -60,6 +70,8 @@ def authorize_url(client_id: str, code_verifier: str, *, state: str | None = Non
     }
     if state:
         params["state"] = state
+    if redirect_uri:
+        params["redirect_uri"] = redirect_uri
     return f"{AUTH_BASE}/authorize?{urlencode(params)}"
 
 
@@ -79,18 +91,24 @@ class MyAnimeListTracker(Tracker):
 
     # --- koppelen ---------------------------------------------------------
 
-    def exchange_code(self, code: str, code_verifier: str) -> dict[str, Any]:
-        """Wissel de code uit de browser in voor tokens."""
-        response = self._post_token(
-            {
-                "client_id": self.credentials.get("client_id", ""),
-                "client_secret": self.credentials.get("client_secret", ""),
-                "grant_type": "authorization_code",
-                "code": code,
-                "code_verifier": code_verifier,
-            }
-        )
-        return response
+    def exchange_code(
+        self, code: str, code_verifier: str, *, redirect_uri: str | None = None
+    ) -> dict[str, Any]:
+        """Wissel de code uit de browser in voor tokens.
+
+        ``redirect_uri`` moet exact hetzelfde zijn als bij het autoriseren —
+        MyAnimeList weigert de uitwisseling anders.
+        """
+        data = {
+            "client_id": self.credentials.get("client_id", ""),
+            "client_secret": self.credentials.get("client_secret", ""),
+            "grant_type": "authorization_code",
+            "code": code,
+            "code_verifier": code_verifier,
+        }
+        if redirect_uri:
+            data["redirect_uri"] = redirect_uri
+        return self._post_token(data)
 
     def refresh(self) -> dict[str, Any]:
         """Ververs het access token met het refresh token."""

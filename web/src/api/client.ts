@@ -6,6 +6,7 @@ import type {
   Health,
   ImageProfile,
   LibraryRoot,
+  MalAuthorize,
   NextChapter,
   PageTranslation,
   Paginated,
@@ -212,7 +213,7 @@ export const api = {
     }),
   deleteTracker: (id: number) => request<void>(`/api/trackers/${id}`, { method: "DELETE" }),
   malAuthorizeUrl: (id: number) =>
-    request<{ url: string }>(`/api/trackers/${id}/mal/authorize-url`),
+    request<MalAuthorize>(`/api/trackers/${id}/mal/authorize-url`),
   malCallback: (id: number, code: string) =>
     request<TrackerAccountRow>(`/api/trackers/${id}/mal/callback`, {
       method: "POST",

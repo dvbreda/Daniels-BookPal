@@ -7,7 +7,10 @@ aan/uit te zetten. De export is gewoon altijd beschikbaar.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+import secrets
+
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -90,12 +93,15 @@ def delete_tracker(account_id: int, session: Session = Depends(get_session)) -> 
 
 
 @router.get("/{account_id}/mal/authorize-url", response_model=MalAuthorizeOut)
-def mal_authorize_url(account_id: int, session: Session = Depends(get_session)) -> MalAuthorizeOut:
+def mal_authorize_url(
+    account_id: int, request: Request, session: Session = Depends(get_session)
+) -> MalAuthorizeOut:
     """De URL waar je je MyAnimeList-account koppelt.
 
-    MyAnimeList stuurt na goedkeuring door naar het redirect-adres van je
-    eigen app-registratie — wat dat precies is, bepaal je daar zelf. Plak de
-    ``code`` die je daar terugziet in ``/mal/callback``.
+    Het terugkeeradres wordt afgeleid uit het adres waarop je BookPal nu
+    gebruikt, zodat MyAnimeList je hierheen terugstuurt en de code vanzelf
+    wordt ingewisseld. Datzelfde adres moet in je MAL-app-registratie staan;
+    de client krijgt het daarom mee om te tonen.
     """
     account = _get_account(session, account_id)
     if account.provider != "mal":
@@ -105,9 +111,72 @@ def mal_authorize_url(account_id: int, session: Session = Depends(get_session)) 
         raise HTTPException(status_code=409, detail="geen client_id ingesteld voor dit account")
 
     verifier = make_code_verifier()
-    account.credentials = {**account.credentials, "_pending_verifier": verifier}
+    # De state koppelt de terugkeer aan dit account: het redirect-endpoint
+    # krijgt verder niets mee waaraan het kan zien wie er terugkomt.
+    state = secrets.token_urlsafe(16)
+    redirect_uri = _redirect_uri(request)
+    account.credentials = {
+        **account.credentials,
+        "_pending_verifier": verifier,
+        "_pending_state": state,
+        "_pending_redirect": redirect_uri,
+    }
     session.commit()
-    return MalAuthorizeOut(url=authorize_url(client_id, verifier))
+    return MalAuthorizeOut(
+        url=authorize_url(client_id, verifier, state=state, redirect_uri=redirect_uri),
+        redirect_uri=redirect_uri,
+    )
+
+
+def _redirect_uri(request: Request) -> str:
+    """Waar MyAnimeList je heen terugstuurt.
+
+    Afgeleid uit het huidige adres in plaats van uit een instelling: je bereikt
+    de NAS thuis anders dan via ZeroTier, en een vast adres zou dan bij een van
+    de twee niet kloppen.
+    """
+    return str(request.url_for("mal_redirect"))
+
+
+@router.get("/mal/redirect", name="mal_redirect", include_in_schema=False)
+def mal_redirect(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    session: Session = Depends(get_session),
+) -> RedirectResponse:
+    """Waar MyAnimeList je na het inloggen heen stuurt.
+
+    Wisselt de code meteen in en stuurt je door naar de trackerspagina, zodat
+    je nooit iets hoeft over te typen.
+    """
+    if error or not code or not state:
+        return RedirectResponse(url="/trackers?mal=mislukt", status_code=303)
+
+    rows = session.scalars(select(TrackerAccount).where(TrackerAccount.provider == "mal"))
+    account = next(
+        (row for row in rows if row.credentials.get("_pending_state") == state), None
+    )
+    if account is None:
+        return RedirectResponse(url="/trackers?mal=onbekend", status_code=303)
+
+    verifier = account.credentials.get("_pending_verifier")
+    redirect_uri = account.credentials.get("_pending_redirect")
+    tracker = MyAnimeListTracker(account.credentials)
+    try:
+        tracker.exchange_code(code, str(verifier), redirect_uri=redirect_uri)
+    except TrackerError:
+        return RedirectResponse(url="/trackers?mal=mislukt", status_code=303)
+    finally:
+        tracker.close()
+
+    credentials = dict(tracker.credentials)
+    for key in ("_pending_verifier", "_pending_state", "_pending_redirect"):
+        credentials.pop(key, None)
+    account.credentials = credentials
+    session.commit()
+    return RedirectResponse(url="/trackers?mal=gekoppeld", status_code=303)
 
 
 @router.post("/{account_id}/mal/callback", response_model=TrackerAccountOut)

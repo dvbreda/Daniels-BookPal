@@ -382,6 +382,8 @@ class TrackerAccountPatch(BaseModel):
 
 class MalAuthorizeOut(BaseModel):
     url: str
+    # Dit adres moet in je MAL-app-registratie staan; de client toont het.
+    redirect_uri: str = ""
 
 
 class MalCallbackIn(BaseModel):
