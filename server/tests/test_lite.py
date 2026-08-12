@@ -385,3 +385,41 @@ class TestLiteHomeAndGrid:
         series, boek = self._bezig(session)
         raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
         assert f"/lite/books/{boek.id}?raster=1" in raster
+
+
+class TestNoWebpForTheKobo:
+    """De browser van een Kobo kent geen webp; dan blijft er een leeg vlak staan."""
+
+    def test_page_images_ask_for_a_png_profile(self, client: TestClient, session: Session):
+        from bookpal.images import PROFILES
+
+        _series, boek = TestLiteHomeAndGrid()._bezig(session)
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        import re
+
+        for src in re.findall(r'src="(/api/books/[^"]+)"', pagina):
+            assert "profile=" in src, src
+            naam = src.split("profile=")[1].split("&")[0]
+            assert PROFILES[naam].format != "webp", naam
+
+    def test_covers_ask_for_a_png_profile(self, client: TestClient, session: Session):
+        from bookpal.images import PROFILES
+
+        TestLiteHomeAndGrid()._bezig(session)
+        h = client.get("/lite").text
+        naam = h.split("cover?profile=")[1].split('"')[0]
+        assert PROFILES[naam].format != "webp"
+
+    def test_asking_for_a_webp_profile_still_gets_you_a_picture(
+        self, client: TestClient, session: Session
+    ):
+        """Een plaatje dat er is weegt zwaarder dan een paar kilobyte verschil."""
+        _series, boek = TestLiteHomeAndGrid()._bezig(session)
+        import re
+
+        from bookpal.images import PROFILES
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0", params={"profile": "web"}).text
+        srcs = re.findall(r'src="/api/books/[^"]*profile=([^"&]+)', pagina)
+        assert srcs, "er hoort een pagina-plaatje te staan"
+        assert all(PROFILES[naam].format != "webp" for naam in srcs)

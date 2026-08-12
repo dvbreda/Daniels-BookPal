@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, NamedTuple, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -19,7 +20,7 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
-from bookpal.library import editions
+from bookpal.library import editions, sidecars
 from bookpal.library import merge as merge_module
 from bookpal.metadata.filename import normalise_number as _sort_number
 from bookpal.metadata.filename import sort_title as sort_title_for
@@ -346,6 +347,24 @@ def _same_name(session: Session, series: Series, titel: str) -> Series | None:
         if normalise(andere.title) == gezocht:
             return andere
     return None
+
+
+def _remember_title(session: Session, book: Book, titel: str, *, lang: str) -> None:
+    """Leg een opgehaalde titel vast in de sidecar naast het bestand."""
+    if book.file_id is None:
+        return
+    bestand = session.get(File, book.file_id)
+    if bestand is None:
+        return
+    pad = Path(bestand.path)
+    if not pad.is_file():
+        return
+    zijkant = sidecars.read(pad) or sidecars.Sidecar()
+    # Onder de taalcode én als naamloze titel: de eerste bewaart dat dit de
+    # Engelse naam is, de tweede is wat je ziet als je niets vraagt.
+    zijkant.titles[lang] = titel
+    zijkant.set_title(titel, herkomst="source")
+    sidecars.write(pad, zijkant)
 
 
 @router.get("/{series_id}/similar", response_model=list[MergeCandidateOut])
@@ -990,6 +1009,9 @@ def sync_series_titles(
             if titel and book.title != titel:
                 book.title = titel
                 book.title_locked = True
+                # Ook naast het bestand, zodat het een herinstallatie overleeft
+                # en meeverhuist als je de map ergens anders heen zet.
+                _remember_title(session, book, titel, lang=subscription.language)
                 aantal += 1
         if aantal:
             resultaat.updated += aantal

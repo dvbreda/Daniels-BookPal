@@ -40,6 +40,12 @@ PROFILES: dict[str, ImageProfile] = {
     "web": ImageProfile("web", max_width=1600, quality=82),
     "web-hidpi": ImageProfile("web-hidpi", max_width=2400, quality=80),
     "original": ImageProfile("original", format="png", quality=100),
+    # Voor omslagen in BookPal Lite. Png en geen webp: de browser van een Kobo
+    # kent webp niet, en dan blijft er een leeg vlak staan zonder dat er iets
+    # in het log komt. Grijs en geditherd omdat het scherm toch niet meer kan.
+    "kobo-thumb": ImageProfile(
+        "kobo-thumb", max_width=240, format="png", grayscale=True, dither_levels=16
+    ),
     # E-ink. PNG omdat grijswaarden verliesloos moeten blijven: na dithering
     # maakt JPEG-ruis het beeld juist slechter, niet kleiner.
     "kobo-nia": ImageProfile("kobo-nia", 758, 1024, format="png", grayscale=True, dither_levels=16),

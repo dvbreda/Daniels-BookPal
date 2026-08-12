@@ -445,6 +445,12 @@ export interface Home {
   rails: HomeRail[];
 }
 
+export interface SidecarSyncResult {
+  written: number;
+  skipped: number;
+  errors: string[];
+}
+
 export interface KoboStatus {
   mount: string | null;
   connected: boolean;

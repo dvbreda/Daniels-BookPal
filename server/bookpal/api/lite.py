@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from bookpal.config import settings
 from bookpal.db import current_user, get_session
-from bookpal.images import get_profile
+from bookpal.images import PROFILES, get_profile
 from bookpal.models import Book, BookKind, Progress, Series
 from bookpal.translate import get_translator
 from bookpal.translate import is_configured as translate_is_configured
@@ -165,10 +165,12 @@ class LiteOptions:
         return f"?{'&'.join(parts)}" if parts else ""
 
     def image_query(self) -> str:
-        """Alleen wat het beeld zelf verandert; de rest hoort niet in een img-src."""
-        parts = []
-        if self.profile:
-            parts.append(f"profile={self.profile}")
+        """Alleen wat het beeld zelf verandert; de rest hoort niet in een img-src.
+
+        Altijd mét profiel, ook als je er geen koos: zonder profiel rendert de
+        server webp, en dat toont de Kobo-browser niet.
+        """
+        parts = [f"profile={_safe_profile(self.profile, FALLBACK_PROFILE)}"]
         if self.crop:
             parts.append("crop=true")
         if self.contrast != 100:
@@ -197,10 +199,31 @@ def _options(
 OptionsParam = Depends(_options)
 
 
+#: Waar Lite op terugvalt. Png, want de browser van een Kobo kent geen webp —
+#: en Lite bestaat juist voor die browser. De maat is die van een Clara; op een
+#: groter scherm schaalt de browser hem op, wat minder erg is dan een leeg vlak.
+FALLBACK_PROFILE = "kobo-clara"
+FALLBACK_THUMB = "kobo-thumb"
+
+
+def _safe_profile(profile: str | None, standaard: str) -> str:
+    """Een profiel dat deze browser kan tonen.
+
+    Lite stuurt nooit webp. Vraag je toch om een webp-profiel, dan krijg je de
+    png-variant: een plaatje dat er is weegt zwaarder dan een paar kilobyte
+    verschil.
+    """
+    if profile:
+        gekozen = PROFILES.get(profile)
+        if gekozen is not None and gekozen.format != "webp":
+            return profile
+    return standaard
+
+
 def _cover_query(profile: str | None) -> str:
     """Omslagen klein en in grijstinten: de Kobo laat ze toch niet groter zien,
     en over usb of wifi scheelt het merkbaar."""
-    return f"?profile={profile}" if profile else "?profile=thumb"
+    return f"?profile={_safe_profile(profile, FALLBACK_THUMB)}"
 
 
 def _qs(profile: str | None, translated: bool = False, hide_read: bool = False) -> str:

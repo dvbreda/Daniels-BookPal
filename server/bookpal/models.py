@@ -291,6 +291,10 @@ class Book(Base):
     edition_id: Mapped[int | None] = mapped_column(
         ForeignKey("edition.id", ondelete="SET NULL"), default=None, index=True
     )
+    # Welke pagina de omslag van dít deel is, als het niet de eerste is. De
+    # serie heeft dezelfde keuze; die van het deel wint, want die is
+    # specifieker. Komt onder meer uit de sidecar naast het bestand.
+    cover_page_index: Mapped[int | None] = mapped_column(Integer, default=None)
     # Titel met de hand of bij de bron opgehaald? Dan laat de scanner hem staan.
     # Zonder dit zet de eerstvolgende scan er weer de bestandsnaam overheen, en
     # bij een scanlation is dat vaak de naam van de tekenaar of "Chapter 12".

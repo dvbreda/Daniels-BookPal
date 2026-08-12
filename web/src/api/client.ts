@@ -32,6 +32,7 @@ import type {
   PushReport,
   RunReport,
   ScanResult,
+  SidecarSyncResult,
   SearchHit,
   Series,
   SeriesDetail,
@@ -117,6 +118,8 @@ export const api = {
     request<ScanResult>(`/api/libraries/${id}/scan${queryString({ force })}`, {
       method: "POST",
     }),
+  writeSidecars: () =>
+    request<SidecarSyncResult>("/api/libraries/sidecars", { method: "POST" }),
   scanAll: () => request<ScanResult[]>("/api/libraries/scan", { method: "POST" }),
 
   series: (query: SeriesQuery = {}) =>

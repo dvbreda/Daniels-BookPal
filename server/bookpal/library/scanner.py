@@ -15,9 +15,10 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from bookpal.config import settings
 from bookpal.formats import FORMAT_KINDS, SUPPORTED_EXTENSIONS, detect_format, open_book
 from bookpal.formats.base import BookMetadata
-from bookpal.library import editions
+from bookpal.library import editions, sidecars
 from bookpal.metadata import (
     ParsedName,
     from_embedded,
@@ -217,10 +218,21 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
 
     book.series_id = series.id
     book.kind = FORMAT_KINDS[fmt]
-    # Een opgehaalde of zelf gezette titel blijft staan: de bestandsnaam weet
-    # er minder van dan de bron.
-    if not book.title_locked:
+
+    # De sidecar naast het bestand wint van wat de bestandsnaam suggereert: hij
+    # is er gekomen doordat iemand — jij of een bron — het beter wist. Staat er
+    # niets, dan schrijven we wat we nu weten alsnog weg, zodat het een
+    # herinstallatie overleeft.
+    zijkant = sidecars.read(path)
+    uit_sidecar = zijkant.title(settings.translate_lang) if zijkant else None
+    if uit_sidecar:
+        book.title = uit_sidecar
+        book.title_locked = True
+    elif not book.title_locked:
         book.title = _chapter_title(meta, parsed, path, series, number)
+    if zijkant is not None and zijkant.cover_page is not None:
+        book.cover_page_index = zijkant.cover_page
+
     book.number = number
     book.sort_number = normalise_number(number)
     book.volume = meta.volume or parsed.volume
@@ -235,6 +247,35 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
     if book.edition_id is None:
         book.edition_id = editions.for_local_files(session, series).id
     session.flush()
+
+    if zijkant is None:
+        _write_sidecar(path, book, series, herkomst="filename")
+
+
+def _write_sidecar(path: Path, book: Book, series: Series, *, herkomst: str) -> None:
+    """Leg naast het bestand vast wat we van dit boek weten.
+
+    Alleen aanvullen: wat er al staat met een zwaardere herkomst blijft staan.
+    Zo overschrijft een scan nooit een titel die jij hebt ingetypt.
+    """
+    zijkant = sidecars.read(path) or sidecars.Sidecar()
+    veranderd = zijkant.set_title(book.title, herkomst=herkomst)
+    if zijkant.series != series.title:
+        zijkant.series = series.title
+        veranderd = True
+    if zijkant.number != book.number or zijkant.volume != book.volume:
+        zijkant.number = book.number
+        zijkant.volume = book.volume
+        veranderd = True
+    if series.authors and zijkant.authors != list(series.authors):
+        zijkant.authors = list(series.authors)
+        veranderd = True
+    if book.cover_page_index is not None and zijkant.cover_page != book.cover_page_index:
+        zijkant.cover_page = book.cover_page_index
+        zijkant.origin["cover_page"] = herkomst
+        veranderd = True
+    if veranderd:
+        sidecars.write(path, zijkant)
 
 
 def _chapter_title(

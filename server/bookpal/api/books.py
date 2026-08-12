@@ -232,7 +232,11 @@ def get_cover(
     # De omslag van dít deel bij de bron wint van "pagina 1": bij scanlations
     # staat daar vaak een credits-pagina van de vertaalgroep. Een handmatig
     # gekozen paginanummer gaat hier weer boven, want dat is een echte keuze.
-    if book.cover_url and (book.series is None or book.series.cover_page_index is None):
+    gekozen_pagina = book.cover_page_index
+    if gekozen_pagina is None and book.series is not None:
+        gekozen_pagina = book.series.cover_page_index
+
+    if book.cover_url and gekozen_pagina is None:
         try:
             remote = render_remote_cover(
                 book.cover_url, profile, source_id=f"book-cover:{book.id}:{book.cover_url}"
@@ -254,7 +258,7 @@ def get_cover(
     # Een handmatig gekozen omslagpagina geldt voor de hele serie, niet alleen
     # voor het eerste deel: bij scanlations zit de reclame op pagina 1 van elk
     # hoofdstuk, dus juist de deel-kaartjes hebben die keuze nodig.
-    page_index = book.series.cover_page_index if book.series is not None else None
+    page_index = gekozen_pagina
     if page_index is not None:
         try:
             chosen = render_page(source, page_index, profile, source_id=source_id_for(path))

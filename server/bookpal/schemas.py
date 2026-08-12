@@ -166,6 +166,14 @@ class MergeCandidateOut(BaseModel):
     books: int
 
 
+class SidecarSyncOut(BaseModel):
+    """Hoeveel metadata-bestandjes er zijn weggeschreven."""
+
+    written: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
 class HomeItemOut(BaseModel):
     """Eén tegel op de startpagina: genoeg om te tonen en te openen."""
 

@@ -119,6 +119,8 @@ export function SettingsPage() {
         </p>
       )}
 
+      <SidecarPanel />
+
       <IntakePanel />
 
       <KoboPanel />
@@ -616,5 +618,49 @@ function AddToIntake() {
 
       {melding && <p className="mt-2 text-xs text-slate-300">{melding}</p>}
     </div>
+  );
+}
+
+
+/**
+ * Metadata naast je bestanden.
+ *
+ * Wat BookPal over een boek weet staat in de database, en die is weg zodra je
+ * opnieuw begint. Een sidecar zet het náást het bestand: verhuis je map, dan
+ * verhuist wat je erover wist mee, en een verse installatie vindt het bij de
+ * eerste scan terug.
+ */
+function SidecarPanel() {
+  const [melding, setMelding] = useState<string | null>(null);
+
+  const schrijven = useMutation({
+    mutationFn: () => api.writeSidecars(),
+    onSuccess: (result) => {
+      setMelding(
+        `${result.written} geschreven, ${result.skipped} stond al goed.` +
+          (result.errors.length ? ` Fouten: ${result.errors.slice(0, 3).join("; ")}` : ""),
+      );
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Schrijven mislukt."),
+  });
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Metadata naast je bestanden</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Eén <code>.bookpal.json</code> per boek, met de titel (ook in meerdere talen), het
+        deelnummer en welke pagina de omslag is. Te openen in een teksteditor. Nieuwe
+        bestanden krijgen er bij de scan vanzelf een; deze knop is voor wat er al stond.
+      </p>
+      <button
+        onClick={() => schrijven.mutate()}
+        disabled={schrijven.isPending}
+        className="mt-3 rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+      >
+        {schrijven.isPending ? "Schrijven…" : "Nu voor alles schrijven"}
+      </button>
+      {melding && <p className="mt-2 text-xs text-slate-400">{melding}</p>}
+    </section>
   );
 }
