@@ -280,6 +280,11 @@ class OpdsSource(Source):
         Naar een tijdelijke naam en dan pas omzetten: een half binnengehaald
         boek mag de scanner nooit als geldig bestand tegenkomen.
         """
+        # Zoals bij het Internet Archive: de extensie komt van de bron, niet
+        # van wat wij hopen dat het is.
+        suffix = Path(urlparse(chapter_ref).path).suffix.lower()
+        if suffix and suffix != target.suffix.lower():
+            target = target.with_suffix(suffix)
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_suffix(target.suffix + ".partial")
         self._limiter.acquire()

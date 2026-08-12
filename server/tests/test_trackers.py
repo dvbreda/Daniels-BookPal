@@ -190,7 +190,12 @@ class TestEntryForSeries:
         entry = entry_for_series(session, current_user(session), series, "mal")
         assert entry.remote_id is None
 
-    def test_chapters_read_counts_finished_books(self, session: Session):
+    def test_books_without_a_number_fall_back_to_counting(self, session: Session):
+        """Wat naar de tracker gaat is het hoogste nummer dat je uit hebt.
+
+        Hebben de delen helemaal geen nummer — losse boeken — dan is "hoeveel
+        je er uit hebt" alsnog het beste antwoord.
+        """
         series = _series(session)
         root = LibraryRoot(name="R", path="/tmp/r-entry")
         session.add(root)
@@ -1092,3 +1097,98 @@ class TestMalProgressImport:
             f"/api/trackers/{account_id}/mal/import-progress", json={"series_id": andere.id}
         )
         assert response.json()["marked"] == 1
+
+
+class TestHowFarYouAre:
+    """Wat er naar de tracker gaat is hoe ver je bent, niet hoeveel je hebt."""
+
+    def _genummerd(
+        self, session: Session, series: Series, nummer: str, volume: str | None = None
+    ) -> Book:
+        from bookpal.metadata.filename import normalise_number
+
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+            sort_number=normalise_number(nummer),
+            volume=volume,
+            sort_volume=normalise_number(volume),
+        )
+        session.add(book)
+        session.flush()
+        return book
+
+    def test_the_highest_chapter_wins(self, session: Session):
+        series = _series(session)
+        for nummer in ("1", "2", "3"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3
+
+    def test_two_editions_of_one_chapter_do_not_count_double(self, session: Session):
+        """De gekleurde en de zwart-witte uitgave zijn hetzelfde hoofdstuk."""
+        series = _series(session)
+        for nummer in ("1", "2"):
+            _finish(session, self._genummerd(session, series, nummer))
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 2, "vier bestanden, maar je bent bij 2"
+
+    def test_a_gap_in_your_library_does_not_hold_you_back(self, session: Session):
+        """Je mist deel 2, maar je bent wel degelijk bij 3."""
+        series = _series(session)
+        for nummer in ("1", "3"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3
+
+    def test_rereading_something_earlier_changes_nothing(self, session: Session):
+        series = _series(session)
+        for nummer in ("1", "2", "9"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 9
+
+    def test_the_highest_volume_wins_too(self, session: Session):
+        series = _series(session)
+        _finish(session, self._genummerd(session, series, "1", volume="1"))
+        _finish(session, self._genummerd(session, series, "20", volume="3"))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.volumes_read == 3
+
+    def test_a_half_chapter_rounds_down(self, session: Session):
+        """Een tracker kent geen hoofdstuk 30,5."""
+        series = _series(session)
+        _finish(session, self._genummerd(session, series, "30.5"))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 30
+
+    def test_without_numbers_it_falls_back_to_counting(self, session: Session):
+        """Bij losse boeken is "hoeveel je er uit hebt" het beste antwoord."""
+        series = _series(session)
+        _finish(session, _book(session, series))
+        _finish(session, _book(session, series))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 2
+
+    def test_what_you_push_matches_what_you_import(self, session: Session):
+        """Heen en terug horen elkaars spiegelbeeld te zijn."""
+        from bookpal.trackers.service import import_progress
+
+        series = _series(session)
+        for nummer in ("1", "2", "3", "4"):
+            self._genummerd(session, series, nummer)
+        session.flush()
+
+        import_progress(session, current_user(session), series, 3)
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3

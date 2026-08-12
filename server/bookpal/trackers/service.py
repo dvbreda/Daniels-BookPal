@@ -8,7 +8,7 @@ bron van waarheid.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -92,19 +92,45 @@ def _finished_books(session: Session, user: User, books: list[Book]) -> list[Boo
     return [book for book in books if book.id in finished_ids]
 
 
+def _furthest(finished: list[Book], nummer: Callable[[Book], float]) -> int:
+    """Hoe ver je bent: het hoogste nummer dat je uit hebt.
+
+    Tellen hoeveel bestanden er af zijn geeft het verkeerde getal, en op twee
+    manieren. Heb je een serie in twee uitgaven — de gekleurde en de
+    zwart-witte — dan telt hoofdstuk 5 dubbel en meldt de tracker dat je op 10
+    zit. En mist je bibliotheek een paar delen, dan blijft de teller juist
+    achter bij waar je werkelijk bent.
+
+    Dit is ook precies de kant op waarmee we voortgang binnenhalen: daar
+    markeren we alles tot en met het nummer dat de tracker noemt. Zo blijven
+    heen en terug elkaars spiegelbeeld.
+    """
+    nummers = [
+        waarde
+        for book in finished
+        if (waarde := nummer(book)) > 0 and waarde != float("inf")
+    ]
+    if not nummers:
+        # Niets met een bruikbaar nummer — bij losse boeken is "hoeveel je er
+        # uit hebt" dan alsnog het beste antwoord.
+        return len(finished)
+    return int(max(nummers))
+
+
 def entry_for_series(session: Session, user: User, series: Series, provider: str) -> TrackerEntry:
     """Bouwt wat er voor deze serie naar de tracker toe zou gaan."""
     books = list(series.books)
     status = reading_status_for(session, user, series)
     finished = _finished_books(session, user, books)
-    volumes = {book.volume for book in finished if book.volume}
     return TrackerEntry(
         series_id=series.id,
         title=series.title,
         remote_id=series.tracker_ids.get(provider),
         status=status,
-        chapters_read=len(finished),
-        volumes_read=len(volumes),
+        chapters_read=_furthest(finished, lambda book: book.sort_number),
+        volumes_read=_furthest(
+            [book for book in finished if book.volume], lambda book: book.sort_volume
+        ),
     )
 
 

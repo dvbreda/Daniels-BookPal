@@ -270,6 +270,11 @@ class ArchiveOrgSource(Source):
         """
         if "/" not in chapter_ref:
             raise SourceError(f"{chapter_ref} wijst niet naar een bestand in een item")
+        # De naam bij de bron bepaalt de extensie: een pdf onder de naam ".cbz"
+        # is geen zip en opent nergens.
+        suffix = Path(chapter_ref).suffix.lower()
+        if suffix and suffix != target.suffix.lower():
+            target = target.with_suffix(suffix)
         target.parent.mkdir(parents=True, exist_ok=True)
         partial = target.with_suffix(target.suffix + ".partial")
         self._limiter.acquire()

@@ -478,6 +478,9 @@ def chapter_path(series: Series, book: Book) -> Path:
     if book.source_ref:
         parts.append(f"[{book.source_ref[:8]}]")
     stem = " ".join(parts) or str(book.id)
+    # ``.cbz`` is een beginwaarde, geen belofte: een bron die hele bestanden
+    # levert kan net zo goed een pdf of epub geven. ``download`` geeft terug
+    # waar hij het écht heeft neergezet.
     return settings.download_dir.resolve() / safe_name(series.title) / f"{safe_name(stem)}.cbz"
 
 
@@ -513,7 +516,10 @@ def download_book(
         raise SourceError("serie niet gevonden")
 
     target = chapter_path(series, book)
-    implementation.download(book.source_ref, target, data_saver=data_saver)
+    # De bron bepaalt de extensie: hij weet welk bestand hij ophaalt. Zonder dit
+    # kwam een pdf van het Internet Archive als ".cbz" op schijf te staan, en
+    # dan opent er niets — het is geen zip.
+    target = implementation.download(book.source_ref, target, data_saver=data_saver)
 
     stat = target.stat()
     file_row = session.scalar(select(File).where(File.path == str(target)))

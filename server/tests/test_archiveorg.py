@@ -214,3 +214,20 @@ class TestLendingItems:
     def test_an_ordinary_item_is_not_marked(self):
         [treffer] = _bron().search("shinya shokudo")
         assert treffer.status is None
+
+
+class TestTheExtensionComesFromTheSource:
+    """Een pdf onder de naam ".cbz" is geen zip en opent nergens."""
+
+    def test_a_pdf_lands_as_a_pdf(self, tmp_path: Path):
+        doel = tmp_path / "c1 [abc].cbz"
+        geschreven = _bron().download(f"{ITEM}/Shinya Shokudou - v01.pdf", doel)
+
+        assert geschreven.suffix == ".pdf"
+        assert geschreven.is_file()
+        assert not doel.exists(), "niet ook nog onder de verkeerde naam"
+
+    def test_a_cbz_keeps_its_name(self, tmp_path: Path):
+        doel = tmp_path / "c1 [abc].cbz"
+        geschreven = _bron().download(f"{ITEM}/Shinya Shokudou - v01 c01-14.cbz", doel)
+        assert geschreven == doel
