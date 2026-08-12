@@ -285,3 +285,103 @@ class TestHidingWhatYouRead:
         assert "Alles tonen" in aan
         uit = client.get("/lite").text
         assert "Gelezen verbergen" in uit
+
+
+class TestReadingOptions:
+    """Wat de Kobo wél aankan: bijsnijden en contrast, op de server gedaan."""
+
+    def _boek(self, session: Session, client: TestClient):
+        from bookpal.db import current_user  # noqa: F401 - houdt de gebruiker aan
+
+        response = client.get("/lite")
+        assert response.status_code == 200
+
+    def test_the_options_travel_along_in_every_link(
+        self, client: TestClient, scanned_series: int | None = None
+    ):
+        """Zonder JavaScript is de URL de enige plek waar een stand kan wonen."""
+        pagina = client.get("/lite", params={"snij": 1, "contrast": 130}).text
+        assert "snij=1" in pagina
+        assert "contrast=130" in pagina
+
+    def test_the_library_shows_covers(self, client: TestClient, session: Session):
+        series = Series(title="Met omslag", sort_title="met omslag")
+        session.add(series)
+        session.commit()
+
+        pagina = client.get("/lite").text
+        assert f"/api/series/{series.id}/cover" in pagina
+
+
+class TestLiteHomeAndGrid:
+    """Een startpagina die je terugbrengt, en omslagen als je die wilt zien."""
+
+    def _bezig(self, session: Session):
+        from bookpal.db import current_user
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Progress
+
+        root = LibraryRoot(name="R", path="/tmp/lite-home")
+        session.add(root)
+        session.flush()
+        series = Series(title="Bezig", sort_title="bezig")
+        session.add(series)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path="/tmp/lite-home/1.cbz",
+            size=1,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            page_count=20,
+            file_id=bestand.id,
+        )
+        session.add(boek)
+        session.flush()
+        session.add(
+            Progress(
+                user_id=current_user(session).id,
+                book_id=boek.id,
+                percent=35.0,
+                finished=False,
+                position={"page": 7},
+            )
+        )
+        session.commit()
+        return series, boek
+
+    def test_the_home_takes_you_back_to_your_page(self, client: TestClient, session: Session):
+        _series, boek = self._bezig(session)
+        pagina = client.get("/lite").text
+        assert "Verder lezen · pagina 8" in pagina
+        assert f"/lite/books/{boek.id}/read/7" in pagina
+
+    def test_without_progress_there_is_no_block(self, client: TestClient, session: Session):
+        session.add(Series(title="Niets", sort_title="niets"))
+        session.commit()
+        assert 'class="hero"' not in client.get("/lite").text
+
+    def test_a_series_can_be_shown_as_a_grid(self, client: TestClient, session: Session):
+        series, _boek = self._bezig(session)
+
+        lijst = client.get(f"/lite/series/{series.id}").text
+        assert 'class="raster"' not in lijst
+        assert "Als raster" in lijst
+
+        raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
+        assert 'class="raster"' in raster
+        assert "Als lijst" in raster
+
+    def test_the_view_choice_travels_along(self, client: TestClient, session: Session):
+        """Anders val je terug in de lijst zodra je een hoofdstuk opent."""
+        series, boek = self._bezig(session)
+        raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
+        assert f"/lite/books/{boek.id}?raster=1" in raster

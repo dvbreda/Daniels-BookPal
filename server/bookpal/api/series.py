@@ -21,6 +21,7 @@ from bookpal.images import (
 )
 from bookpal.library import editions
 from bookpal.library import merge as merge_module
+from bookpal.metadata.filename import normalise_number as _sort_number
 from bookpal.metadata.filename import sort_title as sort_title_for
 from bookpal.metadata.titles import normalise
 from bookpal.models import (
@@ -931,6 +932,68 @@ def sync_series_covers(series_id: int, session: Session = Depends(get_session)) 
         if aantal:
             resultaat.updated += aantal
             resultaat.editions.append(f"{edition.name if edition else series.title} ({aantal})")
+
+    session.commit()
+    return resultaat
+
+
+@router.post("/{series_id}/titles", response_model=SyncCoversOut)
+def sync_series_titles(
+    series_id: int, session: Session = Depends(get_session)
+) -> SyncCoversOut:
+    """Haal de hoofdstuktitels op bij de bron.
+
+    Een bestandsnaam als "Shin'ya Shokudou Chapter 01 - Yarō Abe.cbz" levert de
+    naam van de tekenaar op als titel; de bron weet dat het "Herring Roe" heet.
+    Wat hier binnenkomt wordt vastgezet, zodat een volgende scan er niet weer de
+    bestandsnaam overheen legt.
+    """
+    series = deps.get_series(session, series_id)
+    abonnementen = list(
+        session.scalars(select(Subscription).where(Subscription.series_id == series_id))
+    )
+    if not abonnementen and not series.source_ref:
+        raise HTTPException(
+            status_code=409, detail="deze serie heeft geen bron om titels bij te halen"
+        )
+
+    resultaat = SyncCoversOut()
+    boeken = list(session.scalars(select(Book).where(Book.series_id == series_id)))
+
+    for subscription in abonnementen:
+        source_row = session.get(Source, subscription.source_id)
+        ref = subscription.source_ref or series.source_ref
+        if source_row is None or not source_row.enabled or not ref:
+            continue
+        try:
+            implementation = deps.get_source_implementation(source_row)
+            hoofdstukken = implementation.chapters(ref, language=subscription.language)
+            # Volgt je deze reeks in een taal waarin niemand hem heeft
+            # geüpload, dan zijn er geen titels. Een Engelse titel is dan beter
+            # dan geen: het gaat om wát het hoofdstuk is, niet om de taal.
+            if not any(chapter.title for chapter in hoofdstukken) and subscription.language != "en":
+                hoofdstukken = implementation.chapters(ref, language="en")
+        except (HTTPException, SourceError) as exc:
+            resultaat.errors.append(str(getattr(exc, "detail", exc)))
+            continue
+
+        # Op nummer koppelen en niet op volgorde: je bibliotheek kan gaten
+        # hebben, en dan zou tellen de titels één opschuiven.
+        per_nummer = {
+            _sort_number(chapter.number): chapter.title
+            for chapter in hoofdstukken
+            if chapter.number and chapter.title
+        }
+        aantal = 0
+        for book in boeken:
+            titel = per_nummer.get(book.sort_number)
+            if titel and book.title != titel:
+                book.title = titel
+                book.title_locked = True
+                aantal += 1
+        if aantal:
+            resultaat.updated += aantal
+            resultaat.editions.append(f"{source_row.name} ({aantal})")
 
     session.commit()
     return resultaat

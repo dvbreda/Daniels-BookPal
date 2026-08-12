@@ -38,6 +38,12 @@ class SearchResult:
     # Schrijver en tekenaar. Een scanlation-cbz heeft zelden ComicInfo, dus
     # voor gevolgde series is dit de enige plek waar de auteur vandaan komt.
     authors: list[str] = field(default_factory=list)
+    # De pagina bij de bron zelf. Een zoekresultaat is een titel en een plaatje;
+    # om te beoordelen of dit de reeks is die je zoekt wil je erheen kunnen.
+    url: str | None = None
+    # In welke talen er bij de bron vertalingen staan. Bepaalt of het zin heeft
+    # deze reeks in die taal te volgen.
+    languages: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,8 +81,10 @@ class Source(ABC):
     type: str
 
     @abstractmethod
-    def search(self, query: str, *, limit: int = 20) -> list[SearchResult]:
-        """Zoek series op titel."""
+    def search(
+        self, query: str, *, limit: int = 20, language: str | None = None
+    ) -> list[SearchResult]:
+        """Zoek series op titel, eventueel alleen wat in ``language`` bestaat."""
 
     @abstractmethod
     def detail(self, ref: str) -> SearchResult:

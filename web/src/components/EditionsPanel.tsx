@@ -62,6 +62,21 @@ export function EditionsPanel({
       setError(fout instanceof ApiError ? fout.message : "Omslagen ophalen mislukt."),
   });
 
+  const titels = useMutation({
+    mutationFn: () => api.syncTitles(seriesId),
+    onSuccess: (result) => {
+      setError(null);
+      setMelding(
+        result.updated === 0
+          ? "De bron kent geen andere titels voor deze hoofdstukken."
+          : `${result.updated} titels opgehaald.`,
+      );
+      opnieuw();
+    },
+    onError: (fout: unknown) =>
+      setError(fout instanceof ApiError ? fout.message : "Titels ophalen mislukt."),
+  });
+
   const verplaats = (index: number, richting: -1 | 1) => {
     const volgorde = editions.map((edition) => edition.id);
     const doel = index + richting;
@@ -176,6 +191,22 @@ export function EditionsPanel({
           {omslagen.isPending ? "Ophalen…" : "Alle omslagen ophalen"}
         </button>
         <span className="text-xs text-slate-500">Per uitgave bij de bron, één per deel.</span>
+      </div>
+
+      {/* Een bestandsnaam als "Chapter 01 - Yarō Abe.cbz" levert de naam van de
+          tekenaar op als titel; de bron weet dat het "Herring Roe" heet. Wat
+          hier binnenkomt blijft staan bij een volgende scan. */}
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => titels.mutate()}
+          disabled={titels.isPending}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+        >
+          {titels.isPending ? "Ophalen…" : "Hoofdstuktitels ophalen"}
+        </button>
+        <span className="text-xs text-slate-500">
+          Op nummer gekoppeld, en blijft staan bij een nieuwe scan.
+        </span>
       </div>
 
       {melding && <p className="mt-2 text-xs text-slate-400">{melding}</p>}

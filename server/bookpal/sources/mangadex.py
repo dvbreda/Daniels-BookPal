@@ -25,6 +25,8 @@ from bookpal.sources.base import ChapterInfo, CoverInfo, SearchResult, Source, S
 
 API_BASE = "https://api.mangadex.org"
 COVERS_BASE = "https://uploads.mangadex.org/covers"
+# De site zelf, om vanuit een zoekresultaat te kunnen doorklikken.
+SITE_BASE = "https://mangadex.org"
 USER_AGENT = "DanielsBookPal/0.1 (persoonlijke bibliotheek; +https://github.com/dvbreda)"
 
 # Welke van de vele titelvarianten tonen we? Engels als dat er is, anders de
@@ -92,6 +94,8 @@ def _to_result(item: dict[str, Any]) -> SearchResult:
     }
     return SearchResult(
         ref=str(item["id"]),
+        url=f"{SITE_BASE}/title/{item['id']}",
+        languages=[str(taal) for taal in attributes.get("availableTranslatedLanguages") or []],
         title=_pick_title(attributes),
         description=_pick_description(attributes),
         year=attributes.get("year"),
@@ -158,12 +162,27 @@ class MangaDexSource(Source):
             raise SourceError(f"MangaDex meldde een fout op {path}")
         return payload
 
-    def search(self, query: str, *, limit: int = 20) -> list[SearchResult]:
-        payload = self._get(
-            "/manga",
-            {"title": query, "limit": limit, "includes[]": _INCLUDES},
-        )
+    def search(
+        self, query: str, *, limit: int = 20, language: str | None = None
+    ) -> list[SearchResult]:
+        params: dict[str, Any] = {"title": query, "limit": limit, "includes[]": _INCLUDES}
+        if language:
+            # Filteren bij de bron en niet achteraf: anders krijg je tien
+            # treffers terug waarvan er twee in jouw taal bestaan.
+            params["availableTranslatedLanguage[]"] = language
+        payload = self._get("/manga", params)
         return [_to_result(item) for item in payload.get("data", [])]
+
+    def chapter_count(self, ref: str, *, language: str = "en") -> int:
+        """Hoeveel hoofdstukken er in deze taal staan.
+
+        Met ``limit=1``: we hebben alleen het totaal nodig, niet de lijst. Dat
+        scheelt een gepagineerde feed van soms honderden regels per treffer.
+        """
+        payload = self._get(
+            f"/manga/{ref}/feed", {"translatedLanguage[]": language, "limit": 1}
+        )
+        return int(payload.get("total", 0))
 
     def detail(self, ref: str) -> SearchResult:
         payload = self._get(f"/manga/{ref}", {"includes[]": _INCLUDES})

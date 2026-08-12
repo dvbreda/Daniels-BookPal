@@ -13,6 +13,8 @@ formaten is Laag C (``bookpal-kobo``, M9/M10).
 
 from __future__ import annotations
 
+import logging
+from dataclasses import dataclass
 from html import escape
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -24,9 +26,14 @@ from bookpal.config import settings
 from bookpal.db import current_user, get_session
 from bookpal.images import get_profile
 from bookpal.models import Book, BookKind, Progress, Series
+from bookpal.translate import get_translator
+from bookpal.translate import is_configured as translate_is_configured
 from bookpal.translate import service as translation_service
+from bookpal.translate.base import TranslationError
 
 from . import deps
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/lite", tags=["lite"])
 
@@ -40,11 +47,35 @@ ul { list-style: none; padding: 0; margin: 0; }
 li { border-bottom: 1px solid #ccc; }
 a { display: block; padding: 0.7em 0.2em; color: #000; text-decoration: none; }
 .meta { color: #555; font-size: 0.8em; }
-.tools { display: flex; gap: 0.5em; margin: 0 0 0.8em; }
+.tools { display: flex; gap: 0.5em; margin: 0.8em 0; }
 .tools a {
   flex: 1; text-align: center; border: 1px solid #888; padding: 0.6em 0.3em;
   font-size: 0.9em;
 }
+/* Omslagen: klein genoeg dat er een lijst op past, groot genoeg om een reeks
+   aan te herkennen. Vaste maat, zodat de lijst niet verspringt terwijl de
+   plaatjes binnenkomen. */
+li a.cover-row { display: flex; align-items: center; gap: 0.7em; padding: 0.5em 0.2em; }
+.cover-row img { width: 44px; height: 66px; object-fit: cover; background: #eee; flex: none; }
+.cover-row .naam { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bar { height: 3px; background: #ddd; margin-top: 0.3em; }
+.bar span { display: block; height: 100%; background: #444; }
+/* Raster: drie op een rij past op elk Kobo-scherm zonder dat de omslag te
+   klein wordt om te herkennen. Geen flexbox-gedoe — dit moet ook op een oude
+   webkit kloppen. */
+ul.raster { display: flex; flex-wrap: wrap; gap: 0.6em; }
+ul.raster li { width: 30%; border: none; }
+ul.raster a { padding: 0; }
+ul.raster img { width: 100%; height: auto; background: #eee; }
+ul.raster .naam { display: block; font-size: 0.8em; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+/* Verder lezen: één blok bovenaan, want dat is bijna altijd wat je wilt. */
+.hero { display: flex; gap: 0.8em; border: 1px solid #888; padding: 0.6em; margin-bottom: 1em; }
+.hero img { width: 70px; height: 105px; object-fit: cover; background: #eee; flex: none; }
+.hero .wat { min-width: 0; }
+.hero .titel { font-size: 1.05em; font-weight: bold; }
+.hero a.knop { display: inline-block; border: 1px solid #444; padding: 0.5em 0.9em;
+  margin-top: 0.4em; }
 .nav { display: flex; justify-content: space-between; margin: 1em 0; }
 .nav.rtl { flex-direction: row-reverse; }
 .nav a { flex: 1; text-align: center; border: 1px solid #888; margin: 0 0.3em; }
@@ -88,42 +119,117 @@ def _profile_param(
 ProfileParam = Depends(_profile_param)
 
 
+@dataclass(frozen=True, slots=True)
+class LiteOptions:
+    """Alles wat je in Lite kunt instellen.
+
+    Zonder JavaScript is de URL de enige plek waar een stand kan wonen, dus
+    reist dit blokje mee in elke link. Dat is meteen de reden dat het één
+    dataclass is en geen zes losse parameters: elke link moet ze compleet
+    doorgeven, en één vergeten veld betekent dat je instelling wegvalt zodra je
+    een pagina omslaat.
+    """
+
+    profile: str | None = None
+    translated: bool = False
+    hide_read: bool = False
+    # Rakuyomi's "page crop": egale scanranden weghalen scheelt op een klein
+    # scherm zomaar een kwart van het beeld.
+    crop: bool = False
+    # 100 is onbewerkt; hoger rekt het grijsbereik op voor bleke scans.
+    contrast: int = 100
+    # Omslagen naast elkaar of onder elkaar. Een raster laat een reeks zien,
+    # een lijst laat titels lezen — welke je wilt hangt af van wat je zoekt.
+    grid: bool = False
+
+    def query(self, **overrides: object) -> str:
+        waarden = {
+            "profile": self.profile,
+            "vertaal": self.translated,
+            "verberg": self.hide_read,
+            "snij": self.crop,
+            "contrast": self.contrast,
+            "raster": self.grid,
+            **overrides,
+        }
+        parts = []
+        for sleutel, waarde in waarden.items():
+            if sleutel == "contrast":
+                if waarde != 100:
+                    parts.append(f"contrast={waarde}")
+            elif isinstance(waarde, bool):
+                if waarde:
+                    parts.append(f"{sleutel}=1")
+            elif waarde:
+                parts.append(f"{sleutel}={waarde}")
+        return f"?{'&'.join(parts)}" if parts else ""
+
+    def image_query(self) -> str:
+        """Alleen wat het beeld zelf verandert; de rest hoort niet in een img-src."""
+        parts = []
+        if self.profile:
+            parts.append(f"profile={self.profile}")
+        if self.crop:
+            parts.append("crop=true")
+        if self.contrast != 100:
+            parts.append(f"contrast={self.contrast}")
+        return f"?{'&'.join(parts)}" if parts else ""
+
+
+def _options(
+    profile: str | None = ProfileParam,
+    vertaal: bool = Query(default=False),
+    verberg: bool = Query(default=False, description="Verberg wat je al uit hebt."),
+    snij: bool = Query(default=False, description="Egale rand rond de pagina weghalen."),
+    contrast: int = Query(default=100, ge=50, le=200),
+    raster: bool = Query(default=False, description="Omslagen naast elkaar."),
+) -> LiteOptions:
+    return LiteOptions(
+        profile=profile,
+        translated=vertaal,
+        hide_read=verberg,
+        crop=snij,
+        contrast=contrast,
+        grid=raster,
+    )
+
+
+OptionsParam = Depends(_options)
+
+
+def _cover_query(profile: str | None) -> str:
+    """Omslagen klein en in grijstinten: de Kobo laat ze toch niet groter zien,
+    en over usb of wifi scheelt het merkbaar."""
+    return f"?profile={profile}" if profile else "?profile=thumb"
+
+
 def _qs(profile: str | None, translated: bool = False, hide_read: bool = False) -> str:
-    parts = []
-    if profile:
-        parts.append(f"profile={profile}")
-    if translated:
-        parts.append("vertaal=1")
-    if hide_read:
-        # Blijft aan over links heen: zonder JavaScript is de URL de enige
-        # plek waar een schakelaar kan wonen.
-        parts.append("verberg=1")
-    return f"?{'&'.join(parts)}" if parts else ""
+    """Kortere weg voor de plekken die alleen het profiel doorgeven."""
+    return LiteOptions(profile=profile, translated=translated, hide_read=hide_read).query()
 
 
 HideReadParam = Query(default=False, description="Verberg wat je al uit hebt.")
 
 
-def _hide_toggle(pad: str, profile: str | None, hide_read: bool) -> str:
+def _hide_toggle(pad: str, opts: LiteOptions) -> str:
     """De schakelaar zelf: een gewone link naar dezelfde pagina."""
-    doel = f"{pad}{_qs(profile, hide_read=not hide_read)}"
-    label = "Alles tonen" if hide_read else "Gelezen verbergen"
+    doel = f"{pad}{opts.query(verberg=not opts.hide_read)}"
+    label = "Alles tonen" if opts.hide_read else "Gelezen verbergen"
     return f'<div class="tools"><a href="{doel}">{label}</a></div>' 
 
 
 @router.get("", response_class=HTMLResponse)
 def lite_home(
-    profile: str | None = ProfileParam,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=40, ge=1, le=200),
-    verberg: bool = HideReadParam,
+    opts: LiteOptions = OptionsParam,
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     """Alle series. Tabs (M3) filteren dit later; nu nog de volle lijst."""
     user = current_user(session)
     statement = select(Series)
     telling = select(func.count(Series.id))
-    if verberg:
+    if opts.hide_read:
         # Een serie is "uit" als er geen enkel deel meer openstaat. Als
         # voorwaarde op de query en niet achteraf, anders klopt het paginanummer
         # niet meer.
@@ -144,13 +250,14 @@ def lite_home(
     ).all()
 
     items = "".join(
-        f'<li><a href="/lite/series/{s.id}{_qs(profile, hide_read=verberg)}">'
-        f"{escape(s.title)}</a></li>"
+        f'<li><a class="cover-row" href="/lite/series/{s.id}{opts.query()}">'
+        f'<img src="/api/series/{s.id}/cover{_cover_query(opts.profile)}" alt="" loading="lazy">'
+        f'<span class="naam">{escape(s.title)}</span></a></li>'
         for s in rows
     )
-    profile_bit = f"&profile={profile}" if profile else ""
-    if verberg:
-        profile_bit += "&verberg=1"
+    # De paginering plakt achter de bestaande instellingen aan.
+    rest = opts.query().lstrip("?")
+    profile_bit = f"&{rest}" if rest else ""
     nav = ""
     if offset > 0:
         prev_offset = max(0, offset - limit)
@@ -161,11 +268,12 @@ def lite_home(
         href = f"/lite?offset={next_offset}&limit={limit}{profile_bit}"
         nav += f'<a href="{href}">Volgende &raquo;</a>'
 
-    body = f"<h1>BookPal</h1>{_hide_toggle('/lite', profile, verberg)}<ul>{items}</ul>"
+    body = f"<h1>BookPal</h1>{_continue_block(session, opts)}"
+    body += f"{_hide_toggle('/lite', opts)}<ul>{items}</ul>"
     if not rows:
         body += (
-            "<p>Niets open."
-            if verberg
+            "<p>Niets open.</p>"
+            if opts.hide_read
             else "<p>Nog geen series; draai een scan.</p>"
         )
     if nav:
@@ -176,15 +284,14 @@ def lite_home(
 @router.get("/series/{series_id}", response_class=HTMLResponse)
 def lite_series(
     series_id: int,
-    profile: str | None = ProfileParam,
-    verberg: bool = HideReadParam,
+    opts: LiteOptions = OptionsParam,
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     series = deps.get_series(session, series_id)
     user = current_user(session)
     books = list(series.books)
     progress = deps.progress_for(session, user, [b.id for b in books])
-    if verberg:
+    if opts.hide_read:
         books = [
             book
             for book in books
@@ -201,17 +308,26 @@ def lite_series(
         meta = ""
         if prog is not None:
             state = "uitgelezen" if prog.finished else f"{prog.percent:.0f}%"
-            meta = f'<div class="meta">{escape(state)}</div>'
+            balk = (
+                f'<div class="bar"><span style="width:{prog.percent:.0f}%"></span></div>'
+                if not prog.finished
+                else ""
+            )
+            meta = f'<div class="meta">{escape(state)}</div>{balk}'
+        klasse = "" if opts.grid else ' class="cover-row"'
         rows.append(
-            f'<li><a href="/lite/books/{book.id}{_qs(profile, hide_read=verberg)}">'
-            f"{escape(label)}{meta}</a></li>"
+            f"<li><a{klasse} href=\"/lite/books/{book.id}{opts.query()}\">"
+            f'<img src="/api/books/{book.id}/cover{_cover_query(opts.profile)}"'
+            f' alt="" loading="lazy">'
+            f'<span class="naam">{escape(label)}{meta}</span></a></li>'
         )
 
+    lijst = f'<ul class="raster">{"".join(rows)}</ul>' if opts.grid else f"<ul>{''.join(rows)}</ul>"
     body = (
-        f'<a class="back" href="/lite{_qs(profile, hide_read=verberg)}">&laquo; Bibliotheek</a>'
+        f'<a class="back" href="/lite{opts.query()}">&laquo; Bibliotheek</a>'
         f"<h1>{escape(series.title)}</h1>"
-        f"{_hide_toggle(f'/lite/series/{series.id}', profile, verberg)}"
-        f"<ul>{''.join(rows)}</ul>"
+        f"{_view_tools(series.id, opts)}"
+        f"{lijst}"
     )
     if not rows:
         body += "<p>Niets open in deze serie.</p>"
@@ -221,7 +337,7 @@ def lite_series(
 @router.get("/books/{book_id}", response_model=None)
 def lite_book(
     book_id: int,
-    profile: str | None = ProfileParam,
+    opts: LiteOptions = OptionsParam,
     session: Session = Depends(get_session),
 ) -> HTMLResponse | RedirectResponse:
     book = deps.get_book(session, book_id)
@@ -229,7 +345,7 @@ def lite_book(
     if book.kind is not BookKind.COMIC:
         series = session.get(Series, book.series_id)
         body = (
-            f'<a class="back" href="/lite/series/{book.series_id}{_qs(profile)}">&laquo; '
+            f'<a class="back" href="/lite/series/{book.series_id}{opts.query()}">&laquo; '
             f"{escape(series.title) if series else 'Terug'}</a>"
             f"<h1>{escape(book.title)}</h1>"
             "<p>Dit is geen strip — Lite leest alleen pagina's als plaatje. "
@@ -240,7 +356,7 @@ def lite_book(
     user = current_user(session)
     prog = deps.progress_for(session, user, [book.id]).get(book.id)
     start_page = int(prog.position.get("page", 0)) if prog is not None and not prog.finished else 0
-    query = _qs(profile)
+    query = opts.query()
     target = f"/lite/books/{book.id}/read/{start_page}"
     return RedirectResponse(target + query)
 
@@ -249,8 +365,8 @@ def lite_book(
 def lite_read(
     book_id: int,
     page: int,
-    profile: str | None = ProfileParam,
-    vertaal: bool = Query(default=False),
+    opts: LiteOptions = OptionsParam,
+    maak: bool = Query(default=False, description="Vertaal deze pagina nu."),
     session: Session = Depends(get_session),
 ) -> HTMLResponse:
     book = deps.get_book(session, book_id)
@@ -272,10 +388,10 @@ def lite_read(
         finished=finished,
     )
 
-    # De leeslinks houden de vertaalstand vast, zodat je 'm één keer aanzet en
+    # De leeslinks houden alle instellingen vast, zodat je ze één keer zet en
     # daarna gewoon doorbladert.
-    query = _qs(profile, vertaal)
-    img_query = _qs(profile)
+    query = opts.query()
+    img_query = opts.image_query()
     img_src = f"/api/books/{book.id}/pages/{page}{img_query}"
 
     nav_class = "nav rtl" if book.right_to_left else "nav"
@@ -295,19 +411,43 @@ def lite_read(
         translation_service.find(session, book.id, page, settings.translate_lang, "gemini")
         is not None
     )
+    # Nog niet vertaald maar je vraagt erom: dan nú vertalen. Dat duurt een paar
+    # tellen en dat is precies waarom het een aparte link is en niet iets wat
+    # vanzelf gebeurt zodra je een pagina opent.
+    if maak and not has_translation and translate_is_configured():
+        translator = get_translator()
+        try:
+            translation_service.translate_page(
+                session, translator, book, page, target_lang=settings.translate_lang
+            )
+            has_translation = True
+        except TranslationError as exc:
+            logger.warning("vertalen van %s p%s: %s", book.id, page, exc)
+        finally:
+            translator.close()
+
     layer = ""
     toggle = ""
     if has_translation:
-        if vertaal:
+        if opts.translated:
             layer = (
                 f'<img class="layer" src="/api/books/{book.id}/pages/{page}/overlay'
                 f'{img_query}" alt="vertaling">'
             )
-            toggle = f'<a href="/lite/books/{book.id}/read/{page}{_qs(profile)}">Origineel</a>'
+            toggle = (
+                f'<a href="/lite/books/{book.id}/read/{page}'
+                f'{opts.query(vertaal=False)}">Origineel</a>'
+            )
         else:
             toggle = (
-                f'<a href="/lite/books/{book.id}/read/{page}{_qs(profile, True)}">Vertaling</a>'
+                f'<a href="/lite/books/{book.id}/read/{page}'
+                f'{opts.query(vertaal=True)}">Vertaling</a>'
             )
+    elif translate_is_configured():
+        toggle = (
+            f'<a href="/lite/books/{book.id}/read/{page}'
+            f'{opts.query(vertaal=True, maak=True)}">Vertaal deze pagina</a>'
+        )
 
     back_href = f"/lite/series/{book.series_id}{query}"
     body = (
@@ -318,5 +458,90 @@ def lite_read(
         f"<div class=\"meta\">pagina {page + 1} / {book.page_count}{' · ' if toggle else ''}"
         f"{toggle}</div></div>"
         f'<div class="{nav_class}">{"".join(links)}</div>'
+        f"{_reading_tools(book.id, page, opts)}"
     )
     return _page(f"{book.title} — {page + 1}/{book.page_count}", body)
+
+
+def _reading_tools(book_id: int, page: int, opts: LiteOptions) -> str:
+    """De leesopties, als gewone links.
+
+    Wat de Kobo wél aankan en waar hij baat bij heeft: een egale scanrand
+    weghalen scheelt op een klein scherm zomaar een kwart van het beeld, en meer
+    contrast maakt een bleke scan op e-ink pas leesbaar. Beide gebeuren op de
+    server, dus het apparaat hoeft alleen het resultaat te tonen.
+    """
+    basis = f"/lite/books/{book_id}/read/{page}"
+    knoppen = [
+        (
+            "Bijsnijden: " + ("aan" if opts.crop else "uit"),
+            basis + opts.query(snij=not opts.crop),
+        )
+    ]
+    volgend_contrast = {100: 130, 130: 160, 160: 100}.get(opts.contrast, 100)
+    knoppen.append(
+        (
+            f"Contrast: {opts.contrast}%",
+            basis + opts.query(contrast=volgend_contrast),
+        )
+    )
+    regels = "".join(f'<a href="{href}">{escape(label)}</a>' for label, href in knoppen)
+    return f'<div class="tools">{regels}</div>'
+
+
+def _view_tools(series_id: int, opts: LiteOptions) -> str:
+    """Raster of lijst, en het verbergen van wat je uit hebt.
+
+    Twee knoppen naast elkaar in plaats van twee balken onder elkaar: op een
+    Kobo is verticale ruimte het schaarse goed.
+    """
+    basis = f"/lite/series/{series_id}"
+    weergave = "Als lijst" if opts.grid else "Als raster"
+    verbergen = "Alles tonen" if opts.hide_read else "Gelezen verbergen"
+    return (
+        '<div class="tools">'
+        f'<a href="{basis}{opts.query(raster=not opts.grid)}">{weergave}</a>'
+        f'<a href="{basis}{opts.query(verberg=not opts.hide_read)}">{verbergen}</a>'
+        "</div>"
+    )
+
+
+def _continue_block(session: Session, opts: LiteOptions) -> str:
+    """Waar je gebleven was, bovenaan de startpagina.
+
+    Dezelfde gedachte als in de web-app: het enige wat je bij het openen bijna
+    altijd wilt is terug naar je pagina, en op een e-reader met een trage
+    verversing telt elke tik die je niet hoeft te doen dubbel.
+    """
+    user = current_user(session)
+    rij = session.execute(
+        select(Progress, Book, Series)
+        .join(Book, Book.id == Progress.book_id)
+        .join(Series, Series.id == Book.series_id)
+        .where(
+            Progress.user_id == user.id,
+            Progress.finished.is_(False),
+            Book.file_id.isnot(None),
+        )
+        .order_by(Progress.updated_at.desc())
+        .limit(1)
+    ).first()
+    if rij is None:
+        return ""
+
+    progress, book, series = rij
+    positie = progress.position if isinstance(progress.position, dict) else {}
+    pagina = positie.get("page")
+    pagina = pagina if isinstance(pagina, int) and pagina >= 0 else 0
+    doel = f"/lite/books/{book.id}/read/{pagina}{opts.query()}"
+
+    return (
+        '<div class="hero">'
+        f'<img src="/api/books/{book.id}/cover{_cover_query(opts.profile)}" alt="">'
+        '<div class="wat">'
+        f'<div class="titel">{escape(series.title)}</div>'
+        f'<div class="meta">{escape(book.title)} · {progress.percent:.0f}%</div>'
+        f'<div class="bar"><span style="width:{progress.percent:.0f}%"></span></div>'
+        f'<a class="knop" href="{doel}">Verder lezen · pagina {pagina + 1}</a>'
+        "</div></div>"
+    )

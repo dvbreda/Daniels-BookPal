@@ -516,7 +516,9 @@ class TestAddingASourceToWhatYouHave:
         monkeypatch.setattr(
             MangaDexSource,
             "search",
-            lambda self, query, *, limit=20: [SearchResult(ref="abc", title="Shinya Shokudou")],
+            lambda self, query, *, limit=20, language=None: [
+                SearchResult(ref="abc", title="Shinya Shokudou")
+            ],
         )
 
         [treffer] = client.get("/api/sources/1/search", params={"q": "shinya"}).json()
@@ -802,3 +804,83 @@ class TestSortTitles:
 
         titels = [item["title"] for item in client.get("/api/series").json()["items"]]
         assert titels == ["Claire", "Crayon Shin-chan", "Down to Earth", "Dragon Ball Super"]
+
+
+class TestFetchingTitles:
+    """Een bestandsnaam weet minder van een hoofdstuk dan de bron."""
+
+    def _opzet(self, session: Session, titels: dict[str, str]):
+        from bookpal.models import Source, Subscription
+        from bookpal.sources.base import ChapterInfo
+        from bookpal.sources.mangadex import MangaDexSource
+
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        series = _series(session)
+        series.source_id = bron.id
+        series.source_ref = "ref"
+        abo = Subscription(source_id=bron.id, series_id=series.id, source_ref="ref")
+        session.add(abo)
+        session.flush()
+        uitgave = Edition(series_id=series.id, name="Bron", rank=0, subscription_id=abo.id)
+        session.add(uitgave)
+        session.flush()
+        for nummer in ("1", "2"):
+            _book(session, series, uitgave, float(nummer), titel="Yaro Abe")
+        session.commit()
+
+        def nep(self, ref, *, language="en"):
+            return [
+                ChapterInfo(
+                    ref=f"c{nummer}",
+                    number=nummer,
+                    volume=None,
+                    title=titel,
+                    language=language,
+                )
+                for nummer, titel in titels.items()
+            ]
+
+        return series, MangaDexSource, nep
+
+    def test_titles_from_the_source_replace_the_filename(
+        self, client, session: Session, monkeypatch
+    ):
+        series, klasse, nep = self._opzet(session, {"1": "Herring Roe", "2": "Meat Sauce"})
+        monkeypatch.setattr(klasse, "chapters", nep)
+
+        body = client.post(f"/api/series/{series.id}/titles").json()
+        assert body["updated"] == 2
+
+        session.expire_all()
+        titels = [book.title for book in sorted(series.books, key=lambda b: b.sort_number)]
+        assert titels == ["Herring Roe", "Meat Sauce"]
+
+    def test_a_fetched_title_survives_a_rescan(self, client, session: Session, monkeypatch):
+        """Anders legt de scanner er meteen weer de bestandsnaam overheen."""
+        series, klasse, nep = self._opzet(session, {"1": "Herring Roe"})
+        monkeypatch.setattr(klasse, "chapters", nep)
+        client.post(f"/api/series/{series.id}/titles")
+
+        session.expire_all()
+        boek = sorted(series.books, key=lambda b: b.sort_number)[0]
+        assert boek.title_locked is True
+
+    def test_a_chapter_the_source_does_not_know_keeps_its_title(
+        self, client, session: Session, monkeypatch
+    ):
+        series, klasse, nep = self._opzet(session, {"1": "Herring Roe"})
+        monkeypatch.setattr(klasse, "chapters", nep)
+
+        body = client.post(f"/api/series/{series.id}/titles").json()
+        assert body["updated"] == 1
+
+        session.expire_all()
+        tweede = sorted(series.books, key=lambda b: b.sort_number)[1]
+        assert tweede.title == "Yaro Abe"
+
+    def test_a_series_without_a_source_says_so(self, client, session: Session):
+        series = _series(session)
+        session.commit()
+        assert client.post(f"/api/series/{series.id}/titles").status_code == 409

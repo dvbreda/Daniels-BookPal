@@ -22,6 +22,7 @@ from bookpal.models import (
     utcnow,
 )
 from bookpal.schemas import (
+    ChapterCountOut,
     DownloadIn,
     RunReportOut,
     SearchResultOut,
@@ -80,12 +81,17 @@ def search(
     source_id: int,
     q: str = Query(min_length=1, max_length=200),
     limit: int = Query(default=20, ge=1, le=100),
+    language: str | None = Query(
+        default=None,
+        max_length=8,
+        description="Alleen reeksen die in deze taal vertaald zijn; leeg is alles.",
+    ),
     session: Session = Depends(get_session),
 ) -> list[SearchResultOut]:
     source = _get_source_row(session, source_id)
     implementation = _implementation(source)
     try:
-        results = implementation.search(q, limit=limit)
+        results = implementation.search(q, limit=limit, language=language or None)
     except SourceError as exc:
         # 502: het verzoek klopt, de bron speelt niet mee.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -123,6 +129,8 @@ def search(
                 existing_series_id=bestaand.id if bestaand else None,
                 existing_series_title=bestaand.title if bestaand else None,
                 cover_url=result.cover_url,
+                url=result.url,
+                languages=result.languages,
             )
         )
     return uitvoer
@@ -362,3 +370,28 @@ def run_now(
         expired=report.expired,
         errors=report.errors,
     )
+
+
+@router.get("/{source_id}/chapter-count", response_model=ChapterCountOut)
+def chapter_count(
+    source_id: int,
+    ref: str = Query(max_length=200),
+    language: str = Query(default="en", max_length=8),
+    session: Session = Depends(get_session),
+) -> ChapterCountOut:
+    """Hoeveel hoofdstukken deze reeks in deze taal heeft.
+
+    Apart en niet in de zoekresultaten: het kost een verzoek per treffer, en dat
+    hoort het zoeken zelf niet trager te maken. De client vraagt het per kaartje
+    op zodra die in beeld is.
+    """
+    source = _get_source_row(session, source_id)
+    implementation = _implementation(source)
+    teller = getattr(implementation, "chapter_count", None)
+    if teller is None:
+        raise HTTPException(status_code=501, detail="deze bron telt geen hoofdstukken")
+    try:
+        aantal = int(teller(ref, language=language))
+    except SourceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ChapterCountOut(ref=ref, language=language, count=aantal)

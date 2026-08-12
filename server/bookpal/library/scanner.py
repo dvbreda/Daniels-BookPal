@@ -19,6 +19,7 @@ from bookpal.formats import FORMAT_KINDS, SUPPORTED_EXTENSIONS, detect_format, o
 from bookpal.formats.base import BookMetadata
 from bookpal.library import editions
 from bookpal.metadata import (
+    ParsedName,
     from_embedded,
     from_root_default,
     normalise_number,
@@ -27,6 +28,7 @@ from bookpal.metadata import (
     sort_title,
 )
 from bookpal.metadata.origin import Origin
+from bookpal.metadata.titles import normalise as normalise_title
 from bookpal.models import Book, BookKind, File, LibraryRoot, OriginRegion, Series, utcnow
 
 logger = logging.getLogger(__name__)
@@ -215,7 +217,10 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
 
     book.series_id = series.id
     book.kind = FORMAT_KINDS[fmt]
-    book.title = meta.title or parsed.title or path.stem
+    # Een opgehaalde of zelf gezette titel blijft staan: de bestandsnaam weet
+    # er minder van dan de bron.
+    if not book.title_locked:
+        book.title = _chapter_title(meta, parsed, path, series, number)
     book.number = number
     book.sort_number = normalise_number(number)
     book.volume = meta.volume or parsed.volume
@@ -230,6 +235,46 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
     if book.edition_id is None:
         book.edition_id = editions.for_local_files(session, series).id
     session.flush()
+
+
+def _chapter_title(
+    meta: BookMetadata, parsed: ParsedName, path: Path, series: Series, number: str | None
+) -> str:
+    """Hoe dit hoofdstuk heet.
+
+    Wat het bestand zelf zegt wint, dan wat de naam prijsgeeft. Met één
+    uitzondering: veel scanlations heten "Reeks Chapter 01 - Tekenaar.cbz", en
+    dan houdt de parser de tekenaar voor een titel. Elk hoofdstuk heet dan naar
+    dezelfde persoon, wat nergens op slaat en de hele lijst onleesbaar maakt.
+    """
+    kandidaat = meta.title or parsed.title
+    if kandidaat and _is_author(kandidaat, series):
+        kandidaat = None
+    if kandidaat:
+        return kandidaat
+    return f"Hoofdstuk {number}" if number else path.stem
+
+
+def _is_author(kandidaat: str, series: Series) -> bool:
+    """Is dit de naam van de maker in plaats van een titel?
+
+    Genormaliseerd vergeleken, want dezelfde persoon heet in de bestandsnaam
+    "Yarō Abe" en bij de bron "Abe Yarou" — en dan nog omgedraaid ook.
+    """
+    doel = normalise_title(kandidaat)
+    if not doel:
+        return False
+    for auteur in series.authors or []:
+        genormaliseerd = normalise_title(auteur)
+        if not genormaliseerd:
+            continue
+        if genormaliseerd == doel:
+            return True
+        # Voor- en achternaam omgedraaid telt ook: "Abe Yarou" naast "Yarou Abe".
+        delen = sorted(normalise_title(deel) for deel in auteur.split())
+        if delen and delen == sorted(normalise_title(deel) for deel in kandidaat.split()):
+            return True
+    return False
 
 
 def scan_root(session: Session, root: LibraryRoot, *, force: bool = False) -> ScanResult:

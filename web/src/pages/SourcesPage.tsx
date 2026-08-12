@@ -183,8 +183,10 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
   const [language, setLanguage] = useState("en");
 
   const { data, isFetching, error } = useQuery({
-    queryKey: ["source-search", sourceId, submitted],
-    queryFn: () => api.searchSource(sourceId, submitted),
+    queryKey: ["source-search", sourceId, submitted, language],
+    // De taal filtert bij de bron: anders krijg je tien treffers terug waarvan
+    // er twee in jouw taal bestaan, en dat zie je pas na het volgen.
+    queryFn: () => api.searchSource(sourceId, submitted, language || undefined),
     enabled: submitted.length > 0,
   });
 
@@ -215,6 +217,9 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
           className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
           title="Je kunt dezelfde reeks in meerdere talen volgen; ze worden uitgaven van één serie"
         >
+          {/* Leeg = alles: soms wil je gewoon zien wat er bestaat, en pas
+              daarna kiezen in welke taal je het volgt. */}
+          <option value="">Alle talen</option>
           {TALEN.map(([code, label]) => (
             <option key={code} value={code}>
               {label}
@@ -245,10 +250,46 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
       <div className="mt-3 space-y-2">
         {data?.map((hit) => (
           <div key={hit.ref} className="flex items-start gap-3 rounded bg-ink-800 p-3">
+            {/* Zonder omslag is een titel alleen niet genoeg om te beoordelen
+                of dit de reeks is die je zoekt. */}
+            {hit.cover_url && (
+              <img
+                src={hit.cover_url}
+                alt=""
+                loading="lazy"
+                className="h-24 w-16 shrink-0 rounded object-cover"
+                onError={(event) => {
+                  event.currentTarget.style.display = "none";
+                }}
+              />
+            )}
             <div className="min-w-0 flex-1">
               <p className="truncate text-slate-100">{hit.title}</p>
               <p className="text-xs text-slate-500">
-                {[hit.year, hit.status, hit.original_language].filter(Boolean).join(" · ")}
+                {[
+                  hit.year,
+                  hit.status,
+                  hit.original_language,
+                  hit.languages.length ? hit.languages.slice(0, 6).join(" ") : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </p>
+              <p className="text-xs text-slate-500">
+                <ChapterCount sourceId={sourceId} refId={hit.ref} language={language || "en"} />
+                {hit.url && (
+                  <>
+                    {" · "}
+                    <a
+                      href={hit.url}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                      className="underline hover:text-slate-300"
+                    >
+                      bij de bron bekijken
+                    </a>
+                  </>
+                )}
               </p>
               {/* Je hebt hier al iets van staan onder een net andere titel.
                   Dan voeg je een bron toe aan wat je hebt, en maak je geen
@@ -353,5 +394,38 @@ function SubscriptionRowView({
         Ontvolgen
       </button>
     </div>
+  );
+}
+
+
+/**
+ * Hoeveel hoofdstukken deze reeks in deze taal heeft.
+ *
+ * Apart opgehaald en niet in het zoekresultaat: het kost een verzoek per
+ * treffer, en dat hoort het zoeken zelf niet trager te maken. Zo verschijnt het
+ * getal na een tel terwijl de lijst er meteen staat.
+ */
+function ChapterCount({
+  sourceId,
+  refId,
+  language,
+}: {
+  sourceId: number;
+  refId: string;
+  language: string;
+}) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["chapter-count", sourceId, refId, language],
+    queryFn: () => api.chapterCount(sourceId, refId, language),
+    staleTime: 5 * 60 * 1000,
+    retry: false,
+  });
+
+  if (isLoading) return <span className="text-slate-600">tellen…</span>;
+  if (!data) return <span className="text-slate-600">aantal onbekend</span>;
+  return (
+    <span>
+      {data.count} {data.count === 1 ? "hoofdstuk" : "hoofdstukken"} in {language}
+    </span>
   );
 }

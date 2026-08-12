@@ -291,6 +291,10 @@ class Book(Base):
     edition_id: Mapped[int | None] = mapped_column(
         ForeignKey("edition.id", ondelete="SET NULL"), default=None, index=True
     )
+    # Titel met de hand of bij de bron opgehaald? Dan laat de scanner hem staan.
+    # Zonder dit zet de eerstvolgende scan er weer de bestandsnaam overheen, en
+    # bij een scanlation is dat vaak de naam van de tekenaar of "Chapter 12".
+    title_locked: Mapped[bool] = mapped_column(Boolean, default=False)
     # Welke aflevering dit ís, los van de uitgave. Normaal afgeleid van het
     # nummer, zodat hoofdstuk 5 uit de gekleurde en de zwart-witte uitgave
     # hetzelfde vakje vullen. Handmatig te zetten voor boeken zonder nummer:

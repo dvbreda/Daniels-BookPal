@@ -558,6 +558,18 @@ class SearchResultOut(BaseModel):
     # Rechtstreeks te tonen als miniatuur in een zoekresultaat; pas bij
     # koppelen (POST .../cover) gaat hij door de eigen cache en beeldpipeline.
     cover_url: str | None = None
+    # De pagina bij de bron, om te kunnen controleren wat dit is.
+    url: str | None = None
+    # In welke talen er vertalingen bestaan.
+    languages: list[str] = Field(default_factory=list)
+
+
+class ChapterCountOut(BaseModel):
+    """Hoeveel hoofdstukken een reeks bij de bron heeft, in één taal."""
+
+    ref: str
+    language: str
+    count: int
 
 
 class SubscribeIn(BaseModel):

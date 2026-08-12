@@ -265,6 +265,10 @@ export interface SearchHit {
   /** Rechtstreeks tonen als miniatuur; alleen na koppelen gaat hij door onze
    * eigen cache (zie SourceBadge/imageUrl.seriesCover). */
   cover_url: string | null;
+  /** De pagina bij de bron, om te kunnen controleren wat dit is. */
+  url: string | null;
+  /** In welke talen er vertalingen bestaan. */
+  languages: string[];
 }
 
 export type SubscriptionPolicy = "permanent" | "readahead";
@@ -404,6 +408,12 @@ export interface ReadState {
   finished: boolean;
   /** Hoeveel uitgaven van deze aflevering het betrof. */
   affected: number;
+}
+
+export interface ChapterCount {
+  ref: string;
+  language: string;
+  count: number;
 }
 
 export interface HomeItem {

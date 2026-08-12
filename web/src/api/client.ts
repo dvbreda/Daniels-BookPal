@@ -8,6 +8,7 @@ import type {
   ImportResult,
   IntakeImportResult,
   IntakeFetch,
+  ChapterCount,
   Home,
   IntakeScan,
   KoboPlanItem,
@@ -220,8 +221,14 @@ export const api = {
   addSource: (body: { type: string; name: string }) =>
     request<SourceRow>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
   deleteSource: (id: number) => request<void>(`/api/sources/${id}`, { method: "DELETE" }),
-  searchSource: (id: number, q: string, limit = 20) =>
-    request<SearchHit[]>(`/api/sources/${id}/search${queryString({ q, limit })}`),
+  chapterCount: (sourceId: number, ref: string, language: string) =>
+    request<ChapterCount>(
+      `/api/sources/${sourceId}/chapter-count${queryString({ ref, language })}`,
+    ),
+  syncTitles: (id: number) =>
+    request<SyncCoversResult>(`/api/series/${id}/titles`, { method: "POST" }),
+  searchSource: (id: number, q: string, language?: string, limit = 20) =>
+    request<SearchHit[]>(`/api/sources/${id}/search${queryString({ q, limit, language })}`),
   subscribe: (
     sourceId: number,
     body: {
