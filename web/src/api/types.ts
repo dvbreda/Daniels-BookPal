@@ -115,6 +115,9 @@ export interface ContinueInfo {
   resuming: boolean;
   /** Hoeveel hoofdstukken hiervóór nog niet uit zijn. */
   unread_before: number;
+  /** Staat dit al op de NAS? Zo niet, dan haalt de knop het eerst op. Bij een
+   * serie die je online volgt is dat de normale situatie. */
+  has_file: boolean;
 }
 
 export interface LibraryRoot {

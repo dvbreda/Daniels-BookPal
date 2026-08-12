@@ -422,6 +422,14 @@ function ContinueBar({ seriesId }: { seriesId: number }) {
     retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
   });
 
+  const ophalen = useMutation({
+    mutationFn: (bookId: number) => api.downloadChapter(bookId),
+    onSuccess: (_result, bookId) => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      navigate(`/lezen/${bookId}`);
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: () => api.markReadBefore(seriesId, data!.book_id),
     onSuccess: () => {
@@ -432,20 +440,36 @@ function ContinueBar({ seriesId }: { seriesId: number }) {
 
   if (!data) return null;
 
-  const label = data.resuming ? "Lees verder" : "Beginnen";
+  // Nog niet op de NAS: dan hoort de knop hem eerst op te halen en daarna te
+  // openen. Bij een serie die je online volgt is dat de normale gang van zaken.
+  const label = !data.has_file
+    ? ophalen.isPending
+      ? "Ophalen…"
+      : "Ophalen en lezen"
+    : data.resuming
+      ? "Lees verder"
+      : "Beginnen";
   const waar = [data.number ? `#${data.number}` : null, data.title].filter(Boolean).join(" ");
 
   return (
     <section className="mt-6 flex flex-wrap items-center gap-3 rounded border border-ink-600 p-4">
       <button
-        onClick={() => navigate(`/lezen/${data.book_id}`)}
-        className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900"
+        onClick={() =>
+          data.has_file ? navigate(`/lezen/${data.book_id}`) : ophalen.mutate(data.book_id)
+        }
+        disabled={ophalen.isPending}
+        className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900 disabled:opacity-50"
       >
         {label}
       </button>
       <span className="min-w-0 flex-1 truncate text-sm text-slate-400">
         {waar}
         {data.resuming && data.page > 0 ? ` · pagina ${data.page + 1}` : ""}
+        {ophalen.isError && (
+          <span className="ml-2 text-danger">
+            {ophalen.error instanceof ApiError ? ophalen.error.message : "Ophalen mislukt."}
+          </span>
+        )}
       </span>
       {data.unread_before > 0 && (
         <button

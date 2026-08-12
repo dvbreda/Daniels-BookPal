@@ -211,6 +211,10 @@ class ContinueOut(BaseModel):
     # Ga je verder in iets dat je al begonnen was, of begin je aan een nieuw
     # hoofdstuk? Bepaalt of de knop "Lees verder" of "Beginnen" heet.
     resuming: bool
+    # Staat dit hoofdstuk al op de NAS? Zo niet, dan hoort de knop het eerst op
+    # te halen. Bij een serie die je vooral online volgt is dat de normale
+    # situatie: je bent bij 124 en 125 moet nog binnenkomen.
+    has_file: bool = True
     # Hoeveel hoofdstukken hiervóór nog niet uitgelezen zijn — dat is precies
     # wat de knop "markeer vorige als gelezen" zou opruimen.
     unread_before: int

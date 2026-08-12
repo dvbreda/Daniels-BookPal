@@ -153,9 +153,17 @@ class TestContinue:
         body = client.get(f"/api/series/{series.id}/continue").json()
         assert body["book_id"] == _books(session, series)[-1].id
 
-    def test_chapters_without_a_file_are_skipped(self, client: TestClient, session: Session):
-        """Een gevolgd maar nog niet opgehaald hoofdstuk mag je niet op een
-        lege pagina zetten."""
+    def test_a_chapter_that_still_needs_fetching_says_so(
+        self, client: TestClient, session: Session
+    ):
+        """Wat nog niet binnen is mag je wél aanwijzen, maar niet openen.
+
+        Bij een serie die je online volgt is dat de normale situatie: je bent
+        bij hoofdstuk 124 en 125 staat nog niet op de NAS. Het overslaan van
+        zulke hoofdstukken zette je terug op het laatste bestand dat je
+        toevallig had staan. ``has_file`` maakt er een ophaalknop van in plaats
+        van een lege pagina.
+        """
         series = _series_with_chapters(session, 1)
         readable = _books(session, series)[0]
         # Sorteert vóór het leesbare hoofdstuk, dus dit is precies het geval
@@ -174,7 +182,9 @@ class TestContinue:
         session.commit()
 
         body = client.get(f"/api/series/{series.id}/continue").json()
-        assert body["book_id"] == readable.id
+        assert body["number"] == "0"
+        assert body["has_file"] is False
+        assert readable.file_id is not None
 
     def test_it_counts_what_is_still_unread_before_it(self, client: TestClient, session: Session):
         series = _series_with_chapters(session, 4)

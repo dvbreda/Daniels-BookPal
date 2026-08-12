@@ -386,6 +386,19 @@ def _readable_slots(session: Session, series_id: int) -> list[editions.Slot]:
     return editions.readable(editions.slots(books, uitgaven))
 
 
+def _all_slots(session: Session, series_id: int) -> list[editions.Slot]:
+    """Alle afleveringen in leesvolgorde, opgehaald of niet."""
+    books = list(
+        session.scalars(
+            select(Book)
+            .where(Book.series_id == series_id)
+            .order_by(Book.sort_volume, Book.sort_number)
+        )
+    )
+    uitgaven = list(session.scalars(select(Edition).where(Edition.series_id == series_id)))
+    return editions.slots(books, uitgaven)
+
+
 def _readable_books(session: Session, series_id: int) -> list[Book]:
     return [slot.chosen for slot in _readable_slots(session, series_id)]
 
@@ -424,7 +437,12 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
     pagina. Is het uit, dan het eerstvolgende hoofdstuk dat nog niet uit is.
     """
     deps.get_series(session, series_id)
-    slots = _readable_slots(session, series_id)
+    # Bewust over álle afleveringen, ook wat nog niet is opgehaald. Anders komt
+    # een serie die je grotendeels online volgt uit op het laatste bestand dat
+    # je toevallig hebt staan: bij One Piece hoofdstuk 3, terwijl je bij 124
+    # bent. Wat er nog niet is, wordt een ophaalknop — daar is ``has_file``
+    # voor.
+    slots = _all_slots(session, series_id)
     if not slots:
         raise HTTPException(status_code=404, detail="deze serie heeft nog niets te lezen")
 
@@ -468,6 +486,7 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
         book_id=target.id,
         title=target.title,
         number=target.number,
+        has_file=target.file_id is not None,
         page=page if isinstance(page, int) and page >= 0 else 0,
         resuming=row is not None and row.percent > 0 and not row.finished,
         unread_before=unread_before,
