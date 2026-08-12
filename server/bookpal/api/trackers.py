@@ -15,13 +15,14 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
-from bookpal.models import TrackerAccount, utcnow
+from bookpal.models import Series, TrackerAccount, utcnow
 from bookpal.schemas import (
     GoodreadsLoginIn,
     GoodreadsStatusOut,
     GoodreadsSyncOut,
     MalAuthorizeOut,
     MalCallbackIn,
+    MalListItemOut,
     PushReportOut,
     PushResultOut,
     ShelfRowOut,
@@ -428,3 +429,39 @@ def shelves(
         per_shelf[key].sort(key=lambda row: row.title.lower())
 
     return ShelvesOut(provider=provider, without_id=without_id, **per_shelf)
+
+
+@router.get("/{account_id}/mal/list", response_model=list[MalListItemOut])
+def mal_list(
+    account_id: int,
+    status: str | None = Query(default=None, max_length=20),
+    session: Session = Depends(get_session),
+) -> list[MalListItemOut]:
+    """Je eigen MyAnimeList-lijst, om er abonnementen bij te zoeken.
+
+    De enige plek waar BookPal van een tracker leest. Dat botst niet met het
+    eenrichtingsverkeer: dat gaat over voortgang, en die blijft hier de
+    waarheid. Dit haalt alleen op wát je wilt gaan lezen.
+    """
+    account = _get_account(session, account_id)
+    if account.provider != "mal":
+        raise HTTPException(status_code=409, detail="alleen MyAnimeList gebruikt dit")
+
+    tracker = MyAnimeListTracker(account.credentials)
+    try:
+        items = tracker.read_list(status)
+    except TrackerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        tracker.close()
+
+    # Wat je al hebt hoeft niet opnieuw; dat scheelt zoeken bij de bron.
+    bekend = {
+        str(series.tracker_ids.get("mal")): series.id
+        for series in session.scalars(select(Series))
+        if series.tracker_ids.get("mal")
+    }
+    return [
+        MalListItemOut(**item, series_id=bekend.get(item["mal_id"]))
+        for item in items
+    ]

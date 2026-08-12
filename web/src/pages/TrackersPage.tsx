@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { ShelfRow, TrackerAccountRow } from "../api/types";
@@ -73,6 +73,8 @@ export function TrackersPage() {
       </section>
 
       <GoodreadsPanel setMessage={setMessage} />
+
+      {mal?.connected && <MalListPanel accountId={mal.id} setMessage={setMessage} />}
 
       <ShelvesPanel />
 
@@ -503,6 +505,110 @@ function ShelvesPanel() {
         ))}
         {(planken.find(([key]) => key === open)?.[1] ?? []).length === 0 && (
           <li className="px-3 py-2 text-sm text-slate-500">Niets op deze plank.</li>
+        )}
+      </ul>
+    </section>
+  );
+}
+
+
+const MAL_STATUS: Record<string, string> = {
+  plan_to_read: "Wil ik lezen",
+  reading: "Aan het lezen",
+  completed: "Uitgelezen",
+  on_hold: "Gepauzeerd",
+  dropped: "Gestopt",
+};
+
+/**
+ * Je eigen MyAnimeList-lijst, om er abonnementen bij te zoeken.
+ *
+ * De enige plek waar BookPal van een tracker leest. Dat botst niet met het
+ * eenrichtingsverkeer: dat gaat over voortgang, en die blijft hier de waarheid.
+ * Dit haalt alleen op wát je wilt gaan lezen.
+ */
+function MalListPanel({
+  accountId,
+  setMessage,
+}: {
+  accountId: number;
+  setMessage: (message: string | null) => void;
+}) {
+  const [status, setStatus] = useState("plan_to_read");
+  const { data, isFetching, error } = useQuery({
+    queryKey: ["mal-list", accountId, status],
+    queryFn: () => api.malList(accountId, status),
+  });
+  const { data: sources } = useQuery({ queryKey: ["sources"], queryFn: api.sources });
+  const navigate = useNavigate();
+
+  const bron = sources?.[0];
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Je MyAnimeList-lijst</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Wat er op je lijst staat, om er een abonnement bij te zoeken.
+      </p>
+
+      <div className="mt-3 flex flex-wrap gap-1">
+        {Object.entries(MAL_STATUS).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setStatus(key)}
+            className={`rounded px-2 py-1 text-xs ${
+              status === key ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {isFetching && <p className="mt-2 text-xs text-slate-500">Ophalen…</p>}
+      {error && (
+        <p className="mt-2 text-xs text-danger">
+          {error instanceof ApiError ? error.message : "Ophalen mislukt."}
+        </p>
+      )}
+
+      <ul className="mt-3 space-y-1">
+        {(data ?? []).map((item) => (
+          <li
+            key={item.mal_id}
+            className="flex flex-wrap items-center gap-2 rounded bg-ink-800 px-3 py-2 text-sm"
+          >
+            <span className="min-w-0 flex-1 truncate text-slate-100">{item.title}</span>
+            {item.chapters > 0 && (
+              <span className="tabular-nums text-xs text-slate-500">
+                {item.chapters_read}/{item.chapters}
+              </span>
+            )}
+            {item.series_id ? (
+              <button
+                onClick={() => navigate(`/serie/${item.series_id}`)}
+                className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
+              >
+                In je bibliotheek
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  if (!bron) {
+                    setMessage("Voeg eerst een bron toe onder Bronnen.");
+                    return;
+                  }
+                  navigate(`/bronnen?zoek=${encodeURIComponent(item.title)}`);
+                }}
+                className="rounded bg-accent px-2 py-1 text-xs text-ink-900"
+              >
+                Zoek bij bron
+              </button>
+            )}
+          </li>
+        ))}
+        {data && data.length === 0 && (
+          <li className="px-3 py-2 text-sm text-slate-500">Niets op deze lijst.</li>
         )}
       </ul>
     </section>

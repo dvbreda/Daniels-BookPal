@@ -19,6 +19,7 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
+from bookpal.library import merge as merge_module
 from bookpal.models import (
     Book,
     BookKind,
@@ -35,6 +36,8 @@ from bookpal.schemas import (
     ImportSeriesIn,
     ImportSeriesOut,
     MarkReadBeforeOut,
+    MergeSeriesIn,
+    MergeSuggestionOut,
     OriginPatch,
     Paginated,
     SeriesDetailOut,
@@ -435,3 +438,47 @@ def import_series_to_library(
         skipped=report.skipped,
         errors=report.errors,
     )
+
+
+@router.get("/merge/suggestions", response_model=list[MergeSuggestionOut])
+def merge_suggestions(session: Session = Depends(get_session)) -> list[MergeSuggestionOut]:
+    """Series die waarschijnlijk hetzelfde zijn.
+
+    Alleen op genormaliseerde titel — dat vangt hoofdletter- en
+    leestekenverschillen zonder te gaan raden.
+    """
+    out: list[MergeSuggestionOut] = []
+    for keep, absorb in merge_module.suggest(session):
+        out.append(
+            MergeSuggestionOut(
+                keep_id=keep.id,
+                keep_title=keep.title,
+                keep_books=_book_count(session, keep.id),
+                absorb_id=absorb.id,
+                absorb_title=absorb.title,
+                absorb_books=_book_count(session, absorb.id),
+            )
+        )
+    return out
+
+
+def _book_count(session: Session, series_id: int) -> int:
+    return int(session.scalar(select(func.count(Book.id)).where(Book.series_id == series_id)) or 0)
+
+
+@router.post("/{series_id}/merge", response_model=SeriesDetailOut)
+def merge_series(
+    series_id: int, payload: MergeSeriesIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Voeg een andere serie in deze samen. De andere verdwijnt."""
+    keep = deps.get_series(session, series_id)
+    absorb = session.get(Series, payload.absorb_id)
+    if absorb is None:
+        raise HTTPException(status_code=404, detail="die serie bestaat niet")
+
+    try:
+        merge_module.merge(session, keep, absorb)
+    except merge_module.MergeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return get_series(series_id, session)

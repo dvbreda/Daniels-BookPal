@@ -327,6 +327,26 @@ export interface ImportResult {
   errors: string[];
 }
 
+export interface MergeSuggestion {
+  keep_id: number;
+  keep_title: string;
+  keep_books: number;
+  absorb_id: number;
+  absorb_title: string;
+  absorb_books: number;
+}
+
+export interface MalListItem {
+  mal_id: string;
+  title: string;
+  status: string;
+  chapters: number;
+  chapters_read: number;
+  score: number;
+  /** Gevuld als je deze al in je bibliotheek hebt. */
+  series_id: number | null;
+}
+
 export interface ShelfRow {
   series_id: number;
   title: string;

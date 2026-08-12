@@ -174,6 +174,21 @@ class NextChapterOut(BaseModel):
     has_file: bool
 
 
+class MergeSeriesIn(BaseModel):
+    """De serie die opgaat in deze. Verdwijnt daarna."""
+
+    absorb_id: int
+
+
+class MergeSuggestionOut(BaseModel):
+    keep_id: int
+    keep_title: str
+    keep_books: int
+    absorb_id: int
+    absorb_title: str
+    absorb_books: int
+
+
 class ImportSeriesIn(BaseModel):
     """Een gevolgde serie als gewone bestanden in je eigen mappen zetten."""
 
@@ -447,6 +462,19 @@ class GoodreadsStatusOut(BaseModel):
 class GoodreadsSyncOut(BaseModel):
     updated: list[str] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+
+
+class MalListItemOut(BaseModel):
+    """Een reeks van je MyAnimeList-lijst."""
+
+    mal_id: str
+    title: str
+    status: str
+    chapters: int = 0
+    chapters_read: int = 0
+    score: int = 0
+    # Heb je deze al in je bibliotheek? Dan hoef je er niet op te abonneren.
+    series_id: int | None = None
 
 
 class MalAuthorizeOut(BaseModel):

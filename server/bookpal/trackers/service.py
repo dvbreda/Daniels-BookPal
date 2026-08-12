@@ -13,7 +13,7 @@ from collections.abc import Iterable
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from bookpal.models import Book, Progress, Series, TrackerAccount, User
+from bookpal.models import Book, BookKind, OriginRegion, Progress, Series, TrackerAccount, User
 from bookpal.trackers.base import (
     PushReport,
     PushResult,
@@ -114,6 +114,8 @@ def entries_for_provider(
     for series in series_rows:
         if provider not in series.tracker_ids:
             continue
+        if not suits_provider(session, series, provider):
+            continue
         entry = entry_for_series(session, user, series, provider)
         if only_with_progress and entry.status is ReadingStatus.PLAN_TO_READ:
             continue
@@ -174,9 +176,38 @@ def shelf_rows(
     """
     rows: list[tuple[Series, TrackerEntry, int, float]] = []
     for series in session.scalars(select(Series)).all():
+        if not suits_provider(session, series, provider):
+            continue
         entry = entry_for_series(session, user, series, provider)
         books = list(session.scalars(select(Book).where(Book.series_id == series.id)))
         total = len(books)
         percent = (entry.chapters_read / total * 100.0) if total else 0.0
         rows.append((series, entry, total, percent))
     return rows
+
+
+# MyAnimeList gaat over manga, niet over boeken. Een kookboek van Monty Don
+# hoort daar niet in een lijst te verschijnen, ook niet als "wil ik lezen".
+# Goodreads kent juist wél boeken én manga, dus daar filteren we niets weg.
+_MAL_SKIP_REGIONS = (OriginRegion.EUROPE, OriginRegion.US)
+
+
+def suits_provider(session: Session, series: Series, provider: str) -> bool:
+    """Hoort deze serie bij deze tracker?
+
+    Voor MyAnimeList: alleen strips, en niet die van duidelijk westerse
+    herkomst. Een epub of pdf is per definitie geen manga, en een Europese
+    strip hoort er evenmin.
+    """
+    if provider != "mal":
+        return True
+
+    kinds = {
+        kind
+        for (kind,) in session.execute(
+            select(Book.kind).where(Book.series_id == series.id).distinct()
+        )
+    }
+    if kinds and not kinds <= {BookKind.COMIC}:
+        return False
+    return series.origin_region not in _MAL_SKIP_REGIONS

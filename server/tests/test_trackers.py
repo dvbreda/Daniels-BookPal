@@ -692,3 +692,159 @@ class TestShelves:
         body = client.get("/api/trackers/shelves").json()
         assert body["to_read"][0]["pushable"] is True
         assert body["without_id"] == 0
+
+
+class TestMalList:
+    """Je eigen MAL-lijst ophalen om er abonnementen bij te zoeken."""
+
+    def _account(self, client: TestClient, *, connected: bool = True) -> int:
+        response = client.post(
+            "/api/trackers", json={"provider": "mal", "client_id": "cid", "client_secret": "x"}
+        )
+        account_id = int(response.json()["id"])
+        if connected:
+            with db_module.session_scope() as session:
+                account = session.get(TrackerAccount, account_id)
+                assert account is not None
+                account.credentials = {**account.credentials, "access_token": "token"}
+        return account_id
+
+    def _reply(self, items: list[dict]) -> httpx.Response:
+        return httpx.Response(200, json={"data": items})
+
+    def test_the_list_comes_back(self, client: TestClient, monkeypatch: pytest.MonkeyPatch):
+        account_id = self._account(client)
+
+        def fake(self, status=None, *, limit=100):
+            return [
+                {
+                    "mal_id": "2435",
+                    "title": "Crayon Shin-chan",
+                    "chapters": 100,
+                    "status": "plan_to_read",
+                    "chapters_read": 0,
+                    "score": 0,
+                }
+            ]
+
+        monkeypatch.setattr(MyAnimeListTracker, "read_list", fake)
+        body = client.get(f"/api/trackers/{account_id}/mal/list").json()
+        assert body[0]["title"] == "Crayon Shin-chan"
+        assert body[0]["mal_id"] == "2435"
+
+    def test_series_you_already_have_are_marked(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Anders ga je zoeken bij de bron voor iets wat er al staat."""
+        series = Series(title="Crayon", sort_title="c", tracker_ids={"mal": "2435"})
+        session.add(series)
+        session.commit()
+        account_id = self._account(client)
+
+        monkeypatch.setattr(
+            MyAnimeListTracker,
+            "read_list",
+            lambda self, status=None, *, limit=100: [
+                {
+                    "mal_id": "2435",
+                    "title": "Crayon Shin-chan",
+                    "chapters": 100,
+                    "status": "reading",
+                    "chapters_read": 5,
+                    "score": 8,
+                },
+                {
+                    "mal_id": "999",
+                    "title": "Iets nieuws",
+                    "chapters": 10,
+                    "status": "plan_to_read",
+                    "chapters_read": 0,
+                    "score": 0,
+                },
+            ],
+        )
+        body = client.get(f"/api/trackers/{account_id}/mal/list").json()
+        per_id = {row["mal_id"]: row for row in body}
+        assert per_id["2435"]["series_id"] == series.id
+        assert per_id["999"]["series_id"] is None
+
+    def test_an_unconnected_account_is_a_clear_error(self, client: TestClient):
+        account_id = self._account(client, connected=False)
+        response = client.get(f"/api/trackers/{account_id}/mal/list")
+        assert response.status_code == 502
+        assert "niet gekoppeld" in response.json()["detail"]
+
+    def test_a_rejected_token_says_to_reconnect(self, client: TestClient):
+        account_id = self._account(client)
+        transport = httpx.MockTransport(lambda request: httpx.Response(401))
+        with db_module.session_scope() as session:
+            account = session.get(TrackerAccount, account_id)
+            assert account is not None
+
+        tracker = MyAnimeListTracker(
+            {"access_token": "x"}, client=httpx.Client(transport=transport), rate=1000.0
+        )
+        with pytest.raises(TrackerError, match="opnieuw"):
+            tracker.read_list()
+
+    def test_the_status_filter_reaches_the_api(self):
+        gezien: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            gezien["url"] = str(request.url)
+            return httpx.Response(200, json={"data": []})
+
+        tracker = MyAnimeListTracker(
+            {"access_token": "x"},
+            client=httpx.Client(transport=httpx.MockTransport(handler)),
+            rate=1000.0,
+        )
+        tracker.read_list("plan_to_read")
+        assert "status=plan_to_read" in gezien["url"]
+
+
+class TestProviderFit:
+    """MyAnimeList gaat over manga, niet over boeken."""
+
+    def test_a_book_is_not_offered_to_mal(self, client: TestClient, session: Session):
+        """Een kookboek van Monty Don hoort daar niet in een lijst."""
+        series = Series(title="Down to Earth", sort_title="d")
+        session.add(series)
+        session.flush()
+        session.add(Book(series_id=series.id, kind=BookKind.EPUB, title="Boek"))
+        session.commit()
+
+        mal = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        goodreads = client.get("/api/trackers/shelves").json()
+
+        titels = [row["title"] for plank in ("reading", "to_read", "read") for row in mal[plank]]
+        assert "Down to Earth" not in titels
+        # Goodreads kent wél boeken, dus daar hoort hij gewoon te staan.
+        gr = [row["title"] for plank in ("reading", "to_read", "read") for row in goodreads[plank]]
+        assert "Down to Earth" in gr
+
+    def test_a_european_comic_is_not_offered_to_mal(self, client: TestClient, session: Session):
+        from bookpal.models import OriginRegion
+
+        series = Series(title="Kuifje", sort_title="k", origin_region=OriginRegion.EUROPE)
+        session.add(series)
+        session.flush()
+        session.add(Book(series_id=series.id, kind=BookKind.COMIC, title="Deel"))
+        session.commit()
+
+        mal = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        titels = [row["title"] for plank in ("reading", "to_read", "read") for row in mal[plank]]
+        assert "Kuifje" not in titels
+
+    def test_a_manga_is_offered_to_mal(self, client: TestClient, session: Session):
+        from bookpal.models import OriginRegion
+
+        series = Series(title="Oishinbo", sort_title="o", origin_region=OriginRegion.JAPAN)
+        session.add(series)
+        session.flush()
+        session.add(Book(series_id=series.id, kind=BookKind.COMIC, title="Deel"))
+        session.commit()
+
+        mal = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        titels = [row["title"] for plank in ("reading", "to_read", "read") for row in mal[plank]]
+        assert "Oishinbo" in titels

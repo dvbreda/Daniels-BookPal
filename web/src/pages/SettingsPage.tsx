@@ -69,6 +69,8 @@ export function SettingsPage() {
         </p>
       )}
 
+      <MergePanel />
+
       <TranslateModePanel />
 
       <section className="mt-6 rounded border border-ink-600 p-4">
@@ -267,6 +269,64 @@ function TranslateModePanel() {
           </div>
         </>
       )}
+    </section>
+  );
+}
+
+
+/**
+ * Series die waarschijnlijk hetzelfde zijn.
+ *
+ * Komt vaker voor dan je zou willen: dezelfde reeks als lokale map én als
+ * abonnement, of twee series door een hoofdletterverschil. Samenvoegen laat
+ * niets verloren gaan — de boeken verhuizen en per veld wint wat er ís boven
+ * wat er niet is.
+ */
+function MergePanel() {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({ queryKey: ["merge-suggestions"], queryFn: api.mergeSuggestions });
+
+  const doMerge = useMutation({
+    mutationFn: ({ keep, absorb }: { keep: number; absorb: number }) =>
+      api.mergeSeries(keep, absorb),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["merge-suggestions"] });
+      void queryClient.invalidateQueries({ queryKey: ["series"] });
+    },
+  });
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Dubbele series</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Deze lijken op elkaar. Samenvoegen verplaatst de delen naar één serie; het abonnement
+        en de tracker-ids blijven behouden.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {data.map((paar) => (
+          <li
+            key={`${paar.keep_id}-${paar.absorb_id}`}
+            className="flex flex-wrap items-center gap-3 rounded bg-ink-800 p-3 text-sm"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="text-slate-100">{paar.keep_title}</span>
+              <span className="text-slate-500"> ({paar.keep_books} delen)</span>
+              <span className="text-slate-500"> ← </span>
+              <span className="text-slate-300">{paar.absorb_title}</span>
+              <span className="text-slate-500"> ({paar.absorb_books} delen)</span>
+            </span>
+            <button
+              onClick={() => doMerge.mutate({ keep: paar.keep_id, absorb: paar.absorb_id })}
+              disabled={doMerge.isPending}
+              className="rounded bg-accent px-3 py-1.5 text-ink-900 disabled:opacity-50"
+            >
+              Samenvoegen
+            </button>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

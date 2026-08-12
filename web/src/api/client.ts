@@ -10,6 +10,8 @@ import type {
   GoodreadsSyncResult,
   LibraryRoot,
   MalAuthorize,
+  MalListItem,
+  MergeSuggestion,
   NextChapter,
   PageTranslation,
   Paginated,
@@ -230,6 +232,14 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  mergeSuggestions: () => request<MergeSuggestion[]>("/api/series/merge/suggestions"),
+  mergeSeries: (keepId: number, absorbId: number) =>
+    request<SeriesDetail>(`/api/series/${keepId}/merge`, {
+      method: "POST",
+      body: JSON.stringify({ absorb_id: absorbId }),
+    }),
+  malList: (accountId: number, status?: string) =>
+    request<MalListItem[]>(`/api/trackers/${accountId}/mal/list${queryString({ status })}`),
   shelves: (provider = "goodreads") =>
     request<Shelves>(`/api/trackers/shelves${queryString({ provider })}`),
   goodreadsStatus: () => request<GoodreadsStatus>("/api/trackers/goodreads/status"),

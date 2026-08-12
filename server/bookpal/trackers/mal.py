@@ -138,6 +138,59 @@ class MyAnimeListTracker(Tracker):
 
     # --- pushen -----------------------------------------------------------
 
+    def read_list(self, status: str | None = None, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Je eigen mangalijst ophalen.
+
+        Dit is de enige plek waar BookPal wél van een tracker léést. Dat botst
+        niet met "eenrichtingsverkeer": dat gaat over voortgang, en die blijft
+        hier de waarheid. Dit haalt alleen op wát je wilt gaan lezen, zodat je
+        er een abonnement bij kunt zoeken.
+        """
+        token = self.credentials.get("access_token")
+        if not token:
+            raise TrackerError("dit account is nog niet gekoppeld")
+
+        params: dict[str, Any] = {
+            "fields": "list_status,num_chapters,alternative_titles",
+            "limit": min(limit, 1000),
+            "nsfw": "true",
+        }
+        if status:
+            params["status"] = status
+
+        self._limiter.acquire()
+        try:
+            response = self._client.get(
+                f"{API_BASE}/users/@me/mangalist",
+                params=params,
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        except httpx.HTTPError as exc:
+            raise TrackerError(f"MyAnimeList niet bereikbaar: {exc}") from exc
+
+        if response.status_code == 401:
+            raise TrackerError("MyAnimeList wees het token af; koppel het account opnieuw")
+        if response.status_code >= 400:
+            raise TrackerError(f"MyAnimeList gaf {response.status_code}")
+
+        found: list[dict[str, Any]] = []
+        for item in response.json().get("data", []):
+            node = item.get("node") or {}
+            listed = item.get("list_status") or {}
+            if not node.get("id"):
+                continue
+            found.append(
+                {
+                    "mal_id": str(node["id"]),
+                    "title": str(node.get("title", "")),
+                    "chapters": node.get("num_chapters") or 0,
+                    "status": str(listed.get("status", "")),
+                    "chapters_read": listed.get("num_chapters_read") or 0,
+                    "score": listed.get("score") or 0,
+                }
+            )
+        return found
+
     def push(self, entry: TrackerEntry, *, dry_run: bool) -> PushResult:
         if not entry.remote_id:
             return PushResult(

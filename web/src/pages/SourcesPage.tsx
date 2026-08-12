@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { SearchHit, SubscriptionPolicy, SubscriptionRow } from "../api/types";
@@ -134,8 +134,12 @@ export function SourcesPage() {
 }
 
 function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () => void }) {
-  const [query, setQuery] = useState("");
-  const [submitted, setSubmitted] = useState("");
+  // Vanaf je MyAnimeList-lijst kom je hier binnen met een titel al ingevuld,
+  // zodat "zoek bij bron" één klik is in plaats van overtypen.
+  const [params] = useSearchParams();
+  const vooraf = params.get("zoek") ?? "";
+  const [query, setQuery] = useState(vooraf);
+  const [submitted, setSubmitted] = useState(vooraf);
   const [policy, setPolicy] = useState<SubscriptionPolicy>("readahead");
 
   const { data, isFetching, error } = useQuery({
