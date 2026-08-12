@@ -10,6 +10,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { SourcesPage } from "./pages/SourcesPage";
 import { TabsPage } from "./pages/TabsPage";
 import { TrackersPage } from "./pages/TrackersPage";
+import { WikiReaderPage } from "./pages/WikiReaderPage";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -37,6 +38,7 @@ export function App() {
           <Route path="/collectie/:id" element={<CollectionViewPage />} />
           <Route path="/bronnen" element={<SourcesPage />} />
           <Route path="/trackers" element={<TrackersPage />} />
+          <Route path="/wiki/:lang/:key" element={<WikiReaderPage />} />
         </Routes>
       </BrowserRouter>
     </QueryClientProvider>

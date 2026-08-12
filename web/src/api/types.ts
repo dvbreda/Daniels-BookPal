@@ -81,6 +81,13 @@ export interface SeriesDetail extends Series {
   books: Book[];
 }
 
+export interface WikiHit {
+  title: string;
+  key: string;
+  description: string | null;
+  lang: string;
+}
+
 export interface NextChapter {
   book_id: number;
   title: string;

@@ -63,7 +63,19 @@ export function loadingLabel(progress: { loaded: number; total: number | null } 
  * document zelf en blijft dus kloppen als je op een ander apparaat verder
  * leest met andere instellingen. Precies waar het datamodel op rekent.
  */
-export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () => void }) {
+export function EpubReader({
+  book,
+  onClose,
+  fileUrl,
+  saveProgress = true,
+}: {
+  book: BookDetail;
+  onClose: () => void;
+  /** Een epub die niet uit de bibliotheek komt, bv. een Wikipedia-artikel. */
+  fileUrl?: string;
+  /** Voortgang wegschrijven. Uit voor iets wat geen boek in je bibliotheek is. */
+  saveProgress?: boolean;
+}) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<FoliateView | null>(null);
 
@@ -96,7 +108,7 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
         await import("../vendor/foliate/view.js");
         if (cancelled || !host) return;
 
-        const blob = await downloadWithProgress(imageUrl.file(book.id), (progress) => {
+        const blob = await downloadWithProgress(fileUrl ?? imageUrl.file(book.id), (progress) => {
           if (!cancelled) setDownloadProgress(progress);
         });
         if (cancelled) return;
@@ -143,7 +155,7 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
       viewRef.current = null;
       host.replaceChildren();
     };
-  }, [book.id, book.progress?.position]);
+  }, [book.id, book.progress?.position, fileUrl]);
 
   // Opmaak toepassen. Apart van het inladen, want dit verandert terwijl je leest.
   useEffect(() => {
@@ -162,7 +174,9 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
 
   // Voortgang wegschrijven, ontdaan van ruis tijdens snel doorbladeren.
   useEffect(() => {
-    if (!ready) return;
+    // Geen boek uit je bibliotheek (een Wikipedia-artikel): dan is er niets om
+    // voortgang op te bewaren, en zou dit een niet-bestaand boek-id posten.
+    if (!ready || !saveProgress) return;
     const timer = window.setInterval(() => {
       const next = pending.current;
       if (!next) return;
@@ -179,7 +193,7 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
         });
     }, PROGRESS_DEBOUNCE_MS);
     return () => window.clearInterval(timer);
-  }, [book.id, ready]);
+  }, [book.id, ready, saveProgress]);
 
   const goLeft = useCallback(() => void viewRef.current?.goLeft(), []);
   const goRight = useCallback(() => void viewRef.current?.goRight(), []);
@@ -202,7 +216,7 @@ export function EpubReader({ book, onClose }: { book: BookDetail; onClose: () =>
         <p className="text-sm text-slate-500">{failed}</p>
         <div className="flex gap-2">
           <a
-            href={imageUrl.file(book.id)}
+            href={fileUrl ?? imageUrl.file(book.id)}
             download
             className="rounded bg-ink-700 px-4 py-2 text-sm"
           >

@@ -15,6 +15,7 @@ from bookpal.api import (
     tabs,
     trackers,
     translate,
+    wiki,
 )
 
 router = APIRouter()
@@ -29,6 +30,7 @@ router.include_router(sources.router)
 router.include_router(trackers.router)
 router.include_router(translate.router)
 router.include_router(translate.settings_router)
+router.include_router(wiki.router)
 router.include_router(lite.router)
 router.include_router(opds.router)
 

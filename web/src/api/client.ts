@@ -28,6 +28,7 @@ import type {
   TranslateMode,
   TranslateModeInfo,
   TranslationStatus,
+  WikiHit,
 } from "./types";
 
 export class ApiError extends Error {
@@ -115,6 +116,11 @@ export const api = {
     request<{ marked: number }>(`/api/series/${seriesId}/mark-read-before/${bookId}`, {
       method: "POST",
     }),
+
+  wikiSearch: (q: string, lang = "nl") =>
+    request<WikiHit[]>(`/api/wiki/search${queryString({ q, lang })}`),
+  wikiArticleUrl: (key: string, lang = "nl") =>
+    `/api/wiki/article.epub${queryString({ key, lang })}`,
 
   book: (id: number) => request<BookDetail>(`/api/books/${id}`),
   nextChapter: (id: number) => request<NextChapter>(`/api/books/${id}/next`),

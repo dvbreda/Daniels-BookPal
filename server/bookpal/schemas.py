@@ -174,6 +174,13 @@ class NextChapterOut(BaseModel):
     has_file: bool
 
 
+class WikiHitOut(BaseModel):
+    title: str
+    key: str
+    description: str | None = None
+    lang: str
+
+
 class TocEntryOut(BaseModel):
     title: str
     target: str

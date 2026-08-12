@@ -1,9 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
-import type { Book, OriginRegion } from "../api/types";
+import type { Book, OriginRegion, SeriesDetail } from "../api/types";
 import { CoverPicker } from "../components/CoverPicker";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
@@ -72,35 +72,11 @@ export function SeriesPage() {
         {data.summary && <p className="mt-3 max-w-2xl text-sm text-slate-300">{data.summary}</p>}
       </header>
 
-      <section className="mt-6 rounded border border-ink-600 p-4">
-        <h2 className="text-sm font-medium text-slate-200">Herkomst</h2>
-        <p className="mt-1 text-xs text-slate-500">
-          Nu: {REGIONS.find(([key]) => key === data.origin_region)?.[1]} (
-          {ORIGIN_EXPLANATION[data.origin_source]}). Wat je hier kiest blijft staan, ook na een
-          nieuwe scan.
-        </p>
-        <div className="mt-3 flex flex-wrap gap-2">
-          {REGIONS.map(([value, label]) => (
-            <button
-              key={value}
-              onClick={() => setOrigin.mutate(value)}
-              disabled={setOrigin.isPending}
-              className={`rounded px-2 py-1 text-sm ${
-                data.origin_region === value
-                  ? "bg-accent text-ink-900"
-                  : "bg-ink-700 text-slate-300 hover:bg-ink-600"
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-      </section>
-
       <ContinueBar seriesId={seriesId} />
 
-      <CoverPicker series={data} />
-      <TranslationPicker seriesId={seriesId} books={data.books} />
+      <WikiLinks title={data.title} authors={data.authors} seriesId={seriesId} />
+
+      <SeriesSettings series={data} seriesId={seriesId} setOrigin={setOrigin} />
 
       <div className="mt-6 flex items-center justify-between">
         <h2 className="text-sm font-medium text-slate-200">
@@ -129,6 +105,156 @@ export function SeriesPage() {
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Achtergrond bij deze serie (en de auteur) op Wikipedia.
+ *
+ * Zoekt pas als je erop klikt: bij het openen van elke seriepagina meteen
+ * Wikipedia bevragen is verkeer waar je meestal niets aan hebt, en het is niet
+ * ons eigen adres om zomaar te belasten.
+ */
+function WikiLinks({
+  title,
+  authors,
+  seriesId,
+}: {
+  title: string;
+  authors: string[];
+  seriesId: number;
+}) {
+  const [term, setTerm] = useState<string | null>(null);
+  const navigate = useNavigate();
+
+  const { data, isFetching, error } = useQuery({
+    queryKey: ["wiki-search", term],
+    queryFn: () => api.wikiSearch(term!),
+    enabled: term !== null,
+    staleTime: Infinity,
+  });
+
+  const onderwerpen = [title, ...authors.slice(0, 2)];
+
+  return (
+    <section className="mt-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="text-slate-500">Achtergrond:</span>
+        {onderwerpen.map((onderwerp) => (
+          <button
+            key={onderwerp}
+            onClick={() => setTerm(onderwerp)}
+            className={`rounded px-2 py-1 text-xs ${
+              term === onderwerp
+                ? "bg-accent text-ink-900"
+                : "bg-ink-700 text-slate-300 hover:bg-ink-600"
+            }`}
+          >
+            {onderwerp}
+          </button>
+        ))}
+      </div>
+
+      {isFetching && <p className="mt-2 text-xs text-slate-500">Zoeken op Wikipedia…</p>}
+      {error && (
+        <p className="mt-2 text-xs text-danger">
+          {error instanceof ApiError ? error.message : "Wikipedia niet bereikbaar."}
+        </p>
+      )}
+      {data && data.length === 0 && (
+        <p className="mt-2 text-xs text-slate-500">Niets gevonden op Wikipedia.</p>
+      )}
+      {data && data.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {data.map((hit) => (
+            <li key={`${hit.lang}:${hit.key}`}>
+              <button
+                onClick={() =>
+                  navigate(
+                    `/wiki/${hit.lang}/${encodeURIComponent(hit.key)}` +
+                      `?titel=${encodeURIComponent(hit.title)}&terug=/serie/${seriesId}`,
+                  )
+                }
+                className="w-full rounded bg-ink-800 px-3 py-2 text-left text-sm hover:bg-ink-700"
+              >
+                <span className="text-slate-100">{hit.title}</span>
+                <span className="ml-2 text-xs uppercase text-slate-500">{hit.lang}</span>
+                {hit.description && (
+                  <span className="block truncate text-xs text-slate-500">{hit.description}</span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Serie-instellingen achter een tandwiel.
+ *
+ * Herkomst, omslag en vertaalgroep zijn dingen die je één keer goedzet en
+ * daarna nooit meer aanraakt. Ze stonden alle drie permanent open boven de
+ * hoofdstukkenlijst, waardoor je op een telefoon eerst langs drie panelen
+ * moest scrollen voor je bij je strips was. Nu dicht, en de lijst staat weer
+ * bovenaan.
+ */
+function SeriesSettings({
+  series,
+  seriesId,
+  setOrigin,
+}: {
+  series: SeriesDetail;
+  seriesId: number;
+  setOrigin: { mutate: (region: OriginRegion) => void; isPending: boolean };
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <section className="mt-4">
+      <button
+        onClick={() => setOpen(!open)}
+        aria-expanded={open}
+        className="flex items-center gap-2 rounded px-2 py-1 text-sm text-slate-400 hover:bg-ink-800 hover:text-slate-200"
+      >
+        <span aria-hidden>⚙</span>
+        Instellingen
+        <span aria-hidden className="text-xs">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-2">
+          <section className="rounded border border-ink-600 p-4">
+            <h2 className="text-sm font-medium text-slate-200">Herkomst</h2>
+            <p className="mt-1 text-xs text-slate-500">
+              Nu: {REGIONS.find(([key]) => key === series.origin_region)?.[1]} (
+              {ORIGIN_EXPLANATION[series.origin_source]}). Wat je hier kiest blijft staan, ook
+              na een nieuwe scan.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {REGIONS.map(([value, label]) => (
+                <button
+                  key={value}
+                  onClick={() => setOrigin.mutate(value)}
+                  disabled={setOrigin.isPending}
+                  className={`rounded px-2 py-1 text-sm ${
+                    series.origin_region === value
+                      ? "bg-accent text-ink-900"
+                      : "bg-ink-700 text-slate-300 hover:bg-ink-600"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </section>
+
+          <CoverPicker series={series} />
+          <TranslationPicker seriesId={seriesId} books={series.books} />
+        </div>
+      )}
+    </section>
   );
 }
 
