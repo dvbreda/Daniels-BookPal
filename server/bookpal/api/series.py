@@ -513,9 +513,7 @@ def _readable_books(session: Session, series_id: int) -> list[Book]:
     return [slot.chosen for slot in _readable_slots(session, series_id)]
 
 
-def _slot_progress(
-    session: Session, user: User, slots: list[editions.Slot]
-) -> dict[int, Progress]:
+def _slot_progress(session: Session, user: User, slots: list[editions.Slot]) -> dict[int, Progress]:
     """Voortgang per aflevering, op de naam van het deel dat je te zien krijgt.
 
     Uitgelezen in de gekleurde uitgave telt ook als je nu de zwart-witte leest;
@@ -740,7 +738,12 @@ def list_editions(series_id: int, session: Session = Depends(get_session)) -> li
     series = deps.get_series(series_id=series_id, session=session)
     books = list(series.books)
     uitgaven = list(series.editions)
-    return _editions_out(uitgaven, books, editions.slots(books, uitgaven))
+    return _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    )
 
 
 @router.post("/{series_id}/editions/order", response_model=list[EditionOut])
@@ -756,9 +759,7 @@ def order_editions(
     per_id = {edition.id: edition for edition in series.editions}
     onbekend = [edition_id for edition_id in payload.edition_ids if edition_id not in per_id]
     if onbekend:
-        raise HTTPException(
-            status_code=400, detail="die uitgave hoort niet bij deze serie"
-        )
+        raise HTTPException(status_code=400, detail="die uitgave hoort niet bij deze serie")
 
     rang = 0
     for edition_id in payload.edition_ids:
@@ -771,7 +772,12 @@ def order_editions(
 
     books = list(series.books)
     uitgaven = list(series.editions)
-    return _editions_out(uitgaven, books, editions.slots(books, uitgaven))
+    return _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    )
 
 
 @router.patch("/{series_id}/editions/{edition_id}", response_model=EditionOut)
@@ -797,7 +803,12 @@ def rename_edition(
     series = deps.get_series(series_id=series_id, session=session)
     books = list(series.books)
     uitgaven = list(series.editions)
-    for regel in _editions_out(uitgaven, books, editions.slots(books, uitgaven)):
+    for regel in _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    ):
         if regel.id == edition.id:
             return regel
     raise HTTPException(status_code=404, detail="uitgave niet gevonden")
@@ -848,9 +859,7 @@ def unbind_slot(
 
 
 @router.post("/{series_id}/covers", response_model=SyncCoversOut)
-def sync_series_covers(
-    series_id: int, session: Session = Depends(get_session)
-) -> SyncCoversOut:
+def sync_series_covers(series_id: int, session: Session = Depends(get_session)) -> SyncCoversOut:
     """Haal de omslagen per deel op bij de bron.
 
     Voor series die je al volgde voordat dit bestond, en voor wanneer een bron
@@ -871,9 +880,7 @@ def sync_series_covers(
         source_row = session.get(Source, subscription.source_id)
         if source_row is None or not source_row.enabled:
             continue
-        edition = session.scalar(
-            select(Edition).where(Edition.subscription_id == subscription.id)
-        )
+        edition = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
         try:
             implementation = deps.get_source_implementation(source_row)
         except HTTPException as exc:
@@ -889,9 +896,7 @@ def sync_series_covers(
         )
         if aantal:
             resultaat.updated += aantal
-            resultaat.editions.append(
-                f"{edition.name if edition else series.title} ({aantal})"
-            )
+            resultaat.editions.append(f"{edition.name if edition else series.title} ({aantal})")
 
     session.commit()
     return resultaat
