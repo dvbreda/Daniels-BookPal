@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
+from bookpal.library import intake
 from bookpal.library.intake import import_files, scan
 from bookpal.sources.base import SourceError
 from tests.conftest import make_root
@@ -172,3 +173,71 @@ class TestApi:
             "/api/intake/import", json={"paths": [], "root_id": 9999}
         )
         assert response.status_code == 404
+
+
+class TestUpload:
+    """Een bestand van je telefoon naar de NAS."""
+
+    def _intake(self, tmp_path: Path, monkeypatch) -> Path:
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+        return folder
+
+    def test_a_cbz_lands_in_the_intake_folder(
+        self, client: TestClient, tmp_path: Path, monkeypatch
+    ):
+        folder = self._intake(tmp_path, monkeypatch)
+        response = client.post(
+            "/api/intake/upload",
+            files={"file": ("Storm 03.cbz", b"PK\x03\x04nep", "application/octet-stream")},
+        )
+        assert response.status_code == 200
+        assert (folder / "Storm 03.cbz").is_file()
+
+    def test_a_path_in_the_name_cannot_escape(
+        self, client: TestClient, tmp_path: Path, monkeypatch
+    ):
+        """De naam komt van de client en is dus niet te vertrouwen."""
+        folder = self._intake(tmp_path, monkeypatch)
+        response = client.post(
+            "/api/intake/upload",
+            files={"file": ("../../ontsnapt.cbz", b"data", "application/octet-stream")},
+        )
+        assert response.status_code == 200
+        assert not (tmp_path.parent / "ontsnapt.cbz").exists()
+        assert list(folder.glob("*.cbz")) != []
+        assert all(bestand.parent == folder for bestand in folder.glob("*.cbz"))
+
+    def test_something_unreadable_is_refused(
+        self, client: TestClient, tmp_path: Path, monkeypatch
+    ):
+        self._intake(tmp_path, monkeypatch)
+        response = client.post(
+            "/api/intake/upload",
+            files={"file": ("script.sh", b"#!/bin/sh", "application/octet-stream")},
+        )
+        assert response.status_code == 409
+
+    def test_an_existing_file_is_not_overwritten(
+        self, client: TestClient, tmp_path: Path, monkeypatch
+    ):
+        folder = self._intake(tmp_path, monkeypatch)
+        (folder / "Storm 03.cbz").write_bytes(b"van jou")
+
+        response = client.post(
+            "/api/intake/upload",
+            files={"file": ("Storm 03.cbz", b"nieuw", "application/octet-stream")},
+        )
+        assert response.status_code == 409
+        assert (folder / "Storm 03.cbz").read_bytes() == b"van jou"
+
+    def test_too_big_is_refused_and_leaves_nothing_behind(self, tmp_path: Path):
+        import io
+
+        folder = tmp_path / "intake"
+        with pytest.raises(SourceError):
+            intake.receive_upload(
+                io.BytesIO(b"x" * 5000), "groot.cbz", folder, max_bytes=1000
+            )
+        assert list(folder.iterdir()) == []

@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { ApiError, api } from "../api/client";
-import type { Book } from "../api/types";
+import type { Book, SubscriptionRow } from "../api/types";
 
 /**
  * Welke vertaling wil je lezen?
@@ -14,21 +14,55 @@ import type { Book } from "../api/types";
  * deze keuze.
  *
  * Toont niets als deze serie geen abonnement heeft of er maar één groep is.
+ * Eén keuze per abonnement: een serie kan er meerdere hebben — een Engelse
+ * vertaling naast het Japanse origineel — en de groepskeuze geldt per bron.
  */
 export function TranslationPicker({ seriesId, books }: { seriesId: number; books: Book[] }) {
-  const queryClient = useQueryClient();
-  const [message, setMessage] = useState<string | null>(null);
-
-  const { data: subscription } = useQuery({
+  const { data: subscriptions } = useQuery({
     queryKey: ["subscription-for-series", seriesId],
-    queryFn: () => api.subscriptionForSeries(seriesId),
-    // 404 betekent gewoon "geen abonnement"; niet opnieuw proberen.
+    queryFn: () => api.subscriptionsForSeries(seriesId),
     retry: false,
   });
 
+  const metKeuze = (subscriptions ?? []).filter(
+    (subscription) => subscription.available_groups.length >= 2,
+  );
+  if (metKeuze.length === 0) return null;
+
+  return (
+    <>
+      {metKeuze.map((subscription) => (
+        <GroupPicker
+          key={subscription.id}
+          seriesId={seriesId}
+          subscription={subscription}
+          books={books}
+          // De taal erbij zodra er meer dan één abonnement is; anders is niet
+          // te zien welke uitgave je aan het bijstellen bent.
+          label={metKeuze.length > 1 ? subscription.language : null}
+        />
+      ))}
+    </>
+  );
+}
+
+function GroupPicker({
+  seriesId,
+  subscription,
+  books,
+  label,
+}: {
+  seriesId: number;
+  subscription: SubscriptionRow;
+  books: Book[];
+  label: string | null;
+}) {
+  const queryClient = useQueryClient();
+  const [message, setMessage] = useState<string | null>(null);
+
   const choose = useMutation({
     mutationFn: (groupId: string | null) =>
-      api.updateSubscription(subscription!.id, { preferred_group_id: groupId }),
+      api.updateSubscription(subscription.id, { preferred_group_id: groupId }),
     onSuccess: (result) => {
       setMessage(
         result.chapters_added > 0
@@ -43,11 +77,11 @@ export function TranslationPicker({ seriesId, books }: { seriesId: number; books
     },
   });
 
-  if (!subscription || subscription.available_groups.length < 2) return null;
-
   return (
     <section className="mt-6 rounded border border-ink-600 p-4">
-      <h2 className="text-sm font-medium text-slate-200">Vertaling</h2>
+      <h2 className="text-sm font-medium text-slate-200">
+        Vertaling{label ? ` · ${label}` : ""}
+      </h2>
       <p className="mt-1 text-xs text-slate-500">
         Meerdere groepen hebben deze reeks vertaald. Automatisch betekent: de groep
         met de meeste hoofdstukken, zodat je één stijl leest.

@@ -6,6 +6,25 @@ import { ApiError, api } from "../api/client";
 import type { SearchHit, SubscriptionPolicy, SubscriptionRow } from "../api/types";
 
 /**
+ * Talen waarin je een reeks kunt volgen.
+ *
+ * Meerdere naast elkaar is een geldige wens en geen vergissing: van sommige
+ * series is maar een klein deel vertaald, en dan wil je het origineel eronder
+ * om verder te kunnen lezen — met de vertaalknop erbij. Ze worden uitgaven van
+ * één serie, geen aparte series.
+ */
+const TALEN: [string, string][] = [
+  ["en", "Engels"],
+  ["ja", "Japans"],
+  ["nl", "Nederlands"],
+  ["de", "Duits"],
+  ["fr", "Frans"],
+  ["es", "Spaans"],
+  ["ko", "Koreaans"],
+  ["zh", "Chinees"],
+];
+
+/**
  * Bronnen: zoeken, volgen en zien wat er binnen is (M5).
  *
  * Een gevolgd hoofdstuk is eerst alleen een verwijzing; pas het ophalen zet er
@@ -141,6 +160,10 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
   const [query, setQuery] = useState(vooraf);
   const [submitted, setSubmitted] = useState(vooraf);
   const [policy, setPolicy] = useState<SubscriptionPolicy>("readahead");
+  // In welke taal je de reeks volgt. Je kunt er meerdere naast elkaar hebben:
+  // van sommige series is maar een klein deel vertaald, en dan wil je het
+  // origineel eronder om verder te kunnen lezen (met de vertaalknop erbij).
+  const [language, setLanguage] = useState("en");
 
   const { data, isFetching, error } = useQuery({
     queryKey: ["source-search", sourceId, submitted],
@@ -149,7 +172,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
   });
 
   const subscribe = useMutation({
-    mutationFn: (hit: SearchHit) => api.subscribe(sourceId, { ref: hit.ref, policy }),
+    mutationFn: (hit: SearchHit) => api.subscribe(sourceId, { ref: hit.ref, policy, language }),
     onSuccess: onChanged,
   });
 
@@ -169,6 +192,18 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
           placeholder="Titel van een serie…"
           className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
         />
+        <select
+          value={language}
+          onChange={(event) => setLanguage(event.target.value)}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+          title="Je kunt dezelfde reeks in meerdere talen volgen; ze worden uitgaven van één serie"
+        >
+          {TALEN.map(([code, label]) => (
+            <option key={code} value={code}>
+              {label}
+            </option>
+          ))}
+        </select>
         <select
           value={policy}
           onChange={(event) => setPolicy(event.target.value as SubscriptionPolicy)}
@@ -200,12 +235,24 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
               </p>
             </div>
             {hit.subscribed_series_id ? (
-              <Link
-                to={`/serie/${hit.subscribed_series_id}`}
-                className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-300"
-              >
-                Volg je al
-              </Link>
+              <>
+                <Link
+                  to={`/serie/${hit.subscribed_series_id}`}
+                  className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-300"
+                >
+                  Volg je al
+                </Link>
+                {/* Nog een taal erbij: die wordt een tweede uitgave van
+                    dezelfde serie, niet een tweede serie. */}
+                <button
+                  onClick={() => subscribe.mutate(hit)}
+                  disabled={subscribe.isPending}
+                  className="rounded bg-ink-700 px-3 py-1.5 text-sm text-slate-300 disabled:opacity-50"
+                  title="Volg deze reeks ook in de gekozen taal"
+                >
+                  + {language}
+                </button>
+              </>
             ) : (
               <button
                 onClick={() => subscribe.mutate(hit)}

@@ -12,7 +12,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import get_session
-from bookpal.models import Book, Series, Source, Subscription, SubscriptionPolicy, utcnow
+from bookpal.models import (
+    Book,
+    Edition,
+    Series,
+    Source,
+    Subscription,
+    SubscriptionPolicy,
+    utcnow,
+)
 from bookpal.schemas import (
     DownloadIn,
     RunReportOut,
@@ -105,16 +113,24 @@ def search(
 
 def _subscription_out(session: Session, subscription: Subscription) -> SubscriptionOut:
     series = session.get(Series, subscription.series_id)
+
+    # Tellen binnen de uitgave van dít abonnement. Een serie kan er meerdere
+    # hebben — een Engelse vertaling naast het Japanse origineel — en dan zou
+    # per serie tellen bij beide hetzelfde getal geven.
+    edition = session.scalar(
+        select(Edition).where(Edition.subscription_id == subscription.id)
+    )
+    van_deze = select(Book).where(Book.series_id == subscription.series_id)
+    if edition is not None:
+        van_deze = van_deze.where(Book.edition_id == edition.id)
+
     total = int(
-        session.scalar(
-            select(func.count(Book.id)).where(Book.series_id == subscription.series_id)
-        )
-        or 0
+        session.scalar(select(func.count()).select_from(van_deze.subquery())) or 0
     )
     local = int(
         session.scalar(
-            select(func.count(Book.id)).where(
-                Book.series_id == subscription.series_id, Book.file_id.isnot(None)
+            select(func.count()).select_from(
+                van_deze.where(Book.file_id.isnot(None)).subquery()
             )
         )
         or 0
@@ -160,20 +176,21 @@ def list_subscriptions(session: Session = Depends(get_session)) -> list[Subscrip
     return [_subscription_out(session, row) for row in rows]
 
 
-@router.get("/subscriptions/by-series/{series_id}", response_model=SubscriptionOut)
-def subscription_for_series(
+@router.get("/subscriptions/by-series/{series_id}", response_model=list[SubscriptionOut])
+def subscriptions_for_series(
     series_id: int, session: Session = Depends(get_session)
-) -> SubscriptionOut:
-    """Het abonnement van deze serie, als die er een heeft.
+) -> list[SubscriptionOut]:
+    """De abonnementen van deze serie.
 
-    De seriepagina gebruikt dit om de keuze van vertaalgroep te tonen.
+    Een lijst en niet één, want een serie kan er meerdere hebben: een Engelse
+    vertaling naast het Japanse origineel, of een gekleurde uitgave naast de
+    zwart-witte. De seriepagina toont per abonnement de keuze van vertaalgroep,
+    want die keuze geldt per bron en niet per serie.
     """
-    subscription = session.scalar(
-        select(Subscription).where(Subscription.series_id == series_id)
-    )
-    if subscription is None:
-        raise HTTPException(status_code=404, detail="deze serie heeft geen abonnement")
-    return _subscription_out(session, subscription)
+    rows = session.scalars(
+        select(Subscription).where(Subscription.series_id == series_id).order_by(Subscription.id)
+    ).all()
+    return [_subscription_out(session, row) for row in rows]
 
 
 @router.post("/subscriptions/{subscription_id}/refresh", response_model=SubscribeResultOut)
@@ -245,7 +262,12 @@ def update_subscription(
         source = _get_source_row(session, subscription.source_id)
         implementation = _implementation(source)
         try:
-            chapters = implementation.chapters(series.source_ref, language=language)
+            # De taal van het abonnement, niet die van het verzoek: anders
+            # klapt een Japans abonnement om zodra je er iets anders aan
+            # bijstelt.
+            chapters = implementation.chapters(
+                series.source_ref, language=subscription.language
+            )
         except SourceError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         added, _ = source_service.sync_chapters(

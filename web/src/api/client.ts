@@ -7,7 +7,9 @@ import type {
   ImageProfile,
   ImportResult,
   IntakeImportResult,
+  IntakeFetch,
   IntakeScan,
+  IntakeUpload,
   GoodreadsStatus,
   GoodreadsSyncResult,
   LibraryRoot,
@@ -20,6 +22,7 @@ import type {
   PageTranslation,
   Paginated,
   Progress,
+  ReadState,
   PushReport,
   RunReport,
   ScanResult,
@@ -53,9 +56,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Bij een upload moet de browser zelf de Content-Type zetten: multipart heeft
+  // een boundary die wij hier niet kennen, en een handmatige header maakt het
+  // verzoek onleesbaar voor de server.
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: isFormData
+      ? { ...init?.headers }
+      : { "Content-Type": "application/json", ...init?.headers },
   });
   if (!response.ok) {
     // De server geeft in `detail` een uitleg in gewone taal mee; die willen we
@@ -213,8 +222,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   subscriptions: () => request<SubscriptionRow[]>("/api/sources/subscriptions/all"),
-  subscriptionForSeries: (seriesId: number) =>
-    request<SubscriptionRow>(`/api/sources/subscriptions/by-series/${seriesId}`),
+  // Een lijst: een serie kan meerdere abonnementen hebben (een vertaling naast
+  // het origineel), en de vertaalgroep kies je per abonnement.
+  subscriptionsForSeries: (seriesId: number) =>
+    request<SubscriptionRow[]>(`/api/sources/subscriptions/by-series/${seriesId}`),
   updateSubscription: (
     id: number,
     body: {
@@ -262,6 +273,24 @@ export const api = {
     request<IntakeImportResult>("/api/intake/import", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  intakeUpload: (file: File) => {
+    // Bewust FormData en geen JSON: een boek van een paar honderd MB als
+    // base64 door een JSON-body duwen kost geheugen en tijd die nergens toe
+    // dienen. De browser zet zelf de juiste Content-Type met boundary.
+    const body = new FormData();
+    body.append("file", file);
+    return request<IntakeUpload>("/api/intake/upload", { method: "POST", body });
+  },
+  intakeFetch: (url: string, folder?: string) =>
+    request<IntakeFetch>("/api/intake/fetch", {
+      method: "POST",
+      body: JSON.stringify({ url, folder: folder || null }),
+    }),
+  setReadState: (bookId: number, finished: boolean) =>
+    request<ReadState>(`/api/books/${bookId}/read-state`, {
+      method: "POST",
+      body: JSON.stringify({ finished }),
     }),
   mergeSuggestions: () => request<MergeSuggestion[]>("/api/series/merge/suggestions"),
   mergeSeries: (keepId: number, absorbId: number) =>

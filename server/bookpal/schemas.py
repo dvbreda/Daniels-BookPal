@@ -440,6 +440,9 @@ class SubscriptionOut(BaseModel):
     policy: SubscriptionPolicy
     readahead_n: int
     ttl_days: int
+    # In welke taal je deze reeks volgt; meerdere talen naast elkaar worden
+    # uitgaven van één serie.
+    language: str = "en"
     last_checked_at: datetime | None
     preferred_group_id: str | None = None
     available_groups: list[GroupOut] = Field(default_factory=list)
@@ -581,6 +584,40 @@ class MalLinkIn(BaseModel):
 
     series_id: int
     mal_id: str = Field(max_length=20)
+
+
+class IntakeFetchIn(BaseModel):
+    """Een deellink ophalen: een Dropbox-map, een los bestand."""
+
+    url: str
+    # Waar het terechtkomt. Leeg = de eerste intake-map, zodat je er daarna
+    # zelf een bibliotheekmap voor kiest.
+    folder: str | None = None
+
+
+class IntakeFetchOut(BaseModel):
+    saved: list[str] = Field(default_factory=list)
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class IntakeUploadOut(BaseModel):
+    path: str
+    name: str
+    size: int
+
+
+class ReadStateIn(BaseModel):
+    """Zelf bepalen of iets gelezen is."""
+
+    finished: bool
+
+
+class ReadStateOut(BaseModel):
+    book_id: int
+    finished: bool
+    # Hoeveel uitgaven van deze aflevering het betrof.
+    affected: int = 1
 
 
 class MalImportProgressIn(BaseModel):

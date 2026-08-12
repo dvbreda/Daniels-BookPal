@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.library.editions import best_progress, slot_of, slots
@@ -336,3 +337,115 @@ class TestEditionsApi:
             f"/api/series/{series.id}/slots", json={"book_ids": [eerste.id, tweede.id]}
         )
         assert response.status_code == 400
+
+
+class TestTwoLanguagesOfOneSeries:
+    """Van Shinya Shokudo is maar een klein deel vertaald.
+
+    Dan wil je het Engelse voorop en het Japanse origineel eronder, zodat je
+    verder kunt lezen waar de vertaling ophoudt — met de vertaalknop erbij.
+    """
+
+    def _bron(self, session: Session):
+        from bookpal.models import Source
+
+        row = Source(type="mangadex", name="MangaDex")
+        session.add(row)
+        session.flush()
+        return row
+
+    def _nep(self, per_taal: dict[str, list[str]]):
+        """Een bron die per taal andere hoofdstukken heeft."""
+        import httpx
+
+        from bookpal.sources.mangadex import MangaDexSource
+        from tests.test_sources import MANGA_ID, MANGA_PAYLOAD, _chapter
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            path = request.url.path
+            if path == f"/manga/{MANGA_ID}":
+                return httpx.Response(200, json={"result": "ok", "data": MANGA_PAYLOAD})
+            if path == f"/manga/{MANGA_ID}/feed":
+                taal = request.url.params.get("translatedLanguage[]", "en")
+                nummers = per_taal.get(taal, [])
+                return httpx.Response(
+                    200,
+                    json={
+                        "result": "ok",
+                        "total": len(nummers),
+                        "data": [_chapter(f"{taal}-{nummer}", nummer, "1") for nummer in nummers],
+                    },
+                )
+            return httpx.Response(404, json={"result": "error"})
+
+        return MangaDexSource(
+            client=httpx.Client(
+                base_url="https://api.test", transport=httpx.MockTransport(handler)
+            ),
+            rate=1000.0,
+            at_home_rate=1000.0,
+        )
+
+    def test_both_languages_become_editions_of_one_series(self, session: Session, temp_settings):
+        from bookpal.sources import service as source_service
+        from tests.test_sources import MANGA_ID
+
+        bron = self._bron(session)
+        implementatie = self._nep({"en": ["1", "2"], "ja": ["1", "2", "3", "4"]})
+
+        series, engels, _ = source_service.subscribe(
+            session, bron, implementatie, MANGA_ID, language="en"
+        )
+        zelfde, japans, _ = source_service.subscribe(
+            session, bron, implementatie, MANGA_ID, language="ja"
+        )
+
+        assert zelfde.id == series.id, "één serie, twee uitgaven"
+        assert engels.id != japans.id
+        assert {engels.language, japans.language} == {"en", "ja"}
+
+        uitgaven = sorted(series.editions, key=lambda edition: edition.rank)
+        assert [edition.name for edition in uitgaven] == [
+            "Crayon Shin-chan (en)",
+            "Crayon Shin-chan (ja)",
+        ]
+
+    def test_the_untranslated_rest_fills_in_behind_the_translation(
+        self, session: Session, temp_settings
+    ):
+        from bookpal.sources import service as source_service
+        from tests.test_sources import MANGA_ID
+
+        bron = self._bron(session)
+        implementatie = self._nep({"en": ["1", "2"], "ja": ["1", "2", "3", "4"]})
+        series, _, _ = source_service.subscribe(
+            session, bron, implementatie, MANGA_ID, language="en"
+        )
+        source_service.subscribe(session, bron, implementatie, MANGA_ID, language="ja")
+        session.flush()
+
+        gekozen = slots(list(series.books), list(series.editions))
+        namen = {edition.id: edition.name for edition in series.editions}
+        assert [(slot.chosen.number, namen[slot.chosen.edition_id]) for slot in gekozen] == [
+            ("1", "Crayon Shin-chan (en)"),
+            ("2", "Crayon Shin-chan (en)"),
+            ("3", "Crayon Shin-chan (ja)"),
+            ("4", "Crayon Shin-chan (ja)"),
+        ]
+
+    def test_a_refresh_keeps_each_subscription_in_its_own_language(
+        self, session: Session, temp_settings
+    ):
+        """Zonder de taal op het abonnement haalt de ronde altijd Engels op."""
+        from bookpal.models import Subscription
+        from bookpal.sources import service as source_service
+        from tests.test_sources import MANGA_ID
+
+        bron = self._bron(session)
+        implementatie = self._nep({"en": ["1"], "ja": ["1", "2"]})
+        source_service.subscribe(session, bron, implementatie, MANGA_ID, language="en")
+        source_service.subscribe(session, bron, implementatie, MANGA_ID, language="ja")
+        session.flush()
+
+        talen = sorted(row.language for row in session.scalars(select(Subscription)))
+        assert talen == ["en", "ja"]

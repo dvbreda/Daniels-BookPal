@@ -620,8 +620,11 @@ class TestSubscriptionPreferenceApi:
         client.post("/api/sources", json={"type": "mangadex", "name": "MangaDex"})
         return client
 
-    def test_by_series_is_404_without_a_subscription(self, scanned):
-        assert scanned.get("/api/sources/subscriptions/by-series/1").status_code == 404
+    def test_by_series_is_empty_without_a_subscription(self, scanned):
+        """Een lege lijst, want een serie kan er ook meerdere hebben."""
+        response = scanned.get("/api/sources/subscriptions/by-series/1")
+        assert response.status_code == 200
+        assert response.json() == []
 
     def test_patching_an_unknown_subscription_is_404(self, client):
         response = client.patch("/api/sources/subscriptions/999", json={"readahead_n": 5})

@@ -393,6 +393,8 @@ function IntakePanel() {
         </p>
       )}
 
+      <AddToIntake />
+
       {data.files.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">Niets klaarstaan.</p>
       ) : (
@@ -462,5 +464,103 @@ function IntakePanel() {
 
       {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
     </section>
+  );
+}
+
+
+/**
+ * Iets de intake-map in krijgen dat er nog niet staat.
+ *
+ * Twee wegen naartoe, omdat het bestand op twee plekken kan liggen. Op je
+ * telefoon of laptop: kiezen en uploaden. In de cloud: de deellink plakken,
+ * dan haalt de NAS hem zelf op — dat scheelt hem eerst naar je telefoon
+ * downloaden. Een gedeelde Dropbox-map komt binnen als zip en wordt uitgepakt.
+ *
+ * Beide landen in je intake-map en niet meteen in je bibliotheek: zo zie je
+ * eerst wat er binnenkwam en bepaal je daarna waar het hoort.
+ */
+function AddToIntake() {
+  const queryClient = useQueryClient();
+  const [url, setUrl] = useState("");
+  const [melding, setMelding] = useState<string | null>(null);
+
+  const klaar = () => {
+    void queryClient.invalidateQueries({ queryKey: ["intake"] });
+  };
+
+  const upload = useMutation({
+    mutationFn: (file: File) => api.intakeUpload(file),
+    onSuccess: (result) => {
+      setMelding(`${result.name} staat klaar.`);
+      klaar();
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Uploaden mislukt."),
+  });
+
+  const ophalen = useMutation({
+    mutationFn: () => api.intakeFetch(url.trim()),
+    onSuccess: (result) => {
+      setMelding(
+        result.saved.length === 0
+          ? `Niets nieuws (${result.skipped} stond er al).`
+          : `${result.saved.length} bestand(en) opgehaald.`,
+      );
+      setUrl("");
+      klaar();
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Ophalen mislukt."),
+  });
+
+  return (
+    <div className="mt-3 rounded bg-ink-800 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="cursor-pointer rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 hover:bg-ink-600">
+          {upload.isPending ? "Uploaden…" : "Bestand kiezen"}
+          <input
+            type="file"
+            className="hidden"
+            disabled={upload.isPending}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) upload.mutate(file);
+              // Legen, anders vuurt hetzelfde bestand een tweede keer niet.
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <span className="text-xs text-slate-500">
+          Vanaf je telefoon of laptop, rechtstreeks naar de NAS.
+        </span>
+      </div>
+
+      <form
+        className="mt-3 flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (url.trim()) ophalen.mutate();
+        }}
+      >
+        <input
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="Dropbox-deellink of directe https-link"
+          className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+        />
+        <button
+          type="submit"
+          disabled={ophalen.isPending || !url.trim()}
+          className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          {ophalen.isPending ? "Ophalen…" : "Ophalen"}
+        </button>
+      </form>
+      <p className="mt-1 text-xs text-slate-500">
+        Een gedeelde map wordt uitgepakt; alleen leesbare bestanden komen eruit.
+      </p>
+
+      {melding && <p className="mt-2 text-xs text-slate-300">{melding}</p>}
+    </div>
   );
 }

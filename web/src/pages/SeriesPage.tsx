@@ -276,6 +276,16 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
     },
   });
 
+  const leesstatus = useMutation({
+    mutationFn: (finished: boolean) => api.setReadState(book.id, finished),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["continue", seriesId] });
+    },
+  });
+
+  const uit = book.progress?.finished ?? false;
+
   const inner = (
     <>
       <div className="relative aspect-[2/3] bg-ink-700">
@@ -330,6 +340,22 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   const className =
     "block overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent";
 
+  // Zelf de leesstatus zetten. De automatiek is soms te gretig — een kort
+  // hoofdstuk staat na één blik op 100% — en dan wil je een weg terug.
+  const statusknop = (
+    <button
+      onClick={() => leesstatus.mutate(!uit)}
+      disabled={leesstatus.isPending}
+      title={uit ? "Markeer als ongelezen" : "Markeer als gelezen"}
+      aria-label={uit ? "Markeer als ongelezen" : "Markeer als gelezen"}
+      className={`absolute right-1 top-1 rounded px-1.5 py-0.5 text-xs disabled:opacity-50 ${
+        uit ? "bg-accent text-ink-900" : "bg-ink-900/70 text-slate-400 hover:text-slate-100"
+      }`}
+    >
+      ✓
+    </button>
+  );
+
   // Andere versies van precies dit deel. Buiten de kaartlink gehouden: een link
   // in een link is geen geldige HTML, en een klik zou naar de verkeerde versie
   // gaan.
@@ -372,8 +398,9 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   // te linken; daar hoort een knop, geen dode link.
   if (!book.has_file) {
     return (
-      <div className={className}>
+      <div className={`relative ${className}`}>
         {inner}
+        {statusknop}
         <div className="px-2 pb-2">
           <button
             onClick={() => download.mutate()}
@@ -394,10 +421,11 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   }
 
   return (
-    <div className={className}>
+    <div className={`relative ${className}`}>
       <Link to={target} className="block">
         {inner}
       </Link>
+      {statusknop}
       {versies}
     </div>
   );

@@ -13,9 +13,11 @@ gebleken.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import BinaryIO
 
 from sqlalchemy.orm import Session
 
@@ -34,6 +36,13 @@ DEFAULT_SOURCES = ("/intake",)
 
 # Rommel die naast een download staat en niet meegenomen hoeft te worden.
 _SKIP_NAMES = {"thumbs.db", ".ds_store", "desktop.ini"}
+
+# Ruim voor een dik album, krap genoeg dat een misklik niet je schijf vult.
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+
+# Wat er in een bestandsnaam mag blijven staan. De naam komt van een client en
+# mag dus geen pad zijn en geen shell-tekens bevatten.
+_UNSAFE_IN_NAME = re.compile(r"[^A-Za-z0-9 ._()\[\]-]+")
 
 
 @dataclass(frozen=True, slots=True)
@@ -171,11 +180,52 @@ def unwritable(folders: list[str]) -> list[str]:
 
 
 __all__ = [
+    "MAX_UPLOAD_BYTES",
     "Candidate",
     "IntakeReport",
     "SourceError",
     "check_sources",
     "import_files",
+    "receive_upload",
     "scan",
     "unwritable",
 ]
+
+
+def receive_upload(
+    stream: BinaryIO, filename: str, folder: Path, *, max_bytes: int = MAX_UPLOAD_BYTES
+) -> Path:
+    """Neem een geüpload bestand aan en zet het in ``folder``.
+
+    Voor het geval dat je iets op je telefoon hebt staan en het op de NAS wilt
+    hebben. De naam komt van de client en is dus niet te vertrouwen: alleen het
+    laatste stuk telt, en paden erin worden onschadelijk gemaakt. Er wordt
+    geschreven naar een tijdelijke naam, zodat een afgebroken upload nooit als
+    geldig bestand blijft liggen.
+    """
+    veilig = _UNSAFE_IN_NAME.sub("_", Path(filename).name).strip(" .")
+    if not veilig:
+        raise SourceError("dit bestand heeft geen bruikbare naam")
+    if Path(veilig).suffix.lower() not in SUPPORTED_EXTENSIONS:
+        raise SourceError(f"{veilig} is geen formaat dat BookPal kan lezen")
+
+    folder.mkdir(parents=True, exist_ok=True)
+    doel = folder / veilig
+    if doel.exists():
+        raise SourceError(f"{veilig} staat er al")
+
+    tijdelijk = folder / f".{veilig}.binnenkomend"
+    geschreven = 0
+    try:
+        with tijdelijk.open("wb") as uit:
+            while blok := stream.read(1024 * 1024):
+                geschreven += len(blok)
+                if geschreven > max_bytes:
+                    raise SourceError("dit bestand is groter dan BookPal aanneemt")
+                uit.write(blok)
+        if geschreven == 0:
+            raise SourceError("er kwam niets binnen")
+        tijdelijk.replace(doel)
+    finally:
+        tijdelijk.unlink(missing_ok=True)
+    return doel

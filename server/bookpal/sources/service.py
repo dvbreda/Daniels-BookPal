@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
@@ -191,6 +191,15 @@ def pick_best_chapters(
     return [chapter for chapter in chapters if chapter in chosen]
 
 
+def _edition_name(series: Series, subscription: Subscription) -> str:
+    """Hoe deze uitgave heet in de lijst.
+
+    De taal erbij, want dat is precies waarin twee abonnementen op dezelfde
+    reeks van elkaar verschillen.
+    """
+    return f"{series.title} ({subscription.language})"
+
+
 def sync_chapters(
     session: Session,
     series: Series,
@@ -217,16 +226,24 @@ def sync_chapters(
         subscription.available_groups = group_summary(chapters)
         # Alles van deze bron hoort bij één uitgave. Zo blijft "de gekleurde
         # versie" bij elkaar als er straks een tweede bron bij komt.
-        edition = editions.for_subscription(session, series, subscription, name=series.title)
+        edition = editions.for_subscription(
+            session, series, subscription, name=_edition_name(series, subscription)
+        )
 
     preferred = subscription.preferred_group_id if subscription is not None else None
     chapters = pick_best_chapters(chapters, preferred)
     keep = {chapter.ref for chapter in chapters}
 
+    # Alleen de hoofdstukken van déze uitgave. Een serie kan er meer hebben —
+    # een Engelse vertaling naast het Japanse origineel — en die horen niet als
+    # "niet meer bij de bron" te worden opgeruimd wanneer de ander synchroniseert.
+    statement = select(Book).where(Book.series_id == series.id)
+    if edition is not None:
+        statement = statement.where(
+            or_(Book.edition_id == edition.id, Book.edition_id.is_(None))
+        )
     existing = {
-        book.source_ref: book
-        for book in session.scalars(select(Book).where(Book.series_id == series.id))
-        if book.source_ref
+        book.source_ref: book for book in session.scalars(statement) if book.source_ref
     }
 
     for ref, book in list(existing.items()):
@@ -332,13 +349,21 @@ def subscribe(
 
     # Het abonnement moet er zijn vóór het synchroniseren: daar staat de
     # voorkeursgroep op, en die bepaalt welke vertaling er wordt aangemaakt.
+    # Ook op taal, want twee talen naast elkaar is een geldige wens: van
+    # Shinya Shokudo is maar een klein deel vertaald, dus de Engelse uitgave
+    # voorop en het Japanse origineel eronder om verder te kunnen lezen. Zonder
+    # de taal in de sleutel zou het tweede abonnement het eerste overschrijven.
     subscription = session.scalar(
         select(Subscription).where(
-            Subscription.source_id == source_row.id, Subscription.series_id == series.id
+            Subscription.source_id == source_row.id,
+            Subscription.series_id == series.id,
+            Subscription.language == language,
         )
     )
     if subscription is None:
-        subscription = Subscription(source_id=source_row.id, series_id=series.id)
+        subscription = Subscription(
+            source_id=source_row.id, series_id=series.id, language=language
+        )
         session.add(subscription)
     subscription.policy = policy
     subscription.readahead_n = readahead_n

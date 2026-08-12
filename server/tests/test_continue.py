@@ -376,3 +376,65 @@ class TestOpeningIsNotReading:
         verder = client.get(f"/api/series/{series.id}/continue").json()
         assert verder["book_id"] == boeken[1].id
         assert verder["resuming"] is False
+
+
+class TestReadState:
+    """Zelf zeggen of iets gelezen is — de automatiek is soms te gretig."""
+
+    def test_marking_unread_removes_the_progress(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 2)
+        boek = _books(session, series)[0]
+        _progress(session, boek, 100.0, True, page=19)
+        session.commit()
+
+        response = client.post(f"/api/books/{boek.id}/read-state", json={"finished": False})
+        assert response.status_code == 200
+
+        session.expire_all()
+        assert session.query(Progress).count() == 0
+
+    def test_marking_read_sets_it_to_the_last_page(self, client: TestClient, session: Session):
+        series = _series_with_chapters(session, 2)
+        boek = _books(session, series)[0]
+        session.commit()
+
+        client.post(f"/api/books/{boek.id}/read-state", json={"finished": True})
+
+        session.expire_all()
+        row = session.query(Progress).one()
+        assert row.finished is True
+        assert row.position == {"page": 19}
+
+    def test_unread_also_clears_the_other_edition(self, client: TestClient, session: Session):
+        """Anders duikt hij weer op zodra je van voorkeur wisselt."""
+        from bookpal.models import Edition
+
+        series = _series_with_chapters(session, 1)
+        gelezen = _books(session, series)[0]
+        andere_uitgave = Edition(series_id=series.id, name="Zwart-wit", rank=1)
+        session.add(andere_uitgave)
+        session.flush()
+        tweeling = Book(
+            series_id=series.id,
+            edition_id=andere_uitgave.id,
+            kind=BookKind.COMIC,
+            title="Deel 1 zw",
+            number="1",
+            sort_number=1.0,
+            page_count=20,
+        )
+        session.add(tweeling)
+        session.flush()
+        _progress(session, gelezen, 100.0, True, page=19)
+        _progress(session, tweeling, 40.0, False, page=8)
+        session.commit()
+
+        response = client.post(f"/api/books/{tweeling.id}/read-state", json={"finished": False})
+        assert response.json()["affected"] == 2
+
+        session.expire_all()
+        assert session.query(Progress).count() == 0
+
+    def test_an_unknown_book_is_a_404(self, client: TestClient):
+        response = client.post("/api/books/9999/read-state", json={"finished": True})
+        assert response.status_code == 404

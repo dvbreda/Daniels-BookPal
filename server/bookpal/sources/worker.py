@@ -136,7 +136,9 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
                 source_service.upsert_series(
                     session, source_row, implementation.detail(series.source_ref)
                 )
-                chapters = implementation.chapters(series.source_ref)
+                chapters = implementation.chapters(
+                    series.source_ref, language=subscription.language
+                )
                 added, _ = source_service.sync_chapters(
                     session, series, chapters, subscription=subscription
                 )

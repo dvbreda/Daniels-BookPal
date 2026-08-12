@@ -416,6 +416,12 @@ class Subscription(Base):
     )
     readahead_n: Mapped[int] = mapped_column(Integer, default=3)
     ttl_days: Mapped[int] = mapped_column(Integer, default=14)
+    # In welke taal je deze reeks volgt. Nodig omdat je er meerdere naast
+    # elkaar kunt hebben: van Shinya Shokudo is maar een klein deel vertaald,
+    # dus de Engelse uitgave voorop en het Japanse origineel eronder om de rest
+    # te kunnen lezen. Zonder dit veld haalt de achtergrondronde altijd Engels
+    # op en klapt het Japanse abonnement bij de eerste ronde om.
+    language: Mapped[str] = mapped_column(String(8), default="en")
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Welke vertaalgroep je wilt lezen. Leeg = automatisch kiezen (de groep die

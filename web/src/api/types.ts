@@ -256,6 +256,8 @@ export interface SubscriptionRow {
   policy: SubscriptionPolicy;
   readahead_n: number;
   ttl_days: number;
+  /** In welke taal je deze reeks volgt; meerdere talen worden uitgaven van één serie. */
+  language: string;
   last_checked_at: string | null;
   /** Leeg = automatisch kiezen. */
   preferred_group_id: string | null;
@@ -366,6 +368,25 @@ export interface MergeSuggestion {
   absorb_id: number;
   absorb_title: string;
   absorb_books: number;
+}
+
+export interface ReadState {
+  book_id: number;
+  finished: boolean;
+  /** Hoeveel uitgaven van deze aflevering het betrof. */
+  affected: number;
+}
+
+export interface IntakeUpload {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface IntakeFetch {
+  saved: string[];
+  skipped: number;
+  errors: string[];
 }
 
 export interface BookAlternative {
