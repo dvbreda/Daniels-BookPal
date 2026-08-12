@@ -13,6 +13,17 @@ import type { SearchHit, SubscriptionPolicy, SubscriptionRow } from "../api/type
  * om verder te kunnen lezen — met de vertaalknop erbij. Ze worden uitgaven van
  * één serie, geen aparte series.
  */
+const TAALNAMEN: Record<string, string> = {
+  en: "Engels",
+  ja: "Japans",
+  nl: "Nederlands",
+  de: "Duits",
+  fr: "Frans",
+  es: "Spaans",
+  ko: "Koreaans",
+  zh: "Chinees",
+};
+
 const TALEN: [string, string][] = [
   ["en", "Engels"],
   ["ja", "Japans"],
@@ -233,6 +244,14 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
               <p className="text-xs text-slate-500">
                 {[hit.year, hit.status, hit.original_language].filter(Boolean).join(" · ")}
               </p>
+              {/* Je hebt hier al iets van staan onder een net andere titel.
+                  Dan voeg je een bron toe aan wat je hebt, en maak je geen
+                  tweede serie — dat hoor je te zien vóór je op volgen drukt. */}
+              {hit.existing_series_id && (
+                <p className="mt-1 text-xs text-accent">
+                  Wordt een uitgave van «{hit.existing_series_title}»
+                </p>
+              )}
             </div>
             {hit.subscribed_series_id ? (
               <>
@@ -259,7 +278,7 @@ function SearchPanel({ sourceId, onChanged }: { sourceId: number; onChanged: () 
                 disabled={subscribe.isPending}
                 className="rounded bg-accent px-3 py-1.5 text-sm text-ink-900 disabled:opacity-50"
               >
-                Volgen
+                {hit.existing_series_id ? "Bron toevoegen" : "Volgen"}
               </button>
             )}
           </div>
@@ -293,9 +312,18 @@ function SubscriptionRowView({
       <div className="min-w-0 flex-1">
         <Link
           to={`/serie/${subscription.series_id}`}
-          className="truncate text-slate-100 hover:text-accent"
+          className="block truncate text-slate-100 hover:text-accent"
         >
           {subscription.series_title}
+          {/* Welke reeks bij de bron, en in welke taal. Bij een serie met
+              meerdere abonnementen is dát het verschil — de serietitel is voor
+              alle drie dezelfde. */}
+          {subscription.source_title && subscription.source_title !== subscription.series_title && (
+            <span className="text-slate-400"> ({subscription.source_title})</span>
+          )}
+          <span className="ml-2 text-xs text-slate-500">
+            {TAALNAMEN[subscription.language] ?? subscription.language}
+          </span>
         </Link>
         <p className="text-xs text-slate-500">
           {subscription.chapters_local} van {subscription.chapters_total} lokaal ·{" "}

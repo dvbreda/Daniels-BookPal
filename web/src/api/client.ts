@@ -140,6 +140,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  renameSeries: (id: number, title: string) =>
+    request<Series>(`/api/series/${id}/title`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
   setOrigin: (id: number, body: { origin_region: string; origin_country?: string | null }) =>
     request<Series>(`/api/series/${id}/origin`, {
       method: "PATCH",

@@ -251,6 +251,7 @@ function SeriesSettings({
             </div>
           </section>
 
+          <RenamePanel seriesId={seriesId} title={series.title} />
           <EditionsPanel seriesId={seriesId} editions={series.editions} />
           <CoverPicker series={series} />
           <TranslationPicker seriesId={seriesId} books={series.books} />
@@ -579,6 +580,58 @@ function ImportPanel({ series, seriesId }: { series: SeriesDetail; seriesId: num
       </div>
 
       {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
+    </section>
+  );
+}
+
+
+/**
+ * De serie hernoemen.
+ *
+ * Nodig zodra een serie meerdere uitgaven heeft: hij houdt de titel van de
+ * uitgave waar hij mee begon, en "Dragon Ball Super (Official Colored)" klopt
+ * niet meer als de zwart-witte er ook in zit.
+ */
+function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
+  const queryClient = useQueryClient();
+  const [naam, setNaam] = useState(title);
+
+  const rename = useMutation({
+    mutationFn: () => api.renameSeries(seriesId, naam.trim()),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series"] });
+    },
+  });
+
+  return (
+    <section className="mt-3 rounded border border-ink-600 p-4">
+      <h2 className="text-sm font-medium text-slate-200">Naam</h2>
+      <form
+        className="mt-2 flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (naam.trim() && naam.trim() !== title) rename.mutate();
+        }}
+      >
+        <input
+          value={naam}
+          onChange={(event) => setNaam(event.target.value)}
+          className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+        />
+        <button
+          type="submit"
+          disabled={rename.isPending || !naam.trim() || naam.trim() === title}
+          className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          Opslaan
+        </button>
+      </form>
+      {rename.isError && (
+        <p className="mt-1 text-xs text-danger">
+          {rename.error instanceof ApiError ? rename.error.message : "Hernoemen mislukt."}
+        </p>
+      )}
     </section>
   );
 }

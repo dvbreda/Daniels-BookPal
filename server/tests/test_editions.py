@@ -405,9 +405,10 @@ class TestTwoLanguagesOfOneSeries:
         assert {engels.language, japans.language} == {"en", "ja"}
 
         uitgaven = sorted(series.editions, key=lambda edition: edition.rank)
+        # De taal komt er alleen bij als hij nodig is om ze te onderscheiden.
         assert [edition.name for edition in uitgaven] == [
-            "Crayon Shin-chan (en)",
-            "Crayon Shin-chan (ja)",
+            "Crayon Shin-chan",
+            "Crayon Shin-chan · ja",
         ]
 
     def test_the_untranslated_rest_fills_in_behind_the_translation(
@@ -427,10 +428,10 @@ class TestTwoLanguagesOfOneSeries:
         gekozen = slots(list(series.books), list(series.editions))
         namen = {edition.id: edition.name for edition in series.editions}
         assert [(slot.chosen.number, namen[slot.chosen.edition_id]) for slot in gekozen] == [
-            ("1", "Crayon Shin-chan (en)"),
-            ("2", "Crayon Shin-chan (en)"),
-            ("3", "Crayon Shin-chan (ja)"),
-            ("4", "Crayon Shin-chan (ja)"),
+            ("1", "Crayon Shin-chan"),
+            ("2", "Crayon Shin-chan"),
+            ("3", "Crayon Shin-chan · ja"),
+            ("4", "Crayon Shin-chan · ja"),
         ]
 
     def test_a_refresh_keeps_each_subscription_in_its_own_language(
@@ -449,3 +450,100 @@ class TestTwoLanguagesOfOneSeries:
 
         talen = sorted(row.language for row in session.scalars(select(Subscription)))
         assert talen == ["en", "ja"]
+
+
+class TestAddingASourceToWhatYouHave:
+    """Een bron toevoegen aan een serie die je al hebt, niet een tweede maken."""
+
+    def _bron(self, session: Session):
+        from bookpal.models import Source
+
+        row = Source(type="mangadex", name="MangaDex")
+        session.add(row)
+        session.flush()
+        return row
+
+    def _treffer(self, titel: str, ref: str = "abc"):
+        from bookpal.sources.base import SearchResult
+
+        return SearchResult(ref=ref, title=titel)
+
+    def test_a_romanisation_variant_lands_on_the_series_you_have(self, session: Session):
+        """ "Shinya Shokudou" bij de bron is jouw "Shinya Shokudo"."""
+        from bookpal.sources import service as source_service
+
+        eigen = Series(title="Shinya Shokudo", sort_title="s")
+        session.add(eigen)
+        session.flush()
+        bron = self._bron(session)
+
+        gevonden = source_service.upsert_series(session, bron, self._treffer("Shinya Shokudou"))
+        assert gevonden.id == eigen.id
+        assert session.query(Series).count() == 1
+
+    def test_a_local_series_keeps_its_own_title(self, session: Session):
+        from bookpal.sources import service as source_service
+
+        eigen = Series(title="Shinya Shokudo", sort_title="s")
+        session.add(eigen)
+        session.flush()
+        bron = self._bron(session)
+
+        source_service.upsert_series(session, bron, self._treffer("Shinya Shokudou"))
+        assert eigen.title == "Shinya Shokudo"
+        assert eigen.source_ref == "abc"
+
+    def test_a_different_series_still_becomes_its_own(self, session: Session):
+        from bookpal.sources import service as source_service
+
+        session.add(Series(title="Oishinbo", sort_title="o"))
+        session.flush()
+        bron = self._bron(session)
+
+        gevonden = source_service.upsert_series(session, bron, self._treffer("One Piece"))
+        assert gevonden.title == "One Piece"
+        assert session.query(Series).count() == 2
+
+    def test_the_search_says_you_would_be_adding_to_an_existing_series(
+        self, client, session: Session, monkeypatch
+    ):
+        from bookpal.sources.base import SearchResult
+        from bookpal.sources.mangadex import MangaDexSource
+
+        session.add(Series(title="Shinya Shokudo", sort_title="s"))
+        session.commit()
+        client.post("/api/sources", json={"type": "mangadex", "name": "MangaDex"})
+        monkeypatch.setattr(
+            MangaDexSource,
+            "search",
+            lambda self, query, *, limit=20: [SearchResult(ref="abc", title="Shinya Shokudou")],
+        )
+
+        [treffer] = client.get("/api/sources/1/search", params={"q": "shinya"}).json()
+        assert treffer["existing_series_title"] == "Shinya Shokudo"
+        assert treffer["subscribed_series_id"] is None
+
+
+class TestRenamingASeries:
+    def test_you_can_drop_the_edition_from_the_title(self, client, session: Session):
+        """Na het samenvoegen klopt "(Official Colored)" niet meer."""
+        series = Series(title="Dragon Ball Super (Official Colored)", sort_title="d")
+        session.add(series)
+        session.commit()
+
+        response = client.patch(
+            f"/api/series/{series.id}/title", json={"title": "Dragon Ball Super"}
+        )
+        assert response.status_code == 200
+        assert response.json()["title"] == "Dragon Ball Super"
+
+        session.expire_all()
+        assert session.get(Series, series.id).sort_title == "dragon ball super"
+
+    def test_an_empty_title_is_refused(self, client, session: Session):
+        series = Series(title="Iets", sort_title="i")
+        session.add(series)
+        session.commit()
+
+        response = client.patch(f"/api/series/{series.id}/title", json={"title": "   "})
+        assert response.status_code == 400

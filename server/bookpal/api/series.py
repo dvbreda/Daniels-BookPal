@@ -51,6 +51,7 @@ from bookpal.schemas import (
     Paginated,
     SeriesDetailOut,
     SeriesOut,
+    SeriesRenameIn,
     SetCoverPageIn,
 )
 from bookpal.sources import SourceError, importer
@@ -218,6 +219,27 @@ def _editions_out(
         )
         for edition in sorted(uitgaven, key=lambda edition: edition.rank)
     ]
+
+
+@router.patch("/{series_id}/title", response_model=SeriesOut)
+def rename_series(
+    series_id: int, payload: SeriesRenameIn, session: Session = Depends(get_session)
+) -> SeriesOut:
+    """Hernoem een serie.
+
+    Blijft staan bij een nieuwe scan: alleen de titel verandert, de mappen en
+    bestanden blijven waar ze zijn.
+    """
+    series = deps.get_series(session, series_id)
+    titel = payload.title.strip()
+    if not titel:
+        raise HTTPException(status_code=400, detail="een serie heeft een titel nodig")
+    series.title = titel
+    series.sort_title = titel.lower()
+    session.commit()
+    return deps.to_series_out(
+        series, len(series.books), sorted({book.kind.value for book in series.books})
+    )
 
 
 @router.patch("/{series_id}/origin", response_model=SeriesOut)

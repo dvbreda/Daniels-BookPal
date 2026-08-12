@@ -416,6 +416,11 @@ class Subscription(Base):
     )
     readahead_n: Mapped[int] = mapped_column(Integer, default=3)
     ttl_days: Mapped[int] = mapped_column(Integer, default=14)
+    # Welke reeks bij de bron dit abonnement volgt. Staat ook op Series, maar
+    # dat veld kan er maar één bevatten: zodra een serie meerdere abonnementen
+    # heeft — een gekleurde uitgave naast de zwart-witte — hoort elk zijn eigen
+    # bron-reeks te onthouden. Leeg betekent: die van de serie.
+    source_ref: Mapped[str | None] = mapped_column(String(200), default=None)
     # In welke taal je deze reeks volgt. Nodig omdat je er meerdere naast
     # elkaar kunt hebben: van Shinya Shokudo is maar een klein deel vertaald,
     # dus de Engelse uitgave voorop en het Japanse origineel eronder om de rest

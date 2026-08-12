@@ -233,8 +233,12 @@ export interface SearchHit {
   status: string | null;
   original_language: string | null;
   tracker_ids: Record<string, string>;
-  /** Gevuld als je deze serie al volgt. */
+  /** Gevuld als je precies deze reeks bij deze bron al volgt. */
   subscribed_series_id: number | null;
+  /** Gevuld als je hier al een serie van hebt onder (bijna) dezelfde titel;
+   * volgen voegt dan een uitgave toe in plaats van een tweede serie te maken. */
+  existing_series_id: number | null;
+  existing_series_title: string | null;
   /** Rechtstreeks tonen als miniatuur; alleen na koppelen gaat hij door onze
    * eigen cache (zie SourceBadge/imageUrl.seriesCover). */
   cover_url: string | null;
@@ -258,6 +262,8 @@ export interface SubscriptionRow {
   ttl_days: number;
   /** In welke taal je deze reeks volgt; meerdere talen worden uitgaven van één serie. */
   language: string;
+  /** Hoe de bron deze reeks noemt — het onderscheid tussen twee uitgaven. */
+  source_title: string;
   last_checked_at: string | null;
   /** Leeg = automatisch kiezen. */
   preferred_group_id: string | null;

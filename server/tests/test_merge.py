@@ -179,9 +179,7 @@ class TestApi:
         _books(session, opgaand, 4)
         session.commit()
 
-        response = client.post(
-            f"/api/series/{blijver.id}/merge", json={"absorb_id": opgaand.id}
-        )
+        response = client.post(f"/api/series/{blijver.id}/merge", json={"absorb_id": opgaand.id})
         assert response.status_code == 200
         assert response.json()["book_count"] == 4
 
@@ -215,3 +213,26 @@ class TestApi:
             for edition in session.scalars(select(Edition).where(Edition.series_id == blijver.id))
         )
         assert namen == ["Eigen bestanden", "Eigen bestanden — Dragon Ball Super"]
+
+    def test_a_moved_subscription_keeps_its_own_source_series(self, session: Session):
+        """Anders haalt het na de merge de hoofdstukken van de blijver op."""
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        blijver = _series(session, "Dragon Ball Super (Colored)", source_id=bron.id)
+        blijver.source_ref = "kleur-ref"
+        opgaand = _series(session, "Dragon Ball Super", source_id=bron.id)
+        opgaand.source_ref = "zwartwit-ref"
+        session.add(Subscription(source_id=bron.id, series_id=blijver.id))
+        session.add(Subscription(source_id=bron.id, series_id=opgaand.id))
+        session.flush()
+
+        merge(session, blijver, opgaand)
+
+        refs = sorted(
+            row.source_ref or ""
+            for row in session.scalars(
+                select(Subscription).where(Subscription.series_id == blijver.id)
+            )
+        )
+        assert refs == ["kleur-ref", "zwartwit-ref"]

@@ -46,9 +46,21 @@ def merge(session: Session, keep: Series, absorb: Series) -> Series:
     # zwart-witte, en die twee samen maken pas een complete serie. Welke van de
     # twee je te zien krijgt bepaalt de volgorde van de uitgaven, niet welk
     # abonnement de merge heeft overleefd.
+    # Ook die van de blijver: zodra er twee naast elkaar staan is "de reeks van
+    # de serie" niet meer eenduidig, dus leggen we hier voor allebei vast welke
+    # het is.
+    for subscription in session.scalars(
+        select(Subscription).where(Subscription.series_id == keep.id)
+    ):
+        subscription.source_ref = subscription.source_ref or keep.source_ref
+
     for subscription in session.scalars(
         select(Subscription).where(Subscription.series_id == absorb.id)
     ):
+        # De bron-reeks vastleggen vóórdat ``absorb`` verdwijnt: daarna is niet
+        # meer te achterhalen welke reeks dit abonnement volgde, en zou het bij
+        # de volgende ronde de hoofdstukken van de blijver gaan ophalen.
+        subscription.source_ref = subscription.source_ref or absorb.source_ref
         subscription.series_id = keep.id
 
     # De uitgaven schuiven achter die van de blijver aan: wat je al las blijft

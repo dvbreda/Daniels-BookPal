@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.library import editions
 from bookpal.metadata.origin import Origin, from_online, resolve
+from bookpal.metadata.titles import normalise
 from bookpal.models import (
     Book,
     BookKind,
@@ -69,11 +70,36 @@ def download_root(session: Session) -> LibraryRoot:
     return root
 
 
+def find_existing(session: Session, result: SearchResult) -> Series | None:
+    """De serie die je hier al van hebt, ook als hij net anders heet.
+
+    "Shinya Shokudou" bij de bron en "Shinya Shokudo" in jouw map zijn hetzelfde
+    ding; alleen de romanisering verschilt. Zonder deze stap komt er een tweede
+    serie naast te staan die je daarna met de hand moet samenvoegen — terwijl je
+    juist een bron aan het toevoegen was aan wat je al hebt.
+
+    Alleen op titel en niet op iets slimmers: dat is wat jij ook ziet, en het
+    valt met één blik te controleren. Wat je aan de verkeerde plakt haal je met
+    het losmaken van de uitgave weer uit elkaar.
+    """
+    gezocht = normalise(result.title)
+    if not gezocht:
+        return None
+    for series in session.scalars(select(Series)):
+        if normalise(series.title) == gezocht:
+            return series
+    return None
+
+
 def upsert_series(session: Session, source: Source, result: SearchResult) -> Series:
     """Maak of werk de serie bij die bij een bron-treffer hoort."""
     series = session.scalar(
         select(Series).where(Series.source_id == source.id, Series.source_ref == result.ref)
     )
+    if series is None:
+        # Nog geen serie voor déze reeks; misschien heb je hem al onder een
+        # net andere titel staan. Dan hoort dit een uitgave erbij te worden.
+        series = find_existing(session, result)
     if series is None:
         series = Series(
             title=result.title,
@@ -86,6 +112,12 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
         # Direct flushen, net als de scanner doet: column-defaults (tags,
         # tracker_ids) worden pas dan gevuld.
         session.flush()
+    elif series.source_id is None:
+        # Een serie uit je eigen mappen die nu ook een bron krijgt. De
+        # verwijzing per abonnement is leidend; deze twee velden blijven voor
+        # alles wat maar één bron kent.
+        series.source_id = source.id
+        series.source_ref = result.ref
 
     series.summary = result.description or series.summary
     if result.cover_url:
@@ -191,13 +223,29 @@ def pick_best_chapters(
     return [chapter for chapter in chapters if chapter in chosen]
 
 
-def _edition_name(series: Series, subscription: Subscription) -> str:
+def _edition_name(
+    session: Session, series: Series, subscription: Subscription, source_title: str | None
+) -> str:
     """Hoe deze uitgave heet in de lijst.
 
-    De taal erbij, want dat is precies waarin twee abonnementen op dezelfde
-    reeks van elkaar verschillen.
+    Bij voorkeur de titel zoals de bron hem noemt: "Dragon Ball Super (Coloured
+    Edition)" naast "Dragon Ball Super" zegt precies wat het onderscheid is,
+    terwijl jouw eigen serietitel voor beide hetzelfde is.
+
+    De taal komt er alleen bij als hij nodig is om ze uit elkaar te houden —
+    dezelfde reeks in het Engels en het Japans levert anders twee regels met
+    exact dezelfde naam.
     """
-    return f"{series.title} ({subscription.language})"
+    naam = source_title or series.title
+    bezet = {
+        edition.name
+        for edition in session.scalars(
+            select(Edition).where(
+                Edition.series_id == series.id, Edition.subscription_id != subscription.id
+            )
+        )
+    }
+    return f"{naam} · {subscription.language}" if naam in bezet else naam
 
 
 def sync_chapters(
@@ -206,6 +254,7 @@ def sync_chapters(
     chapters: list[ChapterInfo],
     *,
     subscription: Subscription | None = None,
+    source_title: str | None = None,
 ) -> tuple[int, int]:
     """Zet de hoofdstukkenlijst van een bron om in boeken zonder bestand.
 
@@ -227,7 +276,10 @@ def sync_chapters(
         # Alles van deze bron hoort bij één uitgave. Zo blijft "de gekleurde
         # versie" bij elkaar als er straks een tweede bron bij komt.
         edition = editions.for_subscription(
-            session, series, subscription, name=_edition_name(series, subscription)
+            session,
+            series,
+            subscription,
+            name=_edition_name(session, series, subscription, source_title),
         )
 
     preferred = subscription.preferred_group_id if subscription is not None else None
@@ -365,6 +417,9 @@ def subscribe(
             source_id=source_row.id, series_id=series.id, language=language
         )
         session.add(subscription)
+    # Altijd bijwerken: bij een serie met meerdere abonnementen is dit het
+    # enige dat vastlegt wélke reeks bij de bron dít abonnement volgt.
+    subscription.source_ref = ref
     subscription.policy = policy
     subscription.readahead_n = readahead_n
     subscription.ttl_days = ttl_days
@@ -372,7 +427,9 @@ def subscribe(
     session.flush()
 
     chapters = implementation.chapters(ref, language=language)
-    added, _ = sync_chapters(session, series, chapters, subscription=subscription)
+    added, _ = sync_chapters(
+        session, series, chapters, subscription=subscription, source_title=detail.title
+    )
     session.flush()
     return series, subscription, added
 

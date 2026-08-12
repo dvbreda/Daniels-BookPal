@@ -90,25 +90,42 @@ def search(
         # 502: het verzoek klopt, de bron speelt niet mee.
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    # Wat je al volgt, op de reeks van het abonnement zelf: een serie kan er
+    # meerdere hebben en Series.source_ref wijst er dan maar naar één.
     known = {
-        series.source_ref: series.id
-        for series in session.scalars(select(Series).where(Series.source_id == source.id))
-        if series.source_ref
-    }
-    return [
-        SearchResultOut(
-            ref=result.ref,
-            title=result.title,
-            description=result.description,
-            year=result.year,
-            status=result.status,
-            original_language=result.original_language,
-            tracker_ids=result.tracker_ids,
-            subscribed_series_id=known.get(result.ref),
-            cover_url=result.cover_url,
+        row.source_ref: row.series_id
+        for row in session.scalars(
+            select(Subscription).where(Subscription.source_id == source.id)
         )
-        for result in results
-    ]
+        if row.source_ref
+    }
+    for series in session.scalars(select(Series).where(Series.source_id == source.id)):
+        if series.source_ref:
+            known.setdefault(series.source_ref, series.id)
+
+    uitvoer: list[SearchResultOut] = []
+    for result in results:
+        # Alleen als je hem nog niet volgt: anders is "je volgt dit al" het
+        # nuttigere bericht.
+        bestaand = (
+            None if result.ref in known else source_service.find_existing(session, result)
+        )
+        uitvoer.append(
+            SearchResultOut(
+                ref=result.ref,
+                title=result.title,
+                description=result.description,
+                year=result.year,
+                status=result.status,
+                original_language=result.original_language,
+                tracker_ids=result.tracker_ids,
+                subscribed_series_id=known.get(result.ref),
+                existing_series_id=bestaand.id if bestaand else None,
+                existing_series_title=bestaand.title if bestaand else None,
+                cover_url=result.cover_url,
+            )
+        )
+    return uitvoer
 
 
 def _subscription_out(session: Session, subscription: Subscription) -> SubscriptionOut:
@@ -137,6 +154,7 @@ def _subscription_out(session: Session, subscription: Subscription) -> Subscript
     )
     out = SubscriptionOut.model_validate(subscription)
     out.series_title = series.title if series else ""
+    out.source_title = edition.name if edition is not None else ""
     out.chapters_total = total
     out.chapters_local = local
     return out
@@ -258,16 +276,15 @@ def update_subscription(
 
     added = 0
     series = session.get(Series, subscription.series_id)
-    if group_changed and series is not None and series.source_ref:
+    ref = subscription.source_ref or (series.source_ref if series else None)
+    if group_changed and series is not None and ref:
         source = _get_source_row(session, subscription.source_id)
         implementation = _implementation(source)
         try:
             # De taal van het abonnement, niet die van het verzoek: anders
             # klapt een Japans abonnement om zodra je er iets anders aan
             # bijstelt.
-            chapters = implementation.chapters(
-                series.source_ref, language=subscription.language
-            )
+            chapters = implementation.chapters(ref, language=subscription.language)
         except SourceError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
         added, _ = source_service.sync_chapters(

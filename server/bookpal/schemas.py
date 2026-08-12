@@ -148,6 +148,17 @@ class EditionOut(BaseModel):
     chosen_count: int = 0
 
 
+class SeriesRenameIn(BaseModel):
+    """De naam van de serie zoals jij hem wilt zien.
+
+    Nodig zodra een serie meerdere uitgaven heeft: hij houdt de titel van de
+    uitgave waar hij mee begon, en "Dragon Ball Super (Official Colored)" klopt
+    niet meer als de zwart-witte uitgave er ook in zit.
+    """
+
+    title: str = Field(min_length=1, max_length=500)
+
+
 class EditionPatch(BaseModel):
     name: str | None = None
     note: str | None = None
@@ -408,8 +419,14 @@ class SearchResultOut(BaseModel):
     status: str | None = None
     original_language: str | None = None
     tracker_ids: dict[str, str] = Field(default_factory=dict)
-    # Volg je deze al? Dan hoeft de UI geen tweede aanroep te doen.
+    # Volg je precies deze reeks al bij deze bron? Dan hoeft de UI geen tweede
+    # aanroep te doen.
     subscribed_series_id: int | None = None
+    # Heb je hier al een serie van onder (bijna) dezelfde titel? Dan voeg je
+    # hiermee een bron toe aan wat je al hebt in plaats van een tweede serie te
+    # maken — en dat hoor je te zien vóórdat je op volgen drukt.
+    existing_series_id: int | None = None
+    existing_series_title: str | None = None
     # Rechtstreeks te tonen als miniatuur in een zoekresultaat; pas bij
     # koppelen (POST .../cover) gaat hij door de eigen cache en beeldpipeline.
     cover_url: str | None = None
@@ -447,6 +464,10 @@ class SubscriptionOut(BaseModel):
     preferred_group_id: str | None = None
     available_groups: list[GroupOut] = Field(default_factory=list)
     series_title: str = ""
+    # Hoe de bron deze reeks noemt. Bij een serie met meerdere abonnementen is
+    # dít het onderscheid — "Dragon Ball Super (Coloured Edition)" naast
+    # "Dragon Ball Super" — want jouw serietitel is voor beide dezelfde.
+    source_title: str = ""
     chapters_total: int = 0
     chapters_local: int = 0
 
