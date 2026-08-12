@@ -159,3 +159,58 @@ class TestWhatItCannotDo:
         """Je haalt hier hele bestanden op; dat hoort de bron ook te zeggen."""
         with pytest.raises(SourceError, match="hele bestanden"):
             _bron().page_urls(f"{ITEM}/iets.cbz")
+
+
+class TestLendingItems:
+    """Het Internet Archive scant boeken voor bibliotheken en leent ze uit.
+
+    Die staan gewoon in de zoekresultaten, maar de bestanden zijn versleuteld.
+    Zonder onderscheid abonneer je je op iets wat nooit binnenkomt.
+    """
+
+    def _uitleen(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/advancedsearch.php":
+                return httpx.Response(
+                    200,
+                    json={
+                        "response": {
+                            "docs": [
+                                {
+                                    "identifier": "oishinbo220000kari",
+                                    "title": "Oishinbo. 22",
+                                    "language": ["jpn"],
+                                    "collection": ["internetarchivebooks", "inlibrary"],
+                                }
+                            ]
+                        }
+                    },
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "metadata": {
+                        "title": "Oishinbo. 22",
+                        "collection": ["internetarchivebooks", "inlibrary"],
+                        "access-restricted-item": "true",
+                    },
+                    "files": [
+                        {"name": "oishinbo220000kari_encrypted.pdf", "format": "PDF"},
+                        {"name": "oishinbo220000kari_lcp.epub", "format": "LCP"},
+                    ],
+                },
+            )
+
+        return _bron(handler)
+
+    def test_a_lending_item_says_so_in_the_search(self):
+        [treffer] = self._uitleen().search("oishinbo")
+        assert treffer.status == "alleen te leen"
+
+    def test_fetching_it_is_refused_with_the_reason(self):
+        with pytest.raises(SourceError, match="alleen te leen"):
+            self._uitleen().chapters("oishinbo220000kari")
+
+    def test_an_ordinary_item_is_not_marked(self):
+        [treffer] = _bron().search("shinya shokudo")
+        assert treffer.status is None

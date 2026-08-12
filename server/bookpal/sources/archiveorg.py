@@ -40,7 +40,9 @@ _PREFERENCE = (".cbz", ".cbr", ".pdf", ".epub")
 
 # Hier trappen we niet in: een jp2-zip is de ruwe scan van de bewaardienst zelf
 # (traag en enorm), en een lcp-epub zit achter drm.
-_SKIP = re.compile(r"(_jp2\.zip|_lcp\.epub|_daisy\.zip|_djvu\.txt)$", re.IGNORECASE)
+_SKIP = re.compile(
+    r"(_jp2\.zip|_lcp\.epub|_encrypted\.pdf|_daisy\.zip|_djvu\.txt)$", re.IGNORECASE
+)
 
 # Alleen tekstmateriaal: dezelfde zoekterm levert anders ook de tv-serie op.
 _MEDIATYPE = "texts"
@@ -75,6 +77,22 @@ def _year(doc: dict[str, Any]) -> int | None:
     return int(match.group()) if match else None
 
 
+#: Items die je alleen kunt lénen. Het Internet Archive scant boeken voor
+#: bibliotheken en leent ze één tegelijk uit; de bestanden zijn dan versleuteld
+#: en niet op te halen. Ze staan wél gewoon in de zoekresultaten, dus zonder dit
+#: onderscheid abonneer je je op iets wat nooit binnenkomt.
+_LENDING = ("inlibrary", "printdisabled")
+
+
+def _restricted(doc: dict[str, Any]) -> bool:
+    collecties = doc.get("collection") or []
+    if isinstance(collecties, str):
+        collecties = [collecties]
+    if any(naam in _LENDING for naam in collecties):
+        return True
+    return str(doc.get("access-restricted-item") or "").lower() == "true"
+
+
 def _to_result(doc: dict[str, Any]) -> SearchResult:
     identifier = str(doc.get("identifier"))
     maker = _first(doc.get("creator"))
@@ -83,6 +101,9 @@ def _to_result(doc: dict[str, Any]) -> SearchResult:
         title=_first(doc.get("title")) or identifier,
         description=_first(doc.get("description")),
         year=_year(doc),
+        # Er is geen apart veld voor "kan ik dit ophalen", dus het staat waar je
+        # het ziet: op de plek waar MangaDex "ongoing" zet.
+        status="alleen te leen" if _restricted(doc) else None,
         url=f"{API_BASE}/details/{identifier}",
         # Elk item heeft een afbeeldingsdienst; die kiest zelf de omslag.
         cover_url=f"{API_BASE}/services/img/{identifier}",
@@ -178,7 +199,15 @@ class ArchiveOrgSource(Source):
             "/advancedsearch.php",
             {
                 "q": " AND ".join(voorwaarden),
-                "fl[]": ["identifier", "title", "year", "date", "creator", "language"],
+                "fl[]": [
+                    "identifier",
+                    "title",
+                    "year",
+                    "date",
+                    "creator",
+                    "language",
+                    "collection",
+                ],
                 "rows": limit,
                 "page": 1,
                 "output": "json",
@@ -203,6 +232,11 @@ class ArchiveOrgSource(Source):
         dezelfde vorm heeft.
         """
         payload = self._get(f"/metadata/{ref}")
+        if _restricted(payload.get("metadata") or {}):
+            raise SourceError(
+                "dit item is alleen te leen bij het Internet Archive, niet op te halen: "
+                "de bestanden zijn versleuteld"
+            )
         bestanden = payload.get("files") or []
         gekozen = _readable_files(bestanden)
         gevonden = [_chapter(ref, bestand) for bestand in gekozen.values()]
