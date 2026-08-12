@@ -252,6 +252,7 @@ function SeriesSettings({
 
           <CoverPicker series={series} />
           <TranslationPicker seriesId={seriesId} books={series.books} />
+          {series.from_source && <ImportPanel series={series} seriesId={seriesId} />}
         </div>
       )}
     </section>
@@ -408,6 +409,74 @@ function ContinueBar({ seriesId }: { seriesId: number }) {
             : `Markeer ${data.unread_before} eerdere als gelezen`}
         </button>
       )}
+    </section>
+  );
+}
+
+
+/**
+ * Een gevolgde serie als gewone bestanden in je eigen mappen zetten.
+ *
+ * Een abonnement houdt hoofdstukken als verwijzing en haalt ze tijdelijk op;
+ * na de TTL gaat het bestand weer weg. Prima om bij te blijven, niet wat je
+ * wilt voor een serie die je houdt.
+ */
+function ImportPanel({ series, seriesId }: { series: SeriesDetail; seriesId: number }) {
+  const queryClient = useQueryClient();
+  const { data: roots } = useQuery({ queryKey: ["libraries"], queryFn: api.libraries });
+  const [rootId, setRootId] = useState<number | null>(null);
+  const [result, setResult] = useState<string | null>(null);
+
+  const doImport = useMutation({
+    mutationFn: () => api.importSeries(seriesId, { root_id: rootId! }),
+    onSuccess: (report) => {
+      setResult(
+        `${report.moved} verplaatst, ${report.downloaded} opgehaald, ` +
+          `${report.skipped} overgeslagen.` +
+          (report.errors.length ? ` Fouten: ${report.errors.slice(0, 3).join("; ")}` : ""),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+    },
+    onError: (error: unknown) =>
+      setResult(error instanceof ApiError ? error.message : "Importeren mislukt."),
+  });
+
+  // De downloadmap is waar gevolgde hoofdstukken nu al staan; die aanbieden als
+  // doel zou niets verplaatsen.
+  const doelen = (roots ?? []).filter((root) => root.id !== series.library_root_id);
+
+  return (
+    <section className="mt-4 rounded border border-ink-600 p-4">
+      <h2 className="text-sm font-medium text-slate-200">Importeren naar je bibliotheek</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Zet alle hoofdstukken als gewone bestanden in een van je eigen mappen, in een submap op
+        serienaam. Daarna verdwijnen ze niet meer door de TTL en lees je ze ook als de bron
+        onbereikbaar is. Wat er al staat wordt nooit overschreven.
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <select
+          value={rootId ?? ""}
+          onChange={(event) => setRootId(Number(event.target.value) || null)}
+          className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+        >
+          <option value="">Kies een map…</option>
+          {doelen.map((root) => (
+            <option key={root.id} value={root.id}>
+              {root.name} ({root.path})
+            </option>
+          ))}
+        </select>
+        <button
+          onClick={() => doImport.mutate()}
+          disabled={!rootId || doImport.isPending}
+          className="rounded bg-accent px-4 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          {doImport.isPending ? "Bezig… (dit kan lang duren)" : "Importeren"}
+        </button>
+      </div>
+
+      {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
     </section>
   );
 }

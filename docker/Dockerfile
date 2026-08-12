@@ -43,6 +43,13 @@ COPY server/pyproject.toml ./server/
 COPY server/bookpal/__init__.py ./server/bookpal/
 RUN pip install --no-cache-dir -e ./server
 
+# Chromium heeft systeembibliotheken nodig die niet in python:slim zitten;
+# zonder deze start hij wel maar valt hij meteen om ("Target page, context or
+# browser has been closed"). Dit is de prijs van de Goodreads-koppeling: zo'n
+# 300 MB aan libraries. De browser zelf komt er pas bij als je hem aanzet.
+RUN playwright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY server/ ./server/
 COPY --from=web /build/dist ./web/dist
 

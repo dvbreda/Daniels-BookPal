@@ -19,10 +19,21 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
-from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
+from bookpal.models import (
+    Book,
+    BookKind,
+    File,
+    LibraryRoot,
+    OriginRegion,
+    OriginSource,
+    Series,
+    Source,
+)
 from bookpal.schemas import (
     AttachCoverIn,
     ContinueOut,
+    ImportSeriesIn,
+    ImportSeriesOut,
     MarkReadBeforeOut,
     OriginPatch,
     Paginated,
@@ -30,7 +41,7 @@ from bookpal.schemas import (
     SeriesOut,
     SetCoverPageIn,
 )
-from bookpal.sources import SourceError
+from bookpal.sources import SourceError, importer
 from bookpal.sources import service as source_service
 
 from . import deps
@@ -378,3 +389,49 @@ def mark_read_before(
         )
         marked += 1
     return MarkReadBeforeOut(marked=marked)
+
+
+@router.post("/{series_id}/import", response_model=ImportSeriesOut)
+def import_series_to_library(
+    series_id: int,
+    payload: ImportSeriesIn,
+    session: Session = Depends(get_session),
+) -> ImportSeriesOut:
+    """Zet een gevolgde serie als gewone bestanden in een van je eigen mappen.
+
+    Daarna is het een lokale serie als elke andere: geen TTL die het bestand
+    weer weghaalt, en leesbaar zonder dat de bron bereikbaar is. Het abonnement
+    blijft staan, zodat nieuwe hoofdstukken gewoon binnen blijven komen.
+    """
+    series = deps.get_series(session, series_id)
+    root = session.get(LibraryRoot, payload.root_id)
+    if root is None:
+        raise HTTPException(status_code=404, detail="die map bestaat niet")
+    if not root.enabled:
+        raise HTTPException(status_code=409, detail="die map staat uit")
+
+    source_row = session.get(Source, series.source_id) if series.source_id else None
+    implementation = deps.get_source_implementation(source_row) if source_row else None
+    if implementation is None and payload.download_missing:
+        raise HTTPException(
+            status_code=409,
+            detail="deze serie hoort niet bij een bron; er valt niets op te halen",
+        )
+
+    try:
+        report = importer.import_series(
+            session,
+            implementation,  # type: ignore[arg-type]
+            series,
+            root,
+            download_missing=payload.download_missing and implementation is not None,
+        )
+    except SourceError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return ImportSeriesOut(
+        moved=report.moved,
+        downloaded=report.downloaded,
+        skipped=report.skipped,
+        errors=report.errors,
+    )

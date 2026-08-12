@@ -5,6 +5,7 @@ import type {
   CollectionIn,
   Health,
   ImageProfile,
+  ImportResult,
   GoodreadsStatus,
   GoodreadsSyncResult,
   LibraryRoot,
@@ -97,6 +98,11 @@ export const api = {
   series: (query: SeriesQuery = {}) =>
     request<Paginated<Series>>(`/api/series${queryString({ ...query })}`),
   seriesDetail: (id: number) => request<SeriesDetail>(`/api/series/${id}`),
+  importSeries: (id: number, body: { root_id: number; download_missing?: boolean }) =>
+    request<ImportResult>(`/api/series/${id}/import`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   setOrigin: (id: number, body: { origin_region: string; origin_country?: string | null }) =>
     request<Series>(`/api/series/${id}/origin`, {
       method: "PATCH",

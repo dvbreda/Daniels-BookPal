@@ -156,11 +156,20 @@ def log_in(email: str, password: str) -> dict[str, Any]:
     if not ok:
         raise TrackerError(reden)
 
+    from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(args=["--no-sandbox"])
+        try:
+            browser = pw.chromium.launch(args=["--no-sandbox"])
+        except PlaywrightError as exc:
+            # Meestal ontbrekende systeembibliotheken; een kale
+            # TargetClosedError zegt de gebruiker niets.
+            raise TrackerError(
+                "de browser kon niet starten. Draait de container met de "
+                f"laatste image? ({exc})"
+            ) from exc
         context = browser.new_context(
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "

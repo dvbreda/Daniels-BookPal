@@ -174,6 +174,21 @@ class NextChapterOut(BaseModel):
     has_file: bool
 
 
+class ImportSeriesIn(BaseModel):
+    """Een gevolgde serie als gewone bestanden in je eigen mappen zetten."""
+
+    root_id: int
+    # Ontbrekende hoofdstukken ophalen, of alleen verplaatsen wat er al is.
+    download_missing: bool = True
+
+
+class ImportSeriesOut(BaseModel):
+    moved: int
+    downloaded: int
+    skipped: int
+    errors: list[str] = Field(default_factory=list)
+
+
 class WikiHitOut(BaseModel):
     title: str
     key: str

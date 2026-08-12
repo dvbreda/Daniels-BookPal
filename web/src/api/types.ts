@@ -320,6 +320,13 @@ export interface TranslateBookResult {
   already_done: number;
 }
 
+export interface ImportResult {
+  moved: number;
+  downloaded: number;
+  skipped: number;
+  errors: string[];
+}
+
 export interface GoodreadsStatus {
   /** Chromium wordt pas op verzoek gedownload. */
   browser_ready: boolean;
