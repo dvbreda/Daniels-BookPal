@@ -17,7 +17,7 @@ import logging
 from dataclasses import dataclass
 from html import escape
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -63,19 +63,22 @@ a { display: block; padding: 0.7em 0.2em; color: #000; text-decoration: none; }
 .tools.twee a.laatste { margin-right: 0; }
 .tools.een a { width: 100%; margin-right: 0; }
 
-/* Omslag naast de titel. Een tabel-achtige opmaak omdat verticaal centreren
-   zonder flexbox anders niet lukt. */
-li a.cover-row { padding: 0.5em 0.2em; overflow: hidden; }
-.cover-row img {
+/* Lijst: omslag links, titel ernaast. Float in plaats van flexbox, en
+   `overflow: hidden` op de regel zodat hij om de gefloate omslag heen sluit. */
+ul.lijst a { padding: 0.5em 0.2em; overflow: hidden; }
+ul.lijst img {
   width: 44px; height: 66px; float: left; margin-right: 0.7em; background: #eee;
 }
-.cover-row .naam { display: block; overflow: hidden; }
+ul.lijst .naam { display: block; overflow: hidden; }
 .bar { height: 3px; background: #ddd; margin-top: 0.3em; }
 .bar span { display: block; height: 100%; background: #444; }
 
 /* Raster: drie op een rij past op elk Kobo-scherm zonder dat de omslag te
    klein wordt om te herkennen. font-size 0 op de lijst haalt de witruimte
-   tussen inline-blocks weg; de kaartjes zetten hem weer terug. */
+   tussen inline-blocks weg; de kaartjes zetten hem weer terug.
+
+   Exact dezelfde html als de lijst — alleen deze klasse verschilt. Daardoor is
+   omschakelen één klasse omzetten in plaats van een nieuwe pagina ophalen. */
 ul.raster { font-size: 0; }
 ul.raster li {
   display: inline-block; vertical-align: top; width: 31.3%; border: none;
@@ -83,11 +86,17 @@ ul.raster li {
 }
 ul.raster li.derde { margin-right: 0; }
 ul.raster a { padding: 0; }
-ul.raster img { width: 100%; height: auto; background: #eee; display: block; }
+ul.raster img { width: 100%; height: auto; background: #eee; display: block; float: none;
+  margin-right: 0; }
 ul.raster .naam {
   display: block; font-size: 0.75em; line-height: 1.2; max-height: 2.4em;
   overflow: hidden; margin-top: 0.2em;
 }
+
+/* Uitgelezen verbergen doet de stijl, niet de server: dan kan het schakelen
+   zonder de pagina opnieuw op te halen, en werkt het zonder JavaScript nog
+   steeds — de klasse staat er dan meteen op. */
+ul.verbergen li.uit { display: none; }
 
 /* Verder lezen: één blok bovenaan, want dat is bijna altijd wat je wilt. */
 .hero { border: 1px solid #888; padding: 0.6em; margin-bottom: 1em; overflow: hidden; }
@@ -116,16 +125,82 @@ ul.raster .naam {
 """
 
 
-def _page(title: str, body: str) -> HTMLResponse:
+#: Een extraatje, geen fundament. Elke knop is en blijft een gewone link die
+#: het zonder dit script ook doet; wat hier gebeurt is dat de pagina niet
+#: opnieuw opgehaald hoeft te worden. Op e-ink scheelt dat een volle
+#: schermverversing, en dat is precies waar het traag voelt.
+#:
+#: Strikt ES5: de browser van een Kobo is QtWebKit uit ongeveer 2012. Geen
+#: pijlfuncties, geen let, geen template-strings, geen classList — één
+#: onbekend woord en het hele blok doet niets meer.
+_SCRIPT = """
+(function () {
+  var lijst = document.getElementById("lijst");
+  if (!lijst) { return; }
+
+  function heeft(el, klasse) {
+    return (" " + el.className + " ").indexOf(" " + klasse + " ") > -1;
+  }
+  function zet(el, klasse, aan) {
+    if (aan === heeft(el, klasse)) { return; }
+    if (aan) {
+      el.className = el.className + " " + klasse;
+    } else {
+      el.className = (" " + el.className + " ")
+        .split(" " + klasse + " ").join(" ")
+        .replace(/^\\s+|\\s+$/g, "");
+    }
+  }
+  function koppel(id, aanKlasse, uitKlasse, aanTekst, uitTekst, koekje) {
+    var knop = document.getElementById(id);
+    if (!knop) { return; }
+    knop.onclick = function () {
+      var aan = !heeft(lijst, aanKlasse);
+      zet(lijst, aanKlasse, aan);
+      if (uitKlasse) { zet(lijst, uitKlasse, !aan); }
+      knop.innerHTML = aan ? aanTekst : uitTekst;
+      // De URL meeschuiven, zodat verversen of een link delen dezelfde stand
+      // geeft. Kan de browser dat niet, dan blijft alleen de weergave over.
+      if (koekje) {
+        document.cookie = koekje + "=" + (aan ? "1" : "0") + ";path=/;max-age=31536000";
+      }
+      if (window.history && window.history.replaceState) {
+        var vorige = window.location.href;
+        window.history.replaceState(null, "", knop.href);
+        knop.href = vorige;
+      }
+      return false;
+    };
+  }
+
+  koppel("knop-raster", "raster", "lijst", "Als lijst", "Als raster", "bookpal_raster");
+  koppel(
+    "knop-verberg", "verbergen", null, "Alles tonen", "Gelezen verbergen", "bookpal_verberg"
+  );
+})();
+"""
+
+
+def _page(title: str, body: str, opts: LiteOptions | None = None) -> HTMLResponse:
     html = (
         "<!doctype html><html><head>"
         '<meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{escape(title)}</title>"
         f"<style>{_STYLE}</style>"
-        f"</head><body>{body}</body></html>"
+        f"</head><body>{body}"
+        # Onderaan, na de inhoud: dan staat de lijst er al als het script
+        # draait, en hoeft er niet op een gebeurtenis gewacht te worden.
+        f"<script>{_SCRIPT}</script>"
+        "</body></html>"
     )
-    return HTMLResponse(html)
+    response = HTMLResponse(html)
+    if opts is not None:
+        # Onthouden wat je koos, zodat de volgende pagina hem meeneemt zonder
+        # dat elke link hem hoeft te dragen.
+        response.set_cookie(COOKIE_GRID, "1" if opts.grid else "0", max_age=COOKIE_MAX_AGE)
+        response.set_cookie(COOKIE_HIDE, "1" if opts.hide_read else "0", max_age=COOKIE_MAX_AGE)
+    return response
 
 
 def _profile_param(
@@ -190,6 +265,15 @@ class LiteOptions:
                 parts.append(f"{sleutel}={waarde}")
         return f"?{'&'.join(parts)}" if parts else ""
 
+    def reading_query(self) -> str:
+        """Alleen wat over het lezen gaat, niet over de weergave.
+
+        Raster en verbergen zitten in een cookie: dat zijn voorkeuren en geen
+        eigenschappen van een link. Zonder deze scheiding zou het scriptje na
+        het omschakelen ook nog elke link in de lijst moeten herschrijven.
+        """
+        return self.query(raster=False, verberg=False)
+
     def image_query(self) -> str:
         """Alleen wat het beeld zelf verandert; de rest hoort niet in een img-src.
 
@@ -204,21 +288,38 @@ class LiteOptions:
         return f"?{'&'.join(parts)}" if parts else ""
 
 
+#: Waarin de weergavekeuze wordt onthouden. Een jaar, want dit is een
+#: voorkeur en geen sessie.
+COOKIE_GRID = "bookpal_raster"
+COOKIE_HIDE = "bookpal_verberg"
+COOKIE_MAX_AGE = 365 * 24 * 3600
+
+
 def _options(
+    request: Request,
     profile: str | None = ProfileParam,
     vertaal: bool = Query(default=False),
-    verberg: bool = Query(default=False, description="Verberg wat je al uit hebt."),
+    verberg: bool | None = Query(default=None, description="Verberg wat je al uit hebt."),
     snij: bool = Query(default=False, description="Egale rand rond de pagina weghalen."),
     contrast: int = Query(default=100, ge=50, le=200),
-    raster: bool = Query(default=False, description="Omslagen naast elkaar."),
+    raster: bool | None = Query(default=None, description="Omslagen naast elkaar."),
 ) -> LiteOptions:
+    """De instellingen voor deze pagina.
+
+    Wat in de URL staat wint; staat het er niet, dan geldt wat je de vorige keer
+    koos. Zo hoeft niet elke link in de lijst je weergavekeuze mee te dragen.
+    """
+
+    def uit_cookie(naam: str) -> bool:
+        return request.cookies.get(naam) == "1"
+
     return LiteOptions(
         profile=profile,
         translated=vertaal,
-        hide_read=verberg,
+        hide_read=uit_cookie(COOKIE_HIDE) if verberg is None else verberg,
         crop=snij,
         contrast=contrast,
-        grid=raster,
+        grid=uit_cookie(COOKIE_GRID) if raster is None else raster,
     )
 
 
@@ -260,47 +361,60 @@ def _qs(profile: str | None, translated: bool = False, hide_read: bool = False) 
 HideReadParam = Query(default=False, description="Verberg wat je al uit hebt.")
 
 
-def _card(href: str, cover: str, naam: str, *, grid: bool, index: int) -> str:
-    """Eén regel of één tegel, afhankelijk van de weergave.
+def _list(items: str, opts: LiteOptions) -> str:
+    """De lijst zelf, met de klassen die de weergave bepalen."""
+    klassen = ["raster" if opts.grid else "lijst"]
+    if opts.hide_read:
+        klassen.append("verbergen")
+    return f'<ul id="lijst" class="{" ".join(klassen)}">{items}</ul>'
 
-    In het raster krijgt elke derde tegel geen rechtermarge; zonder dat past de
-    derde net niet meer op de regel en zakt hij een rij omlaag.
+
+def _card(href: str, cover: str, naam: str, *, index: int, done: bool = False) -> str:
+    """Eén regel én één tegel: dezelfde html, de stijl maakt het verschil.
+
+    Dat het in beide weergaven identiek is, is het hele punt: dan kan het
+    schakelen tussen lijst en raster een klasse omzetten in plaats van de pagina
+    opnieuw op te halen. Op e-ink scheelt dat een volle schermverversing.
+
+    Elke derde krijgt een merkteken: in het raster valt de rechtermarge daar weg,
+    anders past hij net niet meer op de regel.
     """
-    if grid:
-        rand = ' class="derde"' if index % 3 == 2 else ""
-        return (
-            f"<li{rand}><a href=\"{href}\">"
-            f'<img src="{cover}" alt="" loading="lazy">'
-            f'<span class="naam">{naam}</span></a></li>'
-        )
+    klassen = []
+    if index % 3 == 2:
+        klassen.append("derde")
+    if done:
+        klassen.append("uit")
+    rand = f' class="{" ".join(klassen)}"' if klassen else ""
     return (
-        f'<li><a class="cover-row" href="{href}">'
+        f"<li{rand}><a href=\"{href}\">"
         f'<img src="{cover}" alt="" loading="lazy">'
         f'<span class="naam">{naam}</span></a></li>'
     )
 
 
-def _toolbar(knoppen: list[tuple[str, str]]) -> str:
+def _toolbar(knoppen: list[tuple[str, str, str | None]]) -> str:
     """Een rij knoppen die naast elkaar past.
 
     De breedte staat in een klasse en niet in flexbox: de Kobo-browser kent dat
-    niet, en dan wordt elke knop een eigen regel.
+    niet, en dan wordt elke knop een eigen regel. Het derde veld is een id, zodat
+    het scriptje de knop kan vinden die hij zonder herladen kan afhandelen.
     """
     if not knoppen:
         return ""
     klasse = {1: "een", 2: "twee"}.get(len(knoppen), "twee")
     regels = []
-    for index, (label, href) in enumerate(knoppen):
+    for index, (label, href, knop_id) in enumerate(knoppen):
         # De laatste zonder rechtermarge, anders valt hij van de regel af.
         rand = ' class="laatste"' if index == len(knoppen) - 1 else ""
-        regels.append(f'<a{rand} href="{href}">{escape(label)}</a>')
+        merk = f' id="{knop_id}"' if knop_id else ""
+        regels.append(f'<a{merk}{rand} href="{href}">{escape(label)}</a>')
     return f'<div class="tools {klasse}">{"".join(regels)}</div>' 
 
 def _hide_toggle(pad: str, opts: LiteOptions) -> str:
     """De schakelaar zelf: een gewone link naar dezelfde pagina."""
     doel = f"{pad}{opts.query(verberg=not opts.hide_read)}"
     label = "Alles tonen" if opts.hide_read else "Gelezen verbergen"
-    return _toolbar([(label, doel)])
+    return _toolbar([(label, doel, "knop-verberg")])
 
 
 @router.get("", response_class=HTMLResponse)
@@ -312,35 +426,36 @@ def lite_home(
 ) -> HTMLResponse:
     """Alle series. Tabs (M3) filteren dit later; nu nog de volle lijst."""
     user = current_user(session)
-    statement = select(Series)
-    telling = select(func.count(Series.id))
-    if opts.hide_read:
-        # Een serie is "uit" als er geen enkel deel meer openstaat. Als
-        # voorwaarde op de query en niet achteraf, anders klopt het paginanummer
-        # niet meer.
-        openstaand = (
+    # Een serie is "uit" als er geen enkel deel meer openstaat. We filteren hem
+    # niet weg maar merken hem: dan kan het verbergen een klasse omzetten in
+    # plaats van de pagina opnieuw op te halen, en klopt de paginering ook nog.
+    openstaand = set(
+        session.scalars(
             select(Book.series_id)
             .outerjoin(
                 Progress,
                 (Progress.book_id == Book.id) & (Progress.user_id == user.id),
             )
             .where((Progress.id.is_(None)) | (Progress.finished.is_(False)))
-        )
-        statement = statement.where(Series.id.in_(openstaand))
-        telling = telling.where(Series.id.in_(openstaand))
+        ).all()
+    )
+    # Een serie zonder boeken heb je niet uit; die heeft alleen niets. Zonder
+    # dit onderscheid verdwijnt een lege serie zodra je uitgelezen verbergt, en
+    # dan zoek je je scheel naar waar hij gebleven is.
+    met_boeken = set(session.scalars(select(Book.series_id).distinct()).all())
 
-    total = int(session.scalar(telling) or 0)
+    total = int(session.scalar(select(func.count(Series.id))) or 0)
     rows = session.scalars(
-        statement.order_by(Series.sort_title).offset(offset).limit(limit)
+        select(Series).order_by(Series.sort_title).offset(offset).limit(limit)
     ).all()
 
     items = "".join(
         _card(
-            f"/lite/series/{s.id}{opts.query()}",
+            f"/lite/series/{s.id}{opts.reading_query()}",
             f"/api/series/{s.id}/cover{_cover_query(opts.profile)}",
             escape(s.title),
-            grid=opts.grid,
             index=index,
+            done=s.id in met_boeken and s.id not in openstaand,
         )
         for index, s in enumerate(rows)
     )
@@ -357,9 +472,8 @@ def lite_home(
         href = f"/lite?offset={next_offset}&limit={limit}{profile_bit}"
         nav += f'<a href="{href}">Volgende &raquo;</a>'
 
-    lijst = f'<ul class="raster">{items}</ul>' if opts.grid else f"<ul>{items}</ul>"
     body = f"<h1>BookPal</h1>{_continue_block(session, opts)}"
-    body += f"{_view_tools('/lite', opts)}{lijst}"
+    body += f"{_view_tools('/lite', opts)}{_list(items, opts)}"
     if not rows:
         body += (
             "<p>Niets open.</p>"
@@ -368,7 +482,7 @@ def lite_home(
         )
     if nav:
         body += f'<div class="nav">{nav}</div>'
-    return _page("BookPal", body)
+    return _page("BookPal", body, opts)
 
 
 @router.get("/series/{series_id}", response_class=HTMLResponse)
@@ -381,13 +495,6 @@ def lite_series(
     user = current_user(session)
     books = list(series.books)
     progress = deps.progress_for(session, user, [b.id for b in books])
-    if opts.hide_read:
-        books = [
-            book
-            for book in books
-            if not ((row := progress.get(book.id)) is not None and row.finished)
-        ]
-
     rows: list[str] = []
     for book in books:
         prog = progress.get(book.id)
@@ -406,24 +513,23 @@ def lite_series(
             meta = f'<div class="meta">{escape(state)}</div>{balk}'
         rows.append(
             _card(
-                f"/lite/books/{book.id}{opts.query()}",
+                f"/lite/books/{book.id}{opts.reading_query()}",
                 f"/api/books/{book.id}/cover{_cover_query(opts.profile)}",
                 f"{escape(label)}{meta}",
-                grid=opts.grid,
                 index=len(rows),
+                done=prog is not None and prog.finished,
             )
         )
 
-    lijst = f'<ul class="raster">{"".join(rows)}</ul>' if opts.grid else f"<ul>{''.join(rows)}</ul>"
     body = (
         f'<a class="back" href="/lite{opts.query()}">&laquo; Bibliotheek</a>'
         f"<h1>{escape(series.title)}</h1>"
         f"{_view_tools(f'/lite/series/{series.id}', opts)}"
-        f"{lijst}"
+        f"{_list(''.join(rows), opts)}"
     )
     if not rows:
         body += "<p>Niets open in deze serie.</p>"
-    return _page(series.title, body)
+    return _page(series.title, body, opts)
 
 
 @router.get("/books/{book_id}", response_model=None)
@@ -563,10 +669,11 @@ def _reading_tools(book_id: int, page: int, opts: LiteOptions) -> str:
     server, dus het apparaat hoeft alleen het resultaat te tonen.
     """
     basis = f"/lite/books/{book_id}/read/{page}"
-    knoppen = [
+    knoppen: list[tuple[str, str, str | None]] = [
         (
             "Bijsnijden: " + ("aan" if opts.crop else "uit"),
             basis + opts.query(snij=not opts.crop),
+            None,
         )
     ]
     volgend_contrast = {100: 130, 130: 160, 160: 100}.get(opts.contrast, 100)
@@ -574,10 +681,10 @@ def _reading_tools(book_id: int, page: int, opts: LiteOptions) -> str:
         (
             f"Contrast: {opts.contrast}%",
             basis + opts.query(contrast=volgend_contrast),
+            None,
         )
     )
-    regels = "".join(f'<a href="{href}">{escape(label)}</a>' for label, href in knoppen)
-    return f'<div class="tools">{regels}</div>'
+    return _toolbar(knoppen)
 
 
 def _view_tools(basis: str, opts: LiteOptions) -> str:
@@ -591,10 +698,12 @@ def _view_tools(basis: str, opts: LiteOptions) -> str:
             (
                 "Als lijst" if opts.grid else "Als raster",
                 f"{basis}{opts.query(raster=not opts.grid)}",
+                "knop-raster",
             ),
             (
                 "Alles tonen" if opts.hide_read else "Gelezen verbergen",
                 f"{basis}{opts.query(verberg=not opts.hide_read)}",
+                "knop-verberg",
             ),
         ]
     )

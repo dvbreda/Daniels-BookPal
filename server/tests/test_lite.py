@@ -249,30 +249,42 @@ class TestHidingWhatYouRead:
         return series
 
     def test_the_switch_hides_finished_chapters(self, client: TestClient, session: Session):
+        """Verbergen doet de stijl, niet de server.
+
+        Daardoor kan het schakelen zonder de pagina opnieuw op te halen — op
+        e-ink scheelt dat een volle schermverversing — en werkt het zonder
+        JavaScript nog steeds, want de klasse staat er dan al op.
+        """
         series = self._reeks(session, 4, gelezen=2)
 
         alles = client.get(f"/lite/series/{series.id}").text
-        assert "Hoofdstuk 1" in alles
+        assert 'class="verbergen"' not in alles
+        assert alles.count('class="uit"') + alles.count(' uit"') == 2
 
         verborgen = client.get(f"/lite/series/{series.id}", params={"verberg": 1}).text
-        assert "Hoofdstuk 1" not in verborgen
-        assert "Hoofdstuk 3" in verborgen
+        assert "verbergen" in verborgen.split("<ul")[1].split(">")[0]
 
     def test_the_switch_stays_on_across_links(self, client: TestClient, session: Session):
-        """Zonder JavaScript is de URL de enige plek waar een stand kan wonen."""
-        series = self._reeks(session, 2, gelezen=1)
-        pagina = client.get("/lite", params={"verberg": 1}).text
-        assert f"/lite/series/{series.id}?verberg=1" in pagina
+        """Onthouden in een cookie, niet in elke link.
 
-    def test_a_series_you_finished_disappears_from_the_library(
-        self, client: TestClient, session: Session
-    ):
+        Anders draagt elk kaartje de weergavekeuze mee, en moet het scriptje na
+        het omschakelen ook nog de hele lijst herschrijven.
+        """
+        self._reeks(session, 2, gelezen=1)
+        client.get("/lite", params={"verberg": 1})
+
+        volgende = client.get("/lite").text
+        assert "verbergen" in volgende.split('<ul id="lijst"')[1].split(">")[0]
+
+    def test_a_series_you_finished_is_marked(self, client: TestClient, session: Session):
         self._reeks(session, 2, gelezen=2, naam="Uit")
         self._reeks(session, 2, gelezen=1, naam="Bezig")
 
-        verborgen = client.get("/lite", params={"verberg": 1}).text
-        assert "Bezig" in verborgen
-        assert ">Uit<" not in verborgen
+        pagina = client.get("/lite", params={"verberg": 1}).text
+        # Beide staan er; de stijl bepaalt wat je ziet.
+        assert "Bezig" in pagina and "Uit" in pagina
+        uitgelezen = [regel for regel in pagina.split("<li") if ">Uit<" in regel]
+        assert uitgelezen and "uit" in uitgelezen[0].split(">")[0]
 
     def test_without_the_switch_everything_is_there(self, client: TestClient, session: Session):
         self._reeks(session, 2, gelezen=2, naam="Uit")
@@ -373,18 +385,20 @@ class TestLiteHomeAndGrid:
         series, _boek = self._bezig(session)
 
         lijst = client.get(f"/lite/series/{series.id}").text
-        assert 'class="raster"' not in lijst
+        assert "lijst" in lijst.split('<ul id="lijst"')[1].split(">")[0]
         assert "Als raster" in lijst
 
         raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
-        assert 'class="raster"' in raster
+        assert "raster" in raster.split('<ul id="lijst"')[1].split(">")[0]
         assert "Als lijst" in raster
 
     def test_the_view_choice_travels_along(self, client: TestClient, session: Session):
-        """Anders val je terug in de lijst zodra je een hoofdstuk opent."""
-        series, boek = self._bezig(session)
-        raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
-        assert f"/lite/books/{boek.id}?raster=1" in raster
+        """Anders val je terug in de lijst zodra je een serie opent."""
+        series, _boek = self._bezig(session)
+        client.get(f"/lite/series/{series.id}", params={"raster": 1})
+
+        volgende = client.get("/lite").text
+        assert "raster" in volgende.split('<ul id="lijst"')[1].split(">")[0]
 
 
 class TestNoWebpForTheKobo:
@@ -451,8 +465,9 @@ class TestOldWebkitLayout:
         session.commit()
 
         pagina = client.get("/lite", params={"raster": 1}).text
-        assert 'class="raster"' in pagina
-        assert pagina.count('<li class="derde">') == 1
+        assert "raster" in pagina.split("<ul")[1].split(">")[0]
+        derde = [regel for regel in pagina.split("<li") if "derde" in regel.split(">")[0]]
+        assert len(derde) == 1
 
 
 class TestGridOnTheHome:
@@ -462,10 +477,10 @@ class TestGridOnTheHome:
 
         lijst = client.get("/lite").text
         assert "Als raster" in lijst
-        assert 'class="raster"' not in lijst
+        assert "lijst" in lijst.split('<ul id="lijst"')[1].split(">")[0]
 
         raster = client.get("/lite", params={"raster": 1}).text
-        assert 'class="raster"' in raster
+        assert "raster" in raster.split('<ul id="lijst"')[1].split(">")[0]
         assert "Als lijst" in raster
 
     def test_the_choice_travels_into_a_series(self, client: TestClient, session: Session):
@@ -473,5 +488,54 @@ class TestGridOnTheHome:
         session.add(series)
         session.commit()
 
-        raster = client.get("/lite", params={"raster": 1}).text
-        assert f"/lite/series/{series.id}?raster=1" in raster
+        client.get("/lite", params={"raster": 1})
+        binnen = client.get(f"/lite/series/{series.id}").text
+        assert "raster" in binnen.split('<ul id="lijst"')[1].split(">")[0]
+
+
+class TestProgressiveEnhancement:
+    """Het scriptje is een extraatje; zonder werkt alles nog.
+
+    De browser van een Kobo heeft wél JavaScript, maar een oude engine. Eén
+    onbekend woord en het hele blok doet niets — dus geen pijlfuncties, geen
+    let, geen template-strings, geen classList.
+    """
+
+    def _script(self, client: TestClient) -> str:
+        return client.get("/lite").text.split("<script>")[1].split("</script>")[0]
+
+    def test_it_stays_within_what_an_old_engine_knows(self, client: TestClient):
+        script = self._script(client)
+        assert "=>" not in script
+        assert "let " not in script
+        assert "const " not in script
+        assert "`" not in script
+        assert "classList" not in script
+        assert "fetch(" not in script
+        assert "addEventListener" not in script
+
+    def test_it_hooks_onto_the_buttons_that_exist(self, client: TestClient, session: Session):
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+        pagina = client.get("/lite").text
+        assert 'id="knop-raster"' in pagina
+        assert 'id="lijst"' in pagina
+
+    def test_the_buttons_are_still_ordinary_links(self, client: TestClient, session: Session):
+        """Zonder JavaScript moet dezelfde knop het gewoon doen."""
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+        pagina = client.get("/lite").text
+        knop = next(deel for deel in pagina.split("<a ") if 'id="knop-raster"' in deel)
+        assert 'href="/lite?raster=1"' in knop
+
+    def test_both_views_send_the_same_cards(self, client: TestClient, session: Session):
+        """Anders valt er niets om te schakelen zonder herladen."""
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+
+        def kaarten(query: dict) -> str:
+            h = client.get("/lite", params=query).text
+            return h.split('<ul id="lijst"')[1].split(">", 1)[1]
+
+        assert kaarten({}) == kaarten({"raster": 1})
