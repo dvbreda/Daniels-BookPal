@@ -541,8 +541,19 @@ function MalListPanel({
   });
   const { data: sources } = useQuery({ queryKey: ["sources"], queryFn: api.sources });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
 
   const bron = sources?.[0];
+
+  const link = useMutation({
+    mutationFn: ({ seriesId, malId }: { seriesId: number; malId: string }) =>
+      api.malLink(accountId, seriesId, malId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["mal-list"] });
+      void queryClient.invalidateQueries({ queryKey: ["shelves"] });
+      setMessage("Gekoppeld; je voortgang loopt nu mee.");
+    },
+  });
 
   return (
     <section className="mt-6 rounded border border-ink-600 p-4">
@@ -590,6 +601,17 @@ function MalListPanel({
                 className="rounded bg-ink-700 px-2 py-1 text-xs text-slate-300"
               >
                 In je bibliotheek
+              </button>
+            ) : item.match_series_id ? (
+              <button
+                onClick={() =>
+                  link.mutate({ seriesId: item.match_series_id!, malId: item.mal_id })
+                }
+                disabled={link.isPending}
+                className="rounded bg-accent px-2 py-1 text-xs text-ink-900 disabled:opacity-50"
+                title={`Koppelen aan "${item.match_title}" in je bibliotheek`}
+              >
+                Koppelen aan {item.match_title}
               </button>
             ) : (
               <button

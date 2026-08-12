@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
+from bookpal.metadata.titles import normalise as normalise_title
 from bookpal.models import Series, TrackerAccount, utcnow
 from bookpal.schemas import (
     GoodreadsLoginIn,
@@ -22,6 +23,7 @@ from bookpal.schemas import (
     GoodreadsSyncOut,
     MalAuthorizeOut,
     MalCallbackIn,
+    MalLinkIn,
     MalListItemOut,
     PushReportOut,
     PushResultOut,
@@ -456,12 +458,58 @@ def mal_list(
         tracker.close()
 
     # Wat je al hebt hoeft niet opnieuw; dat scheelt zoeken bij de bron.
-    bekend = {
-        str(series.tracker_ids.get("mal")): series.id
-        for series in session.scalars(select(Series))
+    alle_series = list(session.scalars(select(Series)))
+    op_id = {
+        str(series.tracker_ids.get("mal")): series
+        for series in alle_series
         if series.tracker_ids.get("mal")
     }
-    return [
-        MalListItemOut(**item, series_id=bekend.get(item["mal_id"]))
-        for item in items
-    ]
+    # En op titel, voor series die er wel staan maar nog geen id dragen.
+    # MyAnimeList schrijft "Shinya Shokudou" waar je map "Shinya Shokudo" zegt.
+    op_titel: dict[str, Series] = {}
+    for series in alle_series:
+        op_titel.setdefault(normalise_title(series.title), series)
+
+    out: list[MalListItemOut] = []
+    for item in items:
+        gekoppeld = op_id.get(item["mal_id"])
+        voorstel = None if gekoppeld else op_titel.get(normalise_title(item["title"]))
+        out.append(
+            MalListItemOut(
+                **item,
+                series_id=gekoppeld.id if gekoppeld else None,
+                match_series_id=voorstel.id if voorstel else None,
+                match_title=voorstel.title if voorstel else None,
+            )
+        )
+    return out
+
+
+@router.post("/{account_id}/mal/link", response_model=MalListItemOut)
+def mal_link(
+    account_id: int,
+    payload: MalLinkIn,
+    session: Session = Depends(get_session),
+) -> MalListItemOut:
+    """Koppel een serie uit je bibliotheek aan een reeks op MyAnimeList.
+
+    Nodig omdat alleen series mét een id gepusht kunnen worden, en een lokale
+    map dat id nergens vandaan haalt. Na het koppelen loopt je voortgang mee.
+    """
+    account = _get_account(session, account_id)
+    if account.provider != "mal":
+        raise HTTPException(status_code=409, detail="alleen MyAnimeList gebruikt dit")
+
+    series = session.get(Series, payload.series_id)
+    if series is None:
+        raise HTTPException(status_code=404, detail="die serie bestaat niet")
+
+    series.tracker_ids = {**(series.tracker_ids or {}), "mal": payload.mal_id}
+    session.commit()
+
+    return MalListItemOut(
+        mal_id=payload.mal_id,
+        title=series.title,
+        status="",
+        series_id=series.id,
+    )

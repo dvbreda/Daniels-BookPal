@@ -238,6 +238,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ absorb_id: absorbId }),
     }),
+  malLink: (accountId: number, seriesId: number, malId: string) =>
+    request<MalListItem>(`/api/trackers/${accountId}/mal/link`, {
+      method: "POST",
+      body: JSON.stringify({ series_id: seriesId, mal_id: malId }),
+    }),
   malList: (accountId: number, status?: string) =>
     request<MalListItem[]>(`/api/trackers/${accountId}/mal/list${queryString({ status })}`),
   shelves: (provider = "goodreads") =>

@@ -343,8 +343,11 @@ export interface MalListItem {
   chapters: number;
   chapters_read: number;
   score: number;
-  /** Gevuld als je deze al in je bibliotheek hebt. */
+  /** Gevuld als je deze al in je bibliotheek hebt (harde id-koppeling). */
   series_id: number | null;
+  /** Een serie die zó heet maar nog geen id draagt — alleen een voorstel. */
+  match_series_id: number | null;
+  match_title: string | null;
 }
 
 export interface ShelfRow {

@@ -473,8 +473,21 @@ class MalListItemOut(BaseModel):
     chapters: int = 0
     chapters_read: int = 0
     score: int = 0
-    # Heb je deze al in je bibliotheek? Dan hoef je er niet op te abonneren.
+    # Heb je deze al in je bibliotheek? Dit is de harde koppeling: de serie
+    # draagt dit MyAnimeList-id.
     series_id: int | None = None
+    # Een serie die zó heet maar (nog) geen id draagt. Alleen een voorstel —
+    # "Shinya Shokudou" en "Shinya Shokudo" zijn hetzelfde, maar dat blijft
+    # raden, dus de gebruiker beslist.
+    match_series_id: int | None = None
+    match_title: str | None = None
+
+
+class MalLinkIn(BaseModel):
+    """Een serie uit je bibliotheek aan een MyAnimeList-reeks hangen."""
+
+    series_id: int
+    mal_id: str = Field(max_length=20)
 
 
 class MalAuthorizeOut(BaseModel):

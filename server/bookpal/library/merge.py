@@ -18,6 +18,7 @@ import logging
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from bookpal.metadata.titles import normalise as normalise_title
 from bookpal.models import Book, Series, Subscription
 
 logger = logging.getLogger(__name__)
@@ -110,4 +111,6 @@ def suggest(session: Session) -> list[tuple[Series, Series]]:
 
 
 def _normalise(title: str) -> str:
-    return "".join(character for character in title.lower() if character.isalnum())
+    # Gedeeld met het koppelen aan MyAnimeList: daar heet dezelfde reeks
+    # "Shinya Shokudou" waar je map "Shinya Shokudo" zegt.
+    return normalise_title(title)

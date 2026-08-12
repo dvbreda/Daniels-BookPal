@@ -848,3 +848,105 @@ class TestProviderFit:
         mal = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
         titels = [row["title"] for plank in ("reading", "to_read", "read") for row in mal[plank]]
         assert "Oishinbo" in titels
+
+
+class TestMalTitleMatching:
+    """MyAnimeList schrijft "Shinya Shokudou" waar je map "Shinya Shokudo" zegt."""
+
+    def _account(self, client: TestClient) -> int:
+        response = client.post(
+            "/api/trackers", json={"provider": "mal", "client_id": "cid", "client_secret": "x"}
+        )
+        account_id = int(response.json()["id"])
+        with db_module.session_scope() as session:
+            account = session.get(TrackerAccount, account_id)
+            assert account is not None
+            account.credentials = {**account.credentials, "access_token": "token"}
+        return account_id
+
+    def _stub(self, monkeypatch: pytest.MonkeyPatch, titel: str, mal_id: str) -> None:
+        monkeypatch.setattr(
+            MyAnimeListTracker,
+            "read_list",
+            lambda self, status=None, *, limit=100: [
+                {
+                    "mal_id": mal_id,
+                    "title": titel,
+                    "chapters": 0,
+                    "status": "reading",
+                    "chapters_read": 48,
+                    "score": 0,
+                }
+            ],
+        )
+
+    def test_a_spelling_variant_is_offered_as_a_suggestion(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        series = Series(title="Shinya Shokudo", sort_title="s")
+        session.add(series)
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "Shinya Shokudou", "17988")
+
+        row = client.get(f"/api/trackers/{account_id}/mal/list").json()[0]
+        # Nog geen harde koppeling, wel een voorstel.
+        assert row["series_id"] is None
+        assert row["match_series_id"] == series.id
+        assert row["match_title"] == "Shinya Shokudo"
+
+    def test_an_existing_id_wins_over_a_title_guess(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        series = Series(title="Shinya Shokudo", sort_title="s", tracker_ids={"mal": "17988"})
+        session.add(series)
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "Shinya Shokudou", "17988")
+
+        row = client.get(f"/api/trackers/{account_id}/mal/list").json()[0]
+        assert row["series_id"] == series.id
+        assert row["match_series_id"] is None
+
+    def test_an_unrelated_title_gets_no_suggestion(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        session.add(Series(title="Oishinbo", sort_title="o"))
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "One Piece", "13")
+
+        row = client.get(f"/api/trackers/{account_id}/mal/list").json()[0]
+        assert row["match_series_id"] is None
+
+    def test_linking_makes_the_series_pushable(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Zonder id wordt een serie overgeslagen bij het pushen."""
+        from bookpal.models import Book, BookKind, OriginRegion
+
+        series = Series(title="Shinya Shokudo", sort_title="s", origin_region=OriginRegion.JAPAN)
+        session.add(series)
+        session.flush()
+        session.add(Book(series_id=series.id, kind=BookKind.COMIC, title="Deel"))
+        session.commit()
+        account_id = self._account(client)
+
+        voor = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        assert voor["without_id"] == 1
+
+        response = client.post(
+            f"/api/trackers/{account_id}/mal/link",
+            json={"series_id": series.id, "mal_id": "17988"},
+        )
+        assert response.status_code == 200
+
+        na = client.get("/api/trackers/shelves", params={"provider": "mal"}).json()
+        assert na["without_id"] == 0
+
+    def test_linking_an_unknown_series_is_a_404(self, client: TestClient):
+        account_id = self._account(client)
+        response = client.post(
+            f"/api/trackers/{account_id}/mal/link", json={"series_id": 9999, "mal_id": "1"}
+        )
+        assert response.status_code == 404
