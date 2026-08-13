@@ -166,9 +166,7 @@ def mal_redirect(
         return RedirectResponse(url="/trackers?mal=mislukt", status_code=303)
 
     rows = session.scalars(select(TrackerAccount).where(TrackerAccount.provider == "mal"))
-    account = next(
-        (row for row in rows if row.credentials.get("_pending_state") == state), None
-    )
+    account = next((row for row in rows if row.credentials.get("_pending_state") == state), None)
     if account is None:
         return RedirectResponse(url="/trackers?mal=onbekend", status_code=303)
 
@@ -564,9 +562,7 @@ def mal_import_progress(
     totaal = 0
     namen: list[str] = []
     for series, chapters_read in doelen:
-        gemarkeerd, _bekeken = tracker_service.import_progress(
-            session, user, series, chapters_read
-        )
+        gemarkeerd, _bekeken = tracker_service.import_progress(session, user, series, chapters_read)
         if gemarkeerd:
             totaal += gemarkeerd
             namen.append(f"{series.title} ({gemarkeerd})")

@@ -65,12 +65,16 @@ def merge(session: Session, keep: Series, absorb: Series) -> Series:
 
     # De uitgaven schuiven achter die van de blijver aan: wat je al las blijft
     # eerste keus, het nieuwe vult aan.
-    volgende = max(
-        (edition.rank for edition in session.scalars(
-            select(Edition).where(Edition.series_id == keep.id)
-        )),
-        default=-1,
-    ) + 1
+    volgende = (
+        max(
+            (
+                edition.rank
+                for edition in session.scalars(select(Edition).where(Edition.series_id == keep.id))
+            ),
+            default=-1,
+        )
+        + 1
+    )
     bezet = {
         edition.name
         for edition in session.scalars(select(Edition).where(Edition.series_id == keep.id))

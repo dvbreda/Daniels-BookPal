@@ -3,6 +3,7 @@ ermee kan als het misgaat."""
 
 from __future__ import annotations
 
+import io
 import json
 from io import BytesIO
 from pathlib import Path
@@ -1011,3 +1012,51 @@ class TestColourisingTheTranslation:
 
         assert read_colour(session, boek, 0, "nl") is not None, "terugvallen mag"
         assert read_colour(session, boek, 0) is not None
+
+
+class TestRecompose:
+    """De kleur komt van het model, het lijnwerk van ons."""
+
+    def _bytes(self, image: Image.Image) -> bytes:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_our_ink_stays_black(self):
+        """Het model levert de inkt zachter terug dan hij erin ging."""
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (255, 255, 255))
+        pagina.putpixel((5, 5), (0, 0, 0))
+        verzacht = Image.new("RGB", (20, 20), (255, 255, 255))
+        verzacht.putpixel((5, 5), (120, 120, 120))
+
+        samen = recompose(self._bytes(pagina), self._bytes(verzacht))
+        assert samen.getpixel((5, 5)) == (0, 0, 0)
+
+    def test_the_colour_comes_from_the_painted_version(self):
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (200, 200, 200))
+        geverfd = Image.new("RGB", (20, 20), (200, 60, 60))
+
+        rood, groen, blauw = recompose(self._bytes(pagina), self._bytes(geverfd)).getpixel((1, 1))
+        assert rood > groen and rood > blauw, "de tint hoort van de verf te komen"
+
+    def test_a_wash_darker_than_the_paper_is_kept(self):
+        """Anders verdwijnt juist de schaduw die aquarel zijn textuur geeft."""
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (255, 255, 255))
+        wassing = Image.new("RGB", (20, 20), (160, 190, 160))
+
+        rood, _groen, _blauw = recompose(self._bytes(pagina), self._bytes(wassing)).getpixel((1, 1))
+        assert rood < 255, "de wassing hoort donkerder te blijven dan het papier"
+
+    def test_a_different_size_is_scaled_to_the_page(self):
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (30, 40), (255, 255, 255))
+        verf = Image.new("RGB", (60, 80), (200, 60, 60))
+
+        assert recompose(self._bytes(pagina), self._bytes(verf)).size == (30, 40)

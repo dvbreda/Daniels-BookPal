@@ -372,6 +372,7 @@ class TestSeriesCover:
     ):
         """cover_url wordt niet weggegooid door een paginakeuze — alleen
         overschaduwd. Terugzetten op de standaardkeuze maakt hem weer zichtbaar."""
+
         def fake_get(url: str, **kwargs: object) -> httpx.Response:
             return httpx.Response(200, content=_solid_png(), request=httpx.Request("GET", url))
 

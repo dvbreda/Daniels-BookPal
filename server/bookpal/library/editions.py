@@ -124,8 +124,6 @@ def best_progress(slot: Slot, progress: dict[int, Progress]) -> Progress | None:
     return max(kandidaten, key=lambda row: (row.finished, row.percent))
 
 
-
-
 def for_subscription(
     session: Session, series: Series, subscription: Subscription, *, name: str
 ) -> Edition:
@@ -134,9 +132,7 @@ def for_subscription(
     Nieuw komt achteraan in de voorkeur. Dat is de veilige kant: een bron die
     je er net bij zet hoort niet ongevraagd te bepalen wat je leest.
     """
-    bestaand = session.scalar(
-        select(Edition).where(Edition.subscription_id == subscription.id)
-    )
+    bestaand = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
     if bestaand is not None:
         return bestaand
     return _new(session, series, name=name, subscription_id=subscription.id)
@@ -163,9 +159,7 @@ def for_local_files(session: Session, series: Series) -> Edition:
 def _new(
     session: Session, series: Series, *, name: str, subscription_id: int | None = None
 ) -> Edition:
-    volgende = session.scalar(
-        select(func.max(Edition.rank)).where(Edition.series_id == series.id)
-    )
+    volgende = session.scalar(select(func.max(Edition.rank)).where(Edition.series_id == series.id))
     edition = Edition(
         series_id=series.id,
         name=name,
@@ -175,6 +169,7 @@ def _new(
     session.add(edition)
     session.flush()
     return edition
+
 
 __all__ = [
     "Slot",

@@ -60,9 +60,7 @@ class TestImport:
         root = make_root(session, tmp_path / "strips", name="Strips")
         Path(root.path).mkdir(parents=True, exist_ok=True)
 
-        report = import_files(
-            session, [str(bron)], root, allowed=[str(tmp_path / "in")]
-        )
+        report = import_files(session, [str(bron)], root, allowed=[str(tmp_path / "in")])
 
         assert report.moved == 1
         assert (Path(root.path) / "Storm 01.cbz").is_file()
@@ -73,9 +71,7 @@ class TestImport:
         root = make_root(session, tmp_path / "strips", name="Strips")
         Path(root.path).mkdir(parents=True, exist_ok=True)
 
-        import_files(
-            session, [str(bron)], root, folder="Storm", allowed=[str(tmp_path / "in")]
-        )
+        import_files(session, [str(bron)], root, folder="Storm", allowed=[str(tmp_path / "in")])
         assert (Path(root.path) / "Storm" / "Storm 01.cbz").is_file()
 
     def test_an_existing_file_is_never_overwritten(self, session: Session, tmp_path: Path):
@@ -85,27 +81,21 @@ class TestImport:
         bestaand = Path(root.path) / "Storm 01.cbz"
         bestaand.write_bytes(b"van mij")
 
-        report = import_files(
-            session, [str(bron)], root, allowed=[str(tmp_path / "in")]
-        )
+        report = import_files(session, [str(bron)], root, allowed=[str(tmp_path / "in")])
 
         assert report.moved == 0
         assert report.skipped == 1
         assert bestaand.read_bytes() == b"van mij"
         assert bron.exists()  # en het origineel staat er nog
 
-    def test_a_file_outside_the_allowed_folders_is_refused(
-        self, session: Session, tmp_path: Path
-    ):
+    def test_a_file_outside_the_allowed_folders_is_refused(self, session: Session, tmp_path: Path):
         """Zonder die grens is dit een endpoint waarmee elk bestand op de NAS
         te verplaatsen is."""
         elders = _bestand(tmp_path / "ergens-anders", "geheim.cbz")
         root = make_root(session, tmp_path / "strips", name="Strips")
         Path(root.path).mkdir(parents=True, exist_ok=True)
 
-        report = import_files(
-            session, [str(elders)], root, allowed=[str(tmp_path / "in")]
-        )
+        report = import_files(session, [str(elders)], root, allowed=[str(tmp_path / "in")])
 
         assert report.moved == 0
         assert "niet in een toegestane map" in report.errors[0]
@@ -160,18 +150,14 @@ class TestApi:
         self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         _bestand(tmp_path / "in", "Storm 01.cbz")
-        monkeypatch.setattr(
-            settings, "intake_dirs", [str(tmp_path / "in"), str(tmp_path / "weg")]
-        )
+        monkeypatch.setattr(settings, "intake_dirs", [str(tmp_path / "in"), str(tmp_path / "weg")])
 
         body = client.get("/api/intake").json()
         assert body["folders"] == [str(tmp_path / "in")]
         assert [f["name"] for f in body["files"]] == ["Storm 01.cbz"]
 
     def test_importing_to_an_unknown_root_is_a_404(self, client: TestClient):
-        response = client.post(
-            "/api/intake/import", json={"paths": [], "root_id": 9999}
-        )
+        response = client.post("/api/intake/import", json={"paths": [], "root_id": 9999})
         assert response.status_code == 404
 
 
@@ -209,9 +195,7 @@ class TestUpload:
         assert list(folder.glob("*.cbz")) != []
         assert all(bestand.parent == folder for bestand in folder.glob("*.cbz"))
 
-    def test_something_unreadable_is_refused(
-        self, client: TestClient, tmp_path: Path, monkeypatch
-    ):
+    def test_something_unreadable_is_refused(self, client: TestClient, tmp_path: Path, monkeypatch):
         self._intake(tmp_path, monkeypatch)
         response = client.post(
             "/api/intake/upload",
@@ -237,7 +221,5 @@ class TestUpload:
 
         folder = tmp_path / "intake"
         with pytest.raises(SourceError):
-            intake.receive_upload(
-                io.BytesIO(b"x" * 5000), "groot.cbz", folder, max_bytes=1000
-            )
+            intake.receive_upload(io.BytesIO(b"x" * 5000), "groot.cbz", folder, max_bytes=1000)
         assert list(folder.iterdir()) == []

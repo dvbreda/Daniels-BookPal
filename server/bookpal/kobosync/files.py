@@ -178,9 +178,7 @@ def export(
     return report
 
 
-def progress_back(
-    session: Session, user: User, gelezen: dict[str, tuple[int, int]]
-) -> int:
+def progress_back(session: Session, user: User, gelezen: dict[str, tuple[int, int]]) -> int:
     """Neem over wat je in Nickel gelezen hebt.
 
     ``gelezen`` gaat van pad-op-het-apparaat naar (percentage, status). Alleen

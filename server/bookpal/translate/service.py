@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.images import ImageProfile, get_profile, open_source, render_page, source_id_for
 from bookpal.models import Book, File, Series, Translation
-from bookpal.translate import sidecar
+from bookpal.translate import recolour, sidecar
 from bookpal.translate.base import BubbleTranslator, PageResult, TranslationError
 from bookpal.translate.imagepage import GeminiPageTranslator
 from bookpal.translate.modes import BEST_FIRST, TranslateMode
@@ -264,6 +264,11 @@ def colorise_page(
             return stored
 
     produced = translator.colorise_page(basis, media_type=media_type)
+    # Alleen de kleur ervan gebruiken; het lijnwerk en de letters houden we
+    # zelf vast. Zie recolour voor waarom dat nodig is.
+    samen = BytesIO()
+    recolour.recompose(basis, produced).save(samen, format="WEBP", quality=88, method=4)
+    produced = samen.getvalue()
 
     sidecar.write_bytes(path, produced)
     _record(

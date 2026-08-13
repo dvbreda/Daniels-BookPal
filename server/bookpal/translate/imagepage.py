@@ -74,8 +74,10 @@ Zo ziet dat eruit:
 - Zachte, iets onregelmatige randen. Een wassing die net buiten de lijn valt of
   er net binnen stopt hoort erbij; dat is precies wat het penseel doet.
 - Waar twee kleuren elkaar raken mogen ze in elkaar lopen.
-- Een ingetogen, aardse palet: gebroken tinten in plaats van felle, verzadigde
-  kleuren. Denk aan gewassen inkt en gouache, niet aan digitale vulling.
+- Kies de kleur die het onderwerp in het echt heeft. Bladeren zijn groen,
+  bloemen en kleding mogen uitgesproken kleurrijk zijn, eten ziet er eetbaar
+  uit. Verf het niet allemaal in bruin en grijs.
+- Aquarel, geen digitale vulling: de kleur is doorschijnend, ook als hij vol is.
 
 Regels:
 - Verander de tekening niet. Geen lijn erbij, geen lijn weg, geen paneel
@@ -89,7 +91,6 @@ Regels:
   leest slechter dan het zwart-witte origineel.
 
 Geef alleen de ingekleurde pagina terug, op exact dezelfde afmeting als deze."""
-
 
 
 class GeminiPageTranslator:

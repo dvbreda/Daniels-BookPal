@@ -333,9 +333,7 @@ class Book(Base):
         back_populates="book", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (
-        Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),
-    )
+    __table_args__ = (Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),)
 
 
 class User(Base):

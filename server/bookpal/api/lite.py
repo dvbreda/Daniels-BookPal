@@ -386,7 +386,7 @@ def _card(href: str, cover: str, naam: str, *, index: int, done: bool = False) -
         klassen.append("uit")
     rand = f' class="{" ".join(klassen)}"' if klassen else ""
     return (
-        f"<li{rand}><a href=\"{href}\">"
+        f'<li{rand}><a href="{href}">'
         f'<img src="{cover}" alt="" loading="lazy">'
         f'<span class="naam">{naam}</span></a></li>'
     )
@@ -408,7 +408,8 @@ def _toolbar(knoppen: list[tuple[str, str, str | None]]) -> str:
         rand = ' class="laatste"' if index == len(knoppen) - 1 else ""
         merk = f' id="{knop_id}"' if knop_id else ""
         regels.append(f'<a{merk}{rand} href="{href}">{escape(label)}</a>')
-    return f'<div class="tools {klasse}">{"".join(regels)}</div>' 
+    return f'<div class="tools {klasse}">{"".join(regels)}</div>'
+
 
 def _hide_toggle(pad: str, opts: LiteOptions) -> str:
     """De schakelaar zelf: een gewone link naar dezelfde pagina."""
@@ -476,9 +477,7 @@ def lite_home(
     body += f"{_view_tools('/lite', opts)}{_list(items, opts)}"
     if not rows:
         body += (
-            "<p>Niets open.</p>"
-            if opts.hide_read
-            else "<p>Nog geen series; draai een scan.</p>"
+            "<p>Niets open.</p>" if opts.hide_read else "<p>Nog geen series; draai een scan.</p>"
         )
     if nav:
         body += f'<div class="nav">{nav}</div>'
@@ -608,9 +607,7 @@ def lite_read(
     # De beste die er ligt, niet alleen de tekststand. Dat laatste stond hier
     # hardgecodeerd, waardoor een pagina die je met het beeldmodel had laten
     # hertekenen in Lite als onvertaald gold — terwijl het dure werk er wél was.
-    beschikbaar = translation_service.best_available(
-        session, book, page, settings.translate_lang
-    )
+    beschikbaar = translation_service.best_available(session, book, page, settings.translate_lang)
     # Nog niet vertaald maar je vraagt erom: dan nú vertalen. Dat duurt een paar
     # tellen en dat is precies waarom het een aparte link is en niet iets wat
     # vanzelf gebeurt zodra je een pagina opent.
@@ -663,7 +660,7 @@ def lite_read(
         f'<div class="{nav_class}">{"".join(links)}</div>'
         f'<div class="page"><span class="stack">'
         f'<img src="{img_src}" alt="pagina {page + 1}">{layer}</span>'
-        f"<div class=\"meta\">pagina {page + 1} / {book.page_count}{' · ' if toggle else ''}"
+        f'<div class="meta">pagina {page + 1} / {book.page_count}{" · " if toggle else ""}'
         f"{toggle}</div></div>"
         f'<div class="{nav_class}">{"".join(links)}</div>'
         f"{_reading_tools(book.id, page, opts)}"

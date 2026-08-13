@@ -179,9 +179,7 @@ class MangaDexSource(Source):
         Met ``limit=1``: we hebben alleen het totaal nodig, niet de lijst. Dat
         scheelt een gepagineerde feed van soms honderden regels per treffer.
         """
-        payload = self._get(
-            f"/manga/{ref}/feed", {"translatedLanguage[]": language, "limit": 1}
-        )
+        payload = self._get(f"/manga/{ref}/feed", {"translatedLanguage[]": language, "limit": 1})
         return int(payload.get("total", 0))
 
     def detail(self, ref: str) -> SearchResult:
@@ -278,7 +276,6 @@ class MangaDexSource(Source):
 
     def close(self) -> None:
         self._client.close()
-
 
     def covers(self, ref: str, *, limit: int = 100) -> list[CoverInfo]:
         """Alle omslagen bij een reeks, meestal één per deel.

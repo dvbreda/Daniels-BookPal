@@ -100,9 +100,7 @@ class TestPageApi:
         items = client.get("/api/books").json()["items"]
         return int(next(item for item in items if item["kind"] == "comic")["id"])
 
-    def test_cropping_actually_shrinks_the_page(
-        self, bordered: tuple[TestClient, int]
-    ):
+    def test_cropping_actually_shrinks_the_page(self, bordered: tuple[TestClient, int]):
         client, book_id = bordered
         plain = client.get(f"/api/books/{book_id}/pages/0")
         cropped = client.get(f"/api/books/{book_id}/pages/0", params={"crop": True})
@@ -126,9 +124,10 @@ class TestPageApi:
 
     def test_an_absurd_contrast_is_refused(self, scanned: TestClient):
         book_id = self._comic_id(scanned)
-        assert scanned.get(
-            f"/api/books/{book_id}/pages/0", params={"contrast": 900}
-        ).status_code == 422
+        assert (
+            scanned.get(f"/api/books/{book_id}/pages/0", params={"contrast": 900}).status_code
+            == 422
+        )
 
     def test_both_variants_are_cached_separately(self, bordered: tuple[TestClient, int]):
         """De tweede aanvraag komt uit de cache, en niet uit die van de ander."""

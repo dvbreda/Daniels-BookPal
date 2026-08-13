@@ -179,8 +179,7 @@ def log_in(email: str, password: str) -> dict[str, Any]:
             # Meestal ontbrekende systeembibliotheken; een kale
             # TargetClosedError zegt de gebruiker niets.
             raise TrackerError(
-                "de browser kon niet starten. Draait de container met de "
-                f"laatste image? ({exc})"
+                f"de browser kon niet starten. Draait de container met de laatste image? ({exc})"
             ) from exc
         context = browser.new_context(
             user_agent=(

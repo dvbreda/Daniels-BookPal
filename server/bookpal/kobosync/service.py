@@ -164,9 +164,7 @@ def run(session: Session, user: User, *, shelf_names: dict[int, str] | None = No
         raise device_module.DeviceError(f"{apparaat.mount} is niet beschrijfbaar")
 
     if instellingen.export_books:
-        resultaat = files.export(
-            apparaat.mount, gepland, folder=instellingen.folder, prune=True
-        )
+        resultaat = files.export(apparaat.mount, gepland, folder=instellingen.folder, prune=True)
         report.copied = resultaat.copied
         report.skipped = resultaat.skipped
         report.removed = resultaat.removed
@@ -192,9 +190,7 @@ def run(session: Session, user: User, *, shelf_names: dict[int, str] | None = No
             for item in gepland:
                 naam = (shelf_names or {}).get(item.book_id) or item.series_title
                 planken.setdefault(naam, []).append(nickel.content_id_for(item.relative))
-            plank_resultaat = nickel.write_shelves(
-                connection, planken, known=set(bekend)
-            )
+            plank_resultaat = nickel.write_shelves(connection, planken, known=set(bekend))
             report.shelves_created = plank_resultaat.created
             report.shelf_entries = plank_resultaat.added
             report.not_imported = len(plank_resultaat.not_imported)

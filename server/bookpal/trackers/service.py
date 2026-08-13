@@ -109,9 +109,7 @@ def _furthest(finished: list[Book], nummer: Callable[[Book], float]) -> int:
     heen en terug elkaars spiegelbeeld.
     """
     nummers = [
-        waarde
-        for book in finished
-        if (waarde := nummer(book)) > 0 and waarde != float("inf")
+        waarde for book in finished if (waarde := nummer(book)) > 0 and waarde != float("inf")
     ]
     if not nummers:
         # Niets met een bruikbaar nummer — bij losse boeken is "hoeveel je er
@@ -172,9 +170,7 @@ def remote_progress(tracker: Tracker) -> dict[str, int]:
     if lezer is None:
         return {}
     try:
-        return {
-            str(item["mal_id"]): int(item.get("chapters_read") or 0) for item in lezer()
-        }
+        return {str(item["mal_id"]): int(item.get("chapters_read") or 0) for item in lezer()}
     except TrackerError as exc:
         logger.warning("kon de lijst van %s niet lezen: %s", tracker.provider, exc)
         return {}

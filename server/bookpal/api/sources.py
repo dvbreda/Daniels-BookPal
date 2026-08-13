@@ -131,9 +131,7 @@ def search(
     # meerdere hebben en Series.source_ref wijst er dan maar naar één.
     known = {
         row.source_ref: row.series_id
-        for row in session.scalars(
-            select(Subscription).where(Subscription.source_id == source.id)
-        )
+        for row in session.scalars(select(Subscription).where(Subscription.source_id == source.id))
         if row.source_ref
     }
     for series in session.scalars(select(Series).where(Series.source_id == source.id)):
@@ -144,9 +142,7 @@ def search(
     for result in results:
         # Alleen als je hem nog niet volgt: anders is "je volgt dit al" het
         # nuttigere bericht.
-        bestaand = (
-            None if result.ref in known else source_service.find_existing(session, result)
-        )
+        bestaand = None if result.ref in known else source_service.find_existing(session, result)
         uitvoer.append(
             SearchResultOut(
                 ref=result.ref,
@@ -173,21 +169,15 @@ def _subscription_out(session: Session, subscription: Subscription) -> Subscript
     # Tellen binnen de uitgave van dít abonnement. Een serie kan er meerdere
     # hebben — een Engelse vertaling naast het Japanse origineel — en dan zou
     # per serie tellen bij beide hetzelfde getal geven.
-    edition = session.scalar(
-        select(Edition).where(Edition.subscription_id == subscription.id)
-    )
+    edition = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
     van_deze = select(Book).where(Book.series_id == subscription.series_id)
     if edition is not None:
         van_deze = van_deze.where(Book.edition_id == edition.id)
 
-    total = int(
-        session.scalar(select(func.count()).select_from(van_deze.subquery())) or 0
-    )
+    total = int(session.scalar(select(func.count()).select_from(van_deze.subquery())) or 0)
     local = int(
         session.scalar(
-            select(func.count()).select_from(
-                van_deze.where(Book.file_id.isnot(None)).subquery()
-            )
+            select(func.count()).select_from(van_deze.where(Book.file_id.isnot(None)).subquery())
         )
         or 0
     )
@@ -271,9 +261,7 @@ def refresh_subscription(
     except SourceError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    added, _ = source_service.sync_chapters(
-        session, series, chapters, subscription=subscription
-    )
+    added, _ = source_service.sync_chapters(session, series, chapters, subscription=subscription)
     subscription.last_checked_at = utcnow()
     session.commit()
     return SubscribeResultOut(
@@ -367,9 +355,9 @@ def unsubscribe(subscription_id: int, session: Session = Depends(get_session)) -
     if not resterend:
         gelezen = set(
             session.scalars(
-                select(Progress.book_id).join(Book, Book.id == Progress.book_id).where(
-                    Book.series_id == series_id
-                )
+                select(Progress.book_id)
+                .join(Book, Book.id == Progress.book_id)
+                .where(Book.series_id == series_id)
             )
         )
         for book in session.scalars(select(Book).where(Book.series_id == series_id)):

@@ -26,17 +26,41 @@ _LANG = re.compile(r"^[a-z]{2,3}(-[a-z]{2,8})?$")
 # XPath/tag-namen en geen CSS-selectors: cssselect is een extra afhankelijkheid
 # voor iets wat lxml zelf al kan, en die zat niet in de image.
 _STRIP_TAGS = ("style", "script", "noscript", "link", "meta", "img", "figure", "table")
-_STRIP_CLASSES = frozenset({
-    "navbox", "vertical-navbox", "ambox", "metadata", "hatnote", "thumb",
-    "reference", "mw-editsection", "reflist", "references", "infobox",
-    "mw-references-wrap", "sistersitebox", "noprint", "mw-empty-elt",
-})
+_STRIP_CLASSES = frozenset(
+    {
+        "navbox",
+        "vertical-navbox",
+        "ambox",
+        "metadata",
+        "hatnote",
+        "thumb",
+        "reference",
+        "mw-editsection",
+        "reflist",
+        "references",
+        "infobox",
+        "mw-references-wrap",
+        "sistersitebox",
+        "noprint",
+        "mw-empty-elt",
+    }
+)
 
 # Secties die na de eigenlijke tekst komen en in een epub niets toevoegen.
 _TAIL_SECTIONS = {
-    "references", "external links", "further reading", "see also", "notes",
-    "bibliography", "sources", "referenties", "externe links", "zie ook",
-    "bronnen", "noten", "literatuur",
+    "references",
+    "external links",
+    "further reading",
+    "see also",
+    "notes",
+    "bibliography",
+    "sources",
+    "referenties",
+    "externe links",
+    "zie ook",
+    "bronnen",
+    "noten",
+    "literatuur",
 }
 
 
@@ -241,8 +265,8 @@ def _build_epub(title: str, content: str, lang: str, key: str) -> bytes:
             f"<dc:title>{safe_title}</dc:title>"
             "<dc:creator>Wikipedia</dc:creator>"
             f"<dc:language>{escape(lang)}</dc:language>"
-            f'<dc:source>{escape(source)}</dc:source>'
-            '<dc:rights>CC BY-SA</dc:rights>'
+            f"<dc:source>{escape(source)}</dc:source>"
+            "<dc:rights>CC BY-SA</dc:rights>"
             f'<dc:identifier id="bookid">urn:wikipedia:{escape(lang)}:{escape(key)}</dc:identifier>'
             "</metadata>"
             "<manifest>"

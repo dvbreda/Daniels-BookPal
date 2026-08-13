@@ -55,7 +55,7 @@ def safe_name(text: str, *, fallback: str = "zonder-titel", limit: int = 120) ->
     """Een titel als mapnaam, zonder tekens die een bestandssysteem breken."""
     cleaned = _UNSAFE.sub("", text).strip().rstrip(".")
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return (cleaned[:limit].strip() or fallback)
+    return cleaned[:limit].strip() or fallback
 
 
 def download_root(session: Session) -> LibraryRoot:
@@ -311,12 +311,8 @@ def sync_chapters(
     # "niet meer bij de bron" te worden opgeruimd wanneer de ander synchroniseert.
     statement = select(Book).where(Book.series_id == series.id)
     if edition is not None:
-        statement = statement.where(
-            or_(Book.edition_id == edition.id, Book.edition_id.is_(None))
-        )
-    existing = {
-        book.source_ref: book for book in session.scalars(statement) if book.source_ref
-    }
+        statement = statement.where(or_(Book.edition_id == edition.id, Book.edition_id.is_(None)))
+    existing = {book.source_ref: book for book in session.scalars(statement) if book.source_ref}
 
     for ref, book in list(existing.items()):
         if ref in keep or book.file_id is not None:
@@ -420,7 +416,6 @@ def subscribe(
     detail = implementation.detail(ref)
     series = upsert_series(session, source_row, detail)
 
-
     # Het abonnement moet er zijn vóór het synchroniseren: daar staat de
     # voorkeursgroep op, en die bepaalt welke vertaling er wordt aangemaakt.
     # Ook op taal, want twee talen naast elkaar is een geldige wens: van
@@ -440,9 +435,7 @@ def subscribe(
         )
     )
     if subscription is None:
-        subscription = Subscription(
-            source_id=source_row.id, series_id=series.id, language=language
-        )
+        subscription = Subscription(source_id=source_row.id, series_id=series.id, language=language)
         session.add(subscription)
     # Altijd bijwerken: bij een serie met meerdere abonnementen is dit het
     # enige dat vastlegt wélke reeks bij de bron dít abonnement volgt.

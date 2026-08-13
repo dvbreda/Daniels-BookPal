@@ -246,5 +246,3 @@ def stop_worker() -> None:
     if _worker is not None:
         _worker.stop()
         _worker = None
-
-

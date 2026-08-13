@@ -412,9 +412,7 @@ def make_page_colour(
     # pagina, en dan is de mindere variant de kosten niet waard.
     translator = GeminiPageTranslator(settings.gemini_api_key, TranslateMode.IMAGE_PRO.model)
     try:
-        colorise_page(
-            session, translator, book, page_index, target_lang=_lang(lang), force=force
-        )
+        colorise_page(session, translator, book, page_index, target_lang=_lang(lang), force=force)
     except TranslationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:

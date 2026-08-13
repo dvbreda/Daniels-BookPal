@@ -169,9 +169,7 @@ class TestRunOnce:
         session.flush()
         from bookpal.sources import service as source_service
 
-        _, subscription, _ = source_service.subscribe(
-            session, source_row, make_source(), MANGA_ID
-        )
+        _, subscription, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
         subscription.readahead_n = 1
         session.commit()
 

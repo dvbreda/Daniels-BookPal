@@ -32,9 +32,7 @@ class RateLimiter:
         while True:
             with self._lock:
                 now = time.monotonic()
-                self._tokens = min(
-                    self.capacity, self._tokens + (now - self._updated) * self.rate
-                )
+                self._tokens = min(self.capacity, self._tokens + (now - self._updated) * self.rate)
                 self._updated = now
                 if self._tokens >= 1.0:
                     self._tokens -= 1.0

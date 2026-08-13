@@ -56,9 +56,7 @@ def _extensions(session: Session, books: list[Book]) -> dict[int, str]:
     ids = [book.file_id for book in books if book.file_id]
     if not ids:
         return {}
-    return {
-        row.id: row.extension for row in session.scalars(select(File).where(File.id.in_(ids)))
-    }
+    return {row.id: row.extension for row in session.scalars(select(File).where(File.id.in_(ids)))}
 
 
 def _one_per_series(items: list[HomeItemOut], limit: int) -> list[HomeItemOut]:
@@ -151,9 +149,7 @@ def _next_up_rail(session: Session, user: User, limit: int) -> list[HomeItemOut]
             continue
         slot = openstaand[0]
         extensies = _extensions(session, [slot.chosen])
-        gevonden.append(
-            _item(slot.chosen, series, None, extensies.get(slot.chosen.file_id or -1))
-        )
+        gevonden.append(_item(slot.chosen, series, None, extensies.get(slot.chosen.file_id or -1)))
 
     gevonden.sort(key=lambda item: item.added_at, reverse=True)
     return gevonden[:limit]

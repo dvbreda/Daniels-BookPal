@@ -40,9 +40,7 @@ _PREFERENCE = (".cbz", ".cbr", ".pdf", ".epub")
 
 # Hier trappen we niet in: een jp2-zip is de ruwe scan van de bewaardienst zelf
 # (traag en enorm), en een lcp-epub zit achter drm.
-_SKIP = re.compile(
-    r"(_jp2\.zip|_lcp\.epub|_encrypted\.pdf|_daisy\.zip|_djvu\.txt)$", re.IGNORECASE
-)
+_SKIP = re.compile(r"(_jp2\.zip|_lcp\.epub|_encrypted\.pdf|_daisy\.zip|_djvu\.txt)$", re.IGNORECASE)
 
 # Alleen tekstmateriaal: dezelfde zoekterm levert anders ook de tv-serie op.
 _MEDIATYPE = "texts"
@@ -202,7 +200,7 @@ class ArchiveOrgSource(Source):
     def search(
         self, query: str, *, limit: int = 20, language: str | None = None
     ) -> list[SearchResult]:
-        voorwaarden = [f'({query})', f"mediatype:{_MEDIATYPE}"]
+        voorwaarden = [f"({query})", f"mediatype:{_MEDIATYPE}"]
         if language:
             drieletterig = _LANGUAGES.get(language, language)
             voorwaarden.append(f"language:{drieletterig}")

@@ -81,9 +81,7 @@ def _wrap(
 ) -> list[str]:
     words: list[str] = []
     for word in text.split():
-        words.extend(
-            _break_long(draw, word, font, max_width) if hard_break else [word]
-        )
+        words.extend(_break_long(draw, word, font, max_width) if hard_break else [word])
     if not words:
         return []
 
@@ -168,9 +166,7 @@ def _fit(
     return font, _wrap(draw, text, font, box_w, hard_break=True), _MIN_FONT * 1.2
 
 
-def draw_bubbles(
-    image: Image.Image, bubbles: list[Bubble], *, boxes: bool = True
-) -> Image.Image:
+def draw_bubbles(image: Image.Image, bubbles: list[Bubble], *, boxes: bool = True) -> Image.Image:
     """Teken de vertalingen over een pagina heen.
 
     De modus blijft wat hij was. Dat is niet vrijblijvend: een Kobo-profiel
@@ -183,9 +179,7 @@ def draw_bubbles(
     canvas = image if image.mode in ("RGB", "L") else image.convert("RGB")
     white: int | tuple[int, ...] = 255 if canvas.mode == "L" else (255, 255, 255)
     black: int | tuple[int, ...] = 0 if canvas.mode == "L" else (0, 0, 0)
-    _draw_onto(
-        ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black, boxes=boxes
-    )
+    _draw_onto(ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black, boxes=boxes)
     return canvas
 
 
@@ -277,9 +271,7 @@ def render_layer(size: tuple[int, int], bubbles: list[Bubble], *, boxes: bool = 
         return _to_png(layer)
 
     draw = ImageDraw.Draw(layer)
-    _draw_onto(
-        draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255), boxes=boxes
-    )
+    _draw_onto(draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255), boxes=boxes)
     return _to_png(layer)
 
 
@@ -289,9 +281,7 @@ def _to_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def bake(
-    data: bytes, bubbles: list[Bubble], *, media_type: str, boxes: bool = True
-) -> bytes:
+def bake(data: bytes, bubbles: list[Bubble], *, media_type: str, boxes: bool = True) -> bytes:
     """Zelfde bytes in, bytes met vertaling eruit — in hetzelfde formaat."""
     with Image.open(BytesIO(data)) as source:
         source.load()

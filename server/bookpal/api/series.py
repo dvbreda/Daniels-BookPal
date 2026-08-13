@@ -269,10 +269,7 @@ def _editions_out(
     return [
         EditionOut(
             **{
-                **{
-                    veld: getattr(edition, veld)
-                    for veld in ("id", "series_id", "name", "rank")
-                },
+                **{veld: getattr(edition, veld) for veld in ("id", "series_id", "name", "rank")},
                 # Zelf gezet wint; anders afgeleid uit de naam, net als bij de
                 # hoofdstukken zelf.
                 "note": edition.note or source_service.edition_note(edition.name),
@@ -957,9 +954,7 @@ def sync_series_covers(series_id: int, session: Session = Depends(get_session)) 
 
 
 @router.post("/{series_id}/titles", response_model=SyncCoversOut)
-def sync_series_titles(
-    series_id: int, session: Session = Depends(get_session)
-) -> SyncCoversOut:
+def sync_series_titles(series_id: int, session: Session = Depends(get_session)) -> SyncCoversOut:
     """Haal de hoofdstuktitels op bij de bron.
 
     Een bestandsnaam als "Shin'ya Shokudou Chapter 01 - Yarō Abe.cbz" levert de
