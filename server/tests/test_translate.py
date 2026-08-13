@@ -1251,3 +1251,64 @@ class TestColourMode:
         client.put("/api/translate/mode", json={"colour_mode": "image_pro"})
         client.post(f"/api/books/{boek.id}/pages/1/colour?force=true")
         assert gebruikt[-1] == app_config.gemini_image_model_pro
+
+
+class TestTheAutomaticMode:
+    """De stand bij "vanzelf" hoort ook echt te bepalen wat er gebeurt.
+
+    Hij werd wel bewaard en getoond, maar nergens gelezen: de wachtrij pakte
+    altijd de tekstvertaler. Een schakelaar die niets doet is erger dan geen
+    schakelaar, want je denkt dat je iets hebt ingesteld.
+    """
+
+    def test_the_queue_carries_the_mode(self, session: Session):
+        from bookpal.translate.preferences import set_mode
+
+        set_mode(session, TranslateMode.IMAGE_FAST)
+        queue = TranslationQueue()
+        queue.submit(1, [0, 1], "nl", mode=TranslateMode.IMAGE_FAST)
+        assert all(job.mode is TranslateMode.IMAGE_FAST for job in queue._jobs)
+
+    def test_the_same_page_in_two_modes_is_two_jobs(self):
+        """Anders zou een hertekende pagina een tekstvertaling verdringen."""
+        queue = TranslationQueue()
+        queue.submit(1, [0], "nl", mode=TranslateMode.TEXT)
+        toegevoegd = queue.submit(1, [0], "nl", mode=TranslateMode.IMAGE_FAST)
+        assert toegevoegd == 1
+        assert len(queue._jobs) == 2
+
+    def test_reading_ahead_follows_the_setting(
+        self, session: Session, temp_settings, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.translate.preferences import set_mode
+        from bookpal.translate.queue import TranslationQueue as Q
+
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _comic(session, pages=10)
+        session.commit()
+        set_mode(session, TranslateMode.IMAGE_FAST)
+
+        queue = Q()
+        queue.notify_reading(boek.id, 0, "nl")
+        assert queue._jobs, "er hoort iets vooruit gelezen te worden"
+        assert all(job.mode is TranslateMode.IMAGE_FAST for job in queue._jobs)
+
+    def test_the_counter_sees_every_mode(self, session: Session):
+        """Anders staat de balk op nul zodra je in een andere stand werkt."""
+        from bookpal.api.translate import _done_pages
+
+        boek = _comic(session)
+        session.commit()
+        _store(session, boek, 0, "nl")
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=4,
+                target_lang="nl",
+                provider=TranslateMode.IMAGE_PRO.provider,
+                payload={"full_page": True, "model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+
+        assert _done_pages(session, boek.id, "nl") == {0, 4}

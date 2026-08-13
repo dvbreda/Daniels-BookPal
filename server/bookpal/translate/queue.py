@@ -21,7 +21,10 @@ from bookpal.db import session_scope
 from bookpal.models import Book
 from bookpal.translate import get_translator
 from bookpal.translate.base import TranslationError
-from bookpal.translate.service import readahead_pages, translate_page
+from bookpal.translate.imagepage import GeminiPageTranslator
+from bookpal.translate.modes import TranslateMode
+from bookpal.translate.preferences import get_mode
+from bookpal.translate.service import readahead_pages, translate_page, translate_page_as_image
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,10 @@ class _Job:
     book_id: int = field(compare=True)
     page_index: int = field(compare=True)
     target_lang: str = field(compare=True)
+    # In welke stand deze pagina gedaan wordt. Meegegeven en niet ter plekke
+    # opgehaald: verzet je de schakelaar terwijl de wachtrij loopt, dan hoort
+    # wat er al klaarstaat te blijven zoals het bedoeld was.
+    mode: TranslateMode = field(default=TranslateMode.TEXT, compare=False)
 
 
 class TranslationQueue:
@@ -49,19 +56,29 @@ class TranslationQueue:
 
     # -- vullen ---------------------------------------------------------
 
-    def submit(self, book_id: int, pages: list[int], target_lang: str, *, priority: int = 5) -> int:
+    def submit(
+        self,
+        book_id: int,
+        pages: list[int],
+        target_lang: str,
+        *,
+        priority: int = 5,
+        mode: TranslateMode = TranslateMode.TEXT,
+    ) -> int:
         """Zet pagina's in de wachtrij. Dubbelen worden stilgehouden, en een
         pagina die al met een hogere prioriteit klaarstaat, houdt die."""
         added = 0
         with self._lock:
-            existing = {(job.book_id, job.page_index, job.target_lang): job for job in self._jobs}
+            existing = {
+                (job.book_id, job.page_index, job.target_lang, job.mode): job for job in self._jobs
+            }
             for page_index in pages:
-                key = (book_id, page_index, target_lang)
+                key = (book_id, page_index, target_lang, mode)
                 current = existing.get(key)
                 if current is not None:
                     current.priority = min(current.priority, priority)
                     continue
-                job = _Job(priority, book_id, page_index, target_lang)
+                job = _Job(priority, book_id, page_index, target_lang, mode)
                 self._jobs.append(job)
                 existing[key] = job
                 added += 1
@@ -71,21 +88,26 @@ class TranslationQueue:
         return added
 
     def notify_reading(self, book_id: int, page_index: int, target_lang: str) -> int:
-        """Je bent op deze pagina; zet wat eraan komt vooraan."""
+        """Je bent op deze pagina; zet wat eraan komt vooraan.
+
+        In de stand die je bij "vanzelf" hebt gekozen — en die staat standaard
+        op de goedkope, want dit loopt zonder dat je erom vraagt.
+        """
         if not settings.gemini_api_key or settings.translate_readahead_pages <= 0:
             return 0
         with session_scope() as session:
             book = session.get(Book, book_id)
             if book is None:
                 return 0
+            mode = get_mode(session)
             pages = readahead_pages(
                 session,
                 book,
                 target_lang=target_lang,
-                provider="gemini",
+                provider=mode.provider,
                 current_page=page_index,
             )
-        return self.submit(book_id, pages, target_lang, priority=1)
+        return self.submit(book_id, pages, target_lang, priority=1, mode=mode)
 
     # -- draaien --------------------------------------------------------
 
@@ -130,6 +152,9 @@ class TranslationQueue:
                 self._active = None
 
     def _do(self, job: _Job) -> None:
+        if job.mode.is_image:
+            self._do_image(job)
+            return
         translator = get_translator()
         try:
             with session_scope() as session:
@@ -148,6 +173,33 @@ class TranslationQueue:
             # zodat een volgende poging het nog eens mag proberen — een
             # rate-limit van vanmiddag is morgen weer weg.
             logger.warning("vertalen mislukt (boek %s p%s): %s", job.book_id, job.page_index, exc)
+        finally:
+            translator.close()
+
+    def _do_image(self, job: _Job) -> None:
+        """Dezelfde lus, maar dan met het beeldmodel.
+
+        Apart gehouden omdat het een andere vertaler en een andere bewaarplek
+        heeft; de wachtrij zelf hoeft dat verschil verder niet te kennen.
+        """
+        translator = GeminiPageTranslator(settings.gemini_api_key, job.mode.model)
+        try:
+            with session_scope() as session:
+                book = session.get(Book, job.book_id)
+                if book is None:
+                    return
+                translate_page_as_image(
+                    session,
+                    translator,
+                    book,
+                    job.page_index,
+                    target_lang=job.target_lang,
+                    mode=job.mode,
+                )
+        except TranslationError as exc:
+            logger.warning(
+                "hertekenen mislukt (boek %s p%s): %s", job.book_id, job.page_index, exc
+            )
         finally:
             translator.close()
 

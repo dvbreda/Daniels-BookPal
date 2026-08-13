@@ -321,16 +321,33 @@ def translate_book(
     if book.page_count is None:
         raise HTTPException(status_code=409, detail="dit boek heeft geen vaste pagina's")
 
+    # In de stand die bij "vanzelf" staat: dit is bulkwerk dat op de achtergrond
+    # loopt, en die schakelaar is precies de plek waar je bepaalt wat dat mag
+    # kosten.
+    mode = get_mode(session)
     todo = plan_pages(
         session,
         book,
         target_lang=target_lang,
-        provider=PROVIDER,
+        provider=mode.provider,
         from_page=payload.from_page,
     )
-    queued = queue.submit(book.id, todo, target_lang)
-    done = len(translated_pages(session, book.id, target_lang, PROVIDER))
+    queued = queue.submit(book.id, todo, target_lang, mode=mode)
+    done = len(_done_pages(session, book.id, target_lang))
     return TranslateBookOut(queued=queued, already_done=done)
+
+
+def _done_pages(session: Session, book_id: int, target_lang: str) -> set[int]:
+    """Welke pagina's er klaar zijn, in welke stand dan ook.
+
+    Niet per stand tellen: voor de balk in de lezer is de vraag "kan ik deze
+    pagina vertaald zien", en dan telt een pagina die je met de hand door het
+    dure model haalde net zo goed mee.
+    """
+    gevonden: set[int] = set()
+    for stand in TranslateMode:
+        gevonden |= translated_pages(session, book_id, target_lang, stand.provider)
+    return gevonden
 
 
 @router.get("/{book_id}/translation-status", response_model=TranslationStatusOut)
@@ -347,7 +364,7 @@ def translation_status(
         provider=PROVIDER,
         configured=is_configured(),
         page_count=book.page_count,
-        translated=len(translated_pages(session, book.id, target_lang, PROVIDER)),
+        translated=len(_done_pages(session, book.id, target_lang)),
         queued=queue.pending_for(book.id),
     )
 
