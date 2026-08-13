@@ -192,6 +192,51 @@ def translate_page_as_image(
     return produced
 
 
+#: Onder welke sleutel een ingekleurde pagina wordt bewaard. Bewust geen
+#: TranslateMode: inkleuren is geen vertaling en mag er nooit voor doorgaan —
+#: anders zou "de beste die er ligt" een ingekleurde pagina boven een vertaalde
+#: kiezen.
+COLOUR_PROVIDER = "gemini-color"
+COLOUR_VARIANT = "kleur"
+
+
+def colorise_page(
+    session: Session,
+    translator: GeminiPageTranslator,
+    book: Book,
+    page_index: int,
+    *,
+    force: bool = False,
+) -> bytes:
+    """Laat het beeldmodel deze pagina inkleuren.
+
+    Dezelfde volgorde als bij het hertekenen: eerst kijken of hij er al ligt en
+    pas dan betalen. Het resultaat gaat naar de sidecar-map, want dat is wat je
+    bij een herbouwde database niet opnieuw wilt aanschaffen.
+    """
+    series = session.get(Series, book.series_id)
+    path = sidecar.variant_path(series, book, page_index, COLOUR_VARIANT)
+
+    if not force:
+        stored = sidecar.read_bytes(path)
+        if stored is not None:
+            _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
+            return stored
+
+    image, media_type = render_for_translation(session, book, page_index)
+    produced = translator.colorise_page(image, media_type=media_type)
+
+    sidecar.write_bytes(path, produced)
+    _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
+    return produced
+
+
+def read_colour(session: Session, book: Book, page_index: int) -> bytes | None:
+    """Een al ingekleurde pagina van schijf, of None."""
+    series = session.get(Series, book.series_id)
+    return sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
+
+
 def read_page_image(
     session: Session, book: Book, page_index: int, target_lang: str, mode: TranslateMode
 ) -> bytes | None:

@@ -18,6 +18,7 @@ from bookpal.db import get_session
 from bookpal.images import ImageProfile
 from bookpal.schemas import (
     BubbleOut,
+    PageColourOut,
     PageTranslationOut,
     TranslateBookIn,
     TranslateBookOut,
@@ -40,8 +41,10 @@ from bookpal.translate.queue import queue
 from bookpal.translate.service import (
     best_available,
     bubbles_for,
+    colorise_page,
     find,
     plan_pages,
+    read_colour,
     read_page_image,
     render_layer_for,
     translate_page,
@@ -381,3 +384,53 @@ def write_mode(
     if payload.button_mode is not None:
         set_button_mode(session, _parse_mode(payload.button_mode))
     return _mode_out(session)
+
+
+@router.post("/{book_id}/pages/{page_index}/colour", response_model=PageColourOut)
+def make_page_colour(
+    book_id: int,
+    page_index: int,
+    force: bool = Query(default=False, description="Opnieuw laten inkleuren."),
+    session: Session = Depends(get_session),
+) -> PageColourOut:
+    """Kleur deze pagina in.
+
+    Een aparte handeling en geen vertaalstand: inkleuren verandert niets aan de
+    tekst, en een ingekleurde pagina hoort nooit in de plaats te komen van een
+    vertaalde. Het kost per pagina hetzelfde als het hertekenen, dus het gebeurt
+    alleen als je erom vraagt.
+    """
+    book = deps.get_book(session, book_id)
+    if not is_configured():
+        raise HTTPException(
+            status_code=409,
+            detail="er is geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)",
+        )
+
+    # Het zware model: inkleuren is een eenmalige, bewuste handeling per
+    # pagina, en dan is de mindere variant de kosten niet waard.
+    translator = GeminiPageTranslator(settings.gemini_api_key, TranslateMode.IMAGE_PRO.model)
+    try:
+        colorise_page(session, translator, book, page_index, force=force)
+    except TranslationError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        translator.close()
+
+    return PageColourOut(book_id=book.id, page_index=page_index, available=True)
+
+
+@router.get("/{book_id}/pages/{page_index}/colour")
+def get_page_colour(
+    book_id: int, page_index: int, session: Session = Depends(get_session)
+) -> Response:
+    """De ingekleurde pagina zelf."""
+    book = deps.get_book(session, book_id)
+    data = read_colour(session, book, page_index)
+    if data is None:
+        raise HTTPException(status_code=404, detail="deze pagina is nog niet ingekleurd")
+    return Response(
+        content=data,
+        media_type="image/webp",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

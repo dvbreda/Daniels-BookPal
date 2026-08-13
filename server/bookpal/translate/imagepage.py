@@ -62,6 +62,25 @@ Regels:
 Geef alleen de bewerkte pagina terug, op exact dezelfde afmeting als deze."""
 
 
+_COLOUR_PROMPT = """Dit is een zwart-witte pagina uit een stripverhaal.
+
+Kleur hem in alsof hij zo gedrukt is: natuurlijke, ingetogen kleuren die bij het
+onderwerp passen.
+
+Regels:
+- Verander de tekening niet. Geen lijn erbij, geen lijn weg, geen paneel
+  verschoven, geen detail opnieuw getekend.
+- Laat alle tekst staan zoals hij is, in dezelfde letters. Vertaal niets en
+  herschrijf niets.
+- Houd de arcering en het lijnwerk zichtbaar; kleur ligt eronder, niet erover.
+- Wit blijft wit en zwart blijft zwart waar dat de bedoeling is: papier is
+  papier en inkt is inkt.
+- Kies rustige kleuren. Een overdreven verzadigde pagina leest slechter dan
+  het zwart-witte origineel.
+
+Geef alleen de ingekleurde pagina terug, op exact dezelfde afmeting als deze."""
+
+
 
 class GeminiPageTranslator:
     """Levert een hele vertaalde pagina in plaats van losse tekstvlakken."""
@@ -97,7 +116,17 @@ class GeminiPageTranslator:
         language = _LANGUAGE_NAMES.get(target_lang.lower(), target_lang)
         return self._run(image, media_type, _PROMPT.format(language=language))
 
-    def _run(self, image: bytes, media_type: str, prompt: str) -> bytes:
+    def colorise_page(self, image: bytes, *, media_type: str) -> bytes:
+        """Dezelfde pagina, ingekleurd.
+
+        Dit is geen vertaling en hoort er ook niet mee te concurreren: het
+        resultaat wordt apart bewaard, zodat een ingekleurde pagina nooit in de
+        plaats komt van een vertaalde. Wel houden we grijs níét terug — dat is
+        precies wat er hier moet veranderen.
+        """
+        return self._run(image, media_type, _COLOUR_PROMPT, keep_gray=False)
+
+    def _run(self, image: bytes, media_type: str, prompt: str, *, keep_gray: bool = True) -> bytes:
         body = {
             "contents": [
                 {
@@ -129,7 +158,7 @@ class GeminiPageTranslator:
             raise TranslationError(f"Gemini gaf {response.status_code}")
 
         produced = _extract_image(response.json())
-        return _match_original(produced, image)
+        return _match_original(produced, image, keep_gray=keep_gray)
 
     def close(self) -> None:
         self._client.close()
@@ -150,17 +179,20 @@ def _extract_image(payload: dict[str, Any]) -> bytes:
     raise TranslationError("Gemini gaf geen afbeelding terug")
 
 
-def _match_original(produced: bytes, original: bytes) -> bytes:
+def _match_original(produced: bytes, original: bytes, *, keep_gray: bool = True) -> bytes:
     """Terug naar de afmeting en het kleurkarakter van het origineel.
 
     Het model werkt in zijn eigen resolutie, dus zonder dit past de vertaalde
     pagina niet meer op de plek van de originele — en dat merk je pas als de
     lezer ernaast staat.
+
+    ``keep_gray`` uit bij het inkleuren: daar is het veranderen van grijs naar
+    kleur juist de bedoeling, en terugzetten zou het hele werk ongedaan maken.
     """
     with Image.open(BytesIO(original)) as source:
         source.load()
         size = source.size
-        was_gray = _is_grayscale(source)
+        was_gray = keep_gray and _is_grayscale(source)
 
     try:
         with Image.open(BytesIO(produced)) as opened:

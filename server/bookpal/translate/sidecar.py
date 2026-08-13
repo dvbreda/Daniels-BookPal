@@ -66,6 +66,15 @@ def image_path(
     return chapter_dir(series, book) / f"{page_stem(page_index)}-{lang}-{mode.value}.webp"
 
 
+def variant_path(series: Series | None, book: Book, page_index: int, variant: str) -> Path:
+    """Een bewerking van de pagina die geen vertaling is, zoals inkleuren.
+
+    Apart van ``image_path`` omdat er geen taal aan te pas komt — en omdat het
+    niet met een vertaling hoort te concurreren om dezelfde plek.
+    """
+    return chapter_dir(series, book) / f"{page_stem(page_index)}-{variant}.webp"
+
+
 def _write(path: Path, data: bytes) -> None:
     """Via een tijdelijk bestand: een half geschreven vertaling die als
     'bestaat al' wordt gezien, is erger dan geen vertaling."""

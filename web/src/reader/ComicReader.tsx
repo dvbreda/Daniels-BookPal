@@ -69,6 +69,10 @@ export function ComicReader({ book, onClose }: Props) {
   const [grid, setGrid] = useStoredState("reader.grid", 0);
   const [cell, setCell] = useState(0);
   const [contrast, setContrast] = useStoredState("reader.contrast", 100);
+  // Ingekleurde pagina's als basis. Onze eigen tekstvlakken komen er gewoon
+  // overheen: dat is waarom kleur en de tekststand samen kunnen, zonder dat het
+  // beeldmodel de ballonnen hoeft leeg te vegen — wat het niet betrouwbaar kan.
+  const [coloured, setColoured] = useStoredState("reader.colour", false);
   const adjust = useMemo(() => ({ crop, contrast }), [crop, contrast]);
   const [dismissedNext, setDismissedNext] = useState(false);
 
@@ -277,6 +281,7 @@ export function ComicReader({ book, onClose }: Props) {
           onVisiblePage={setPage}
           onAspect={noteAspect}
           translated={translated}
+          coloured={coloured}
           adjust={adjust}
         />
       ) : (
@@ -300,6 +305,7 @@ export function ComicReader({ book, onClose }: Props) {
                 profile={profile}
                 fitClass={fitClass}
                 translated={translated}
+                coloured={coloured}
                 adjust={adjust}
                 grid={
                   grid === 0
@@ -345,6 +351,8 @@ export function ComicReader({ book, onClose }: Props) {
           setContrast={setContrast}
           translated={translated}
           setTranslated={setTranslated}
+          coloured={coloured}
+          setColoured={setColoured}
           onSeek={setPage}
           onClose={() => onClose(pendingPercent.current ?? 0)}
         />
@@ -361,6 +369,7 @@ interface VerticalProps {
   onVisiblePage: (page: number) => void;
   onAspect: (index: number, width: number, height: number) => void;
   translated: boolean;
+  coloured: boolean;
   adjust: { crop: boolean; contrast: number };
 }
 
@@ -374,6 +383,7 @@ function VerticalReader({
   onVisiblePage,
   onAspect,
   translated,
+  coloured,
   adjust,
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -482,6 +492,7 @@ function VerticalReader({
             profile={profile}
             adjust={adjust}
             translated={translated}
+            coloured={coloured}
             loaded={loaded.has(index)}
             onLoaded={(width, height) => {
               onAspect(index, width, height);
@@ -520,6 +531,8 @@ interface ChromeProps {
   setContrast: (value: number) => void;
   translated: boolean;
   setTranslated: (value: boolean) => void;
+  coloured: boolean;
+  setColoured: (value: boolean) => void;
   onSeek: (page: number) => void;
   onClose: () => void;
 }
@@ -551,6 +564,8 @@ function Chrome(props: ChromeProps) {
     setContrast,
     translated,
     setTranslated,
+    coloured,
+    setColoured,
     onSeek,
     onClose,
   } = props;
@@ -607,6 +622,18 @@ function Chrome(props: ChromeProps) {
           </Toggle>
           <Toggle active={translated} onClick={() => setTranslated(!translated)}>
             Vertaling
+          </Toggle>
+          {/* Kleur vervangt de pagina zelf; onze tekstvlakken komen er gewoon
+              overheen. Daarom kunnen kleur en vertaling samen — en hoeft het
+              beeldmodel de ballonnen niet leeg te vegen, wat het niet
+              betrouwbaar kan. Pagina's zonder ingekleurde versie vallen
+              vanzelf terug op het origineel. */}
+          <Toggle
+            active={coloured}
+            onClick={() => setColoured(!coloured)}
+            title="Toon ingekleurde pagina's waar die er zijn"
+          >
+            Kleur
           </Toggle>
           <Toggle active={showSettings} onClick={() => setShowSettings(!showSettings)}>
             ⚙ Weergave
@@ -772,6 +799,7 @@ function TranslatablePage({
   profile,
   fitClass,
   translated,
+  coloured,
   adjust,
   grid,
   onAspect,
@@ -781,12 +809,14 @@ function TranslatablePage({
   profile: string;
   fitClass: string;
   translated: boolean;
+  coloured: boolean;
   adjust: { crop: boolean; contrast: number };
   grid: GridTransform | null;
   onAspect: (index: number, width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, page, translated);
   const useFullPage = translated && data?.full_page === true;
+  const [geenKleur, setGeenKleur] = useState(false);
 
   return (
     // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
@@ -812,11 +842,14 @@ function TranslatablePage({
         src={
           useFullPage
             ? imageUrl.fullTranslation(book.id, page)
-            : imageUrl.page(book.id, page, profile, adjust)
+            : coloured && !geenKleur
+              ? imageUrl.colour(book.id, page)
+              : imageUrl.page(book.id, page, profile, adjust)
         }
         alt={`Pagina ${page + 1}`}
         className={`object-contain ${fitClass}`}
         draggable={false}
+        onError={() => setGeenKleur(true)}
         onLoad={(event) =>
           onAspect(page, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
         }
@@ -863,6 +896,7 @@ function TranslateControl({
 
   const [busy, setBusy] = useState<string | null>(null);
   const [fout, setFout] = useState<string | null>(null);
+  const [kleurKlaar, setKleurKlaar] = useState(false);
 
   if (!status?.configured) return null;
 
@@ -896,6 +930,19 @@ function TranslateControl({
   // De dure standen: altijd een bewuste keuze per pagina, ook als de
   // schakelaar in de instellingen op goedkoop staat. Ze kosten tientallen
   // centen per pagina, dus ze horen nooit vanzelf te lopen.
+  async function colouriseThisPage() {
+    setBusy("kleur");
+    setFout(null);
+    try {
+      await api.colourisePage(bookId, currentPage);
+      setKleurKlaar(true);
+    } catch (exc) {
+      setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function translateFully(mode: TranslateMode) {
     setBusy(mode);
     setFout(null);
@@ -918,6 +965,17 @@ function TranslateControl({
         onClick={() => void translateThisPage()}
       >
         {busy === "tekst" ? "Bezig…" : "Deze pagina"}
+      </Toggle>
+      {/* Inkleuren is geen vertaling: het verandert niets aan de tekst en komt
+          nooit in de plaats van een vertaalde pagina. Het staat hier omdat het
+          hetzelfde beeldmodel gebruikt en per pagina evenveel kost. */}
+      <Toggle
+        active={false}
+        disabled={busy !== null}
+        onClick={() => void colouriseThisPage()}
+        title="Deze pagina laten inkleuren (~$0,13). Zet daarna 'Kleur' aan."
+      >
+        {busy === "kleur" ? "Bezig…" : "Inkleuren"}
       </Toggle>
       {/* Eén knop, met de stand die jij hebt gekozen. Eerder stonden hier
           "Volledig" en "Volledig+" naast elkaar, en dat zei niet wat het deed
@@ -964,9 +1022,14 @@ function TranslateControl({
         </span>
       </span>
 
-      {(busy !== null || fout !== null) && (
+      {(busy !== null || fout !== null || kleurKlaar) && (
         <span className={`max-w-[16rem] truncate ${fout ? "text-danger" : "text-slate-400"}`}>
-          {fout ?? "Bezig met vertalen…"}
+          {fout ??
+            (busy === "kleur"
+              ? "Bezig met inkleuren…"
+              : busy !== null
+                ? "Bezig met vertalen…"
+                : "Ingekleurd — zet 'Kleur' aan om het te zien.")}
         </span>
       )}
     </div>
@@ -1090,6 +1153,7 @@ function VerticalPage({
   profile,
   adjust,
   translated,
+  coloured,
   loaded,
   onLoaded,
 }: {
@@ -1098,11 +1162,15 @@ function VerticalPage({
   profile: string;
   adjust: { crop: boolean; contrast: number };
   translated: boolean;
+  coloured: boolean;
   loaded: boolean;
   onLoaded: (width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, index, translated && loaded);
   const hertekend = translated && data?.full_page === true;
+  // Niet elke pagina is ingekleurd; dat merken we aan de afbeelding zelf in
+  // plaats van er vooraf naar te vragen — dat scheelt een verzoek per pagina.
+  const [geenKleur, setGeenKleur] = useState(false);
 
   return (
     <div
@@ -1114,12 +1182,15 @@ function VerticalPage({
         src={
           hertekend
             ? imageUrl.fullTranslation(book.id, index)
-            : imageUrl.page(book.id, index, profile, adjust)
+            : coloured && !geenKleur
+              ? imageUrl.colour(book.id, index)
+              : imageUrl.page(book.id, index, profile, adjust)
         }
         alt={`Pagina ${index + 1}`}
         className="w-full"
         loading="lazy"
         draggable={false}
+        onError={() => setGeenKleur(true)}
         onLoad={(event) =>
           onLoaded(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
         }

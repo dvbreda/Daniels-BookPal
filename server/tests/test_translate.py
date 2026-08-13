@@ -795,3 +795,89 @@ class TestTwoTranslateModes:
         na = client.put("/api/translate/mode", json={}).json()
         assert na["mode"] == voor["mode"]
         assert na["button_mode"] == voor["button_mode"]
+
+
+class TestColourising:
+    """Inkleuren is geen vertaling en mag er nooit voor doorgaan.
+
+    Zou het als vertaalstand meetellen, dan zou "de beste die er ligt" een
+    ingekleurde pagina boven een vertaalde kiezen — en dan lees je ineens weer
+    de oorspronkelijke taal.
+    """
+
+    def test_grey_is_not_put_back(self):
+        """Bij een vertaling hoort zwart-wit zwart-wit te blijven; hier juist niet."""
+        from bookpal.translate.imagepage import _match_original
+
+        grijs = Image.new("L", (40, 60), 200)
+        buffer = BytesIO()
+        grijs.save(buffer, format="PNG")
+
+        gekleurd = Image.new("RGB", (40, 60), (200, 40, 40))
+        uit = BytesIO()
+        gekleurd.save(uit, format="PNG")
+
+        # Op de pixels en niet op de modus: webp kent geen grijswaardenmodus,
+        # dus alles komt als RGB terug. Waar het om gaat is of de kleur er nog
+        # ín zit.
+        def heeft_kleur(data: bytes) -> bool:
+            with Image.open(BytesIO(data)) as beeld:
+                rgb = beeld.convert("RGB")
+                return any(
+                    abs(r - g) > 12 or abs(g - b) > 12 for r, g, b in list(rgb.getdata())[:400]
+                )
+
+        assert heeft_kleur(_match_original(uit.getvalue(), buffer.getvalue(), keep_gray=False))
+        assert not heeft_kleur(_match_original(uit.getvalue(), buffer.getvalue())), (
+            "een vertaling houdt zich wél aan het zwart-wit van het origineel"
+        )
+
+    def test_the_size_still_follows_the_original(self):
+        from bookpal.translate.imagepage import _match_original
+
+        klein = BytesIO()
+        Image.new("L", (40, 60), 200).save(klein, format="PNG")
+        groot = BytesIO()
+        Image.new("RGB", (80, 120), (10, 20, 30)).save(groot, format="PNG")
+
+        uit = _match_original(groot.getvalue(), klein.getvalue(), keep_gray=False)
+        with Image.open(BytesIO(uit)) as beeld:
+            assert beeld.size == (40, 60)
+
+    def test_it_is_stored_under_its_own_name(self, session: Session, temp_settings):
+        """Naast de vertalingen, niet ertussen."""
+        from bookpal.translate import sidecar
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import COLOUR_VARIANT
+
+        boek = _comic(session)
+        kleur = sidecar.variant_path(None, boek, 3, COLOUR_VARIANT)
+        vertaald = sidecar.image_path(None, boek, 3, "nl", TranslateMode.IMAGE_PRO)
+        assert kleur != vertaald
+        assert "kleur" in kleur.name
+
+    def test_a_colour_page_is_never_offered_as_a_translation(self, session: Session, temp_settings):
+        from bookpal.models import Translation
+        from bookpal.translate.service import COLOUR_PROVIDER, best_available
+
+        boek = _comic(session)
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=0,
+                target_lang="src",
+                provider=COLOUR_PROVIDER,
+                payload={"model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+
+        assert best_available(session, boek, 0, "nl") is None
+
+    def test_asking_for_a_page_that_is_not_coloured_is_a_404(
+        self, client: TestClient, session: Session
+    ):
+        boek = _comic(session)
+        session.commit()
+        response = client.get(f"/api/books/{boek.id}/pages/0/colour")
+        assert response.status_code == 404

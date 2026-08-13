@@ -880,6 +880,14 @@ class PageTranslationOut(BaseModel):
     full_page: bool = False
 
 
+class PageColourOut(BaseModel):
+    """Of er voor deze pagina een ingekleurde versie klaarstaat."""
+
+    book_id: int
+    page_index: int
+    available: bool = False
+
+
 class TranslateModeOut(BaseModel):
     mode: str
     # Wat de knop in de lezer doet. Losgekoppeld van de automatische stand:
