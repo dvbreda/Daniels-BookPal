@@ -539,3 +539,73 @@ class TestProgressiveEnhancement:
             return h.split('<ul id="lijst"')[1].split(">", 1)[1]
 
         assert kaarten({}) == kaarten({"raster": 1})
+
+
+class TestLiteShowsTheBestTranslation:
+    """Een hertekende pagina gold in Lite als onvertaald.
+
+    De controle keek hardgecodeerd naar de tekststand, dus het dure werk van het
+    beeldmodel werd nooit getoond.
+    """
+
+    def _boek_met_hertekende_pagina(self, session: Session):
+        from bookpal.db import current_user  # noqa: F401 - houdt de gebruiker aan
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Translation
+
+        root = LibraryRoot(name="R", path="/tmp/lite-vertaald")
+        session.add(root)
+        session.flush()
+        series = Series(title="Vertaald", sort_title="vertaald")
+        session.add(series)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path="/tmp/lite-vertaald/1.cbz",
+            size=1,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            page_count=10,
+            file_id=bestand.id,
+        )
+        session.add(boek)
+        session.flush()
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=0,
+                target_lang=settings.translate_lang,
+                provider="gemini-image-pro",
+                payload={"full_page": True, "model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+        return boek
+
+    def test_a_redrawn_page_replaces_the_image(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0", params={"vertaal": 1}).text
+        assert f"/api/books/{boek.id}/pages/0/full" in pagina
+        assert "/overlay" not in pagina, "geen laag eroverheen; dan staat tekst dubbel"
+
+    def test_it_is_offered_at_all(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        assert "Vertaling" in pagina, "er ligt iets klaar, dus dat hoort aangeboden te worden"
+
+    def test_without_the_switch_you_see_the_original(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        assert f"/api/books/{boek.id}/pages/0?" in pagina
+        assert f"/api/books/{boek.id}/pages/0/full" not in pagina

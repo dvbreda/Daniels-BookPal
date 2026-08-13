@@ -475,33 +475,21 @@ function VerticalReader({
           // verhouding van vrijwel elke stripbladzijde. Zonder die reservering
           // hebben ongeladen pagina's hoogte nul, schuift alles onder je weg
           // zodra ze binnenkomen, en landt geen enkele scrollpositie goed.
-          <div
+          <VerticalPage
             key={index}
-            data-page={index}
-            className="relative w-full [container-type:inline-size]"
-            style={loaded.has(index) ? undefined : { aspectRatio: "2 / 3" }}
-          >
-            <img
-              src={imageUrl.page(book.id, index, profile, adjust)}
-              alt={`Pagina ${index + 1}`}
-              className="w-full"
-              loading="lazy"
-              draggable={false}
-              onLoad={(event) => {
-                onAspect(
-                  index,
-                  event.currentTarget.naturalWidth,
-                  event.currentTarget.naturalHeight,
-                );
-                setLoaded((current) =>
-                  current.has(index) ? current : new Set(current).add(index),
-                );
-              }}
-            />
-            {loaded.has(index) && (
-              <TranslationOverlay bookId={book.id} pageIndex={index} enabled={translated} />
-            )}
-          </div>
+            book={book}
+            index={index}
+            profile={profile}
+            adjust={adjust}
+            translated={translated}
+            loaded={loaded.has(index)}
+            onLoaded={(width, height) => {
+              onAspect(index, width, height);
+              setLoaded((current) =>
+                current.has(index) ? current : new Set(current).add(index),
+              );
+            }}
+          />
         ))}
       </div>
     </div>
@@ -1082,3 +1070,61 @@ const MODE_NAMES: Record<string, string> = {
   image_fast: "beeldmodel (snel)",
   image_pro: "beeldmodel (zwaar)",
 };
+
+/**
+ * Eén pagina in de doorlopende weergave.
+ *
+ * Het verschil met de paginaweergave zat hier: die koos al tussen het origineel
+ * en een hertekende pagina, deze toonde altijd het origineel. Een pagina die je
+ * met het beeldmodel had laten hertekenen leek daardoor gewoon onvertaald — de
+ * overlay houdt zich bij een hertekende pagina namelijk stil, want dan zou de
+ * tekst dubbel staan.
+ *
+ * De vertaling wordt pas opgevraagd als de afbeelding er is. Een doorlopende
+ * weergave zet alle pagina's tegelijk in de dom; zonder die grens zou het
+ * openen van een hoofdstuk honderden verzoeken tegelijk opleveren.
+ */
+function VerticalPage({
+  book,
+  index,
+  profile,
+  adjust,
+  translated,
+  loaded,
+  onLoaded,
+}: {
+  book: BookDetail;
+  index: number;
+  profile: string;
+  adjust: { crop: boolean; contrast: number };
+  translated: boolean;
+  loaded: boolean;
+  onLoaded: (width: number, height: number) => void;
+}) {
+  const { data } = usePageTranslation(book.id, index, translated && loaded);
+  const hertekend = translated && data?.full_page === true;
+
+  return (
+    <div
+      data-page={index}
+      className="relative w-full [container-type:inline-size]"
+      style={loaded ? undefined : { aspectRatio: "2 / 3" }}
+    >
+      <img
+        src={
+          hertekend
+            ? imageUrl.fullTranslation(book.id, index)
+            : imageUrl.page(book.id, index, profile, adjust)
+        }
+        alt={`Pagina ${index + 1}`}
+        className="w-full"
+        loading="lazy"
+        draggable={false}
+        onLoad={(event) =>
+          onLoaded(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+        }
+      />
+      {loaded && <TranslationOverlay bookId={book.id} pageIndex={index} enabled={translated} />}
+    </div>
+  );
+}

@@ -604,20 +604,25 @@ def lite_read(
 
     # Alleen aanbieden als er iets te tonen valt: een link naar een vertaling
     # die nog niet bestaat, levert een lege laag en een verwarde lezer op.
-    has_translation = (
-        translation_service.find(session, book.id, page, settings.translate_lang, "gemini")
-        is not None
+    #
+    # De beste die er ligt, niet alleen de tekststand. Dat laatste stond hier
+    # hardgecodeerd, waardoor een pagina die je met het beeldmodel had laten
+    # hertekenen in Lite als onvertaald gold — terwijl het dure werk er wél was.
+    beschikbaar = translation_service.best_available(
+        session, book, page, settings.translate_lang
     )
     # Nog niet vertaald maar je vraagt erom: dan nú vertalen. Dat duurt een paar
     # tellen en dat is precies waarom het een aparte link is en niet iets wat
     # vanzelf gebeurt zodra je een pagina opent.
-    if maak and not has_translation and translate_is_configured():
+    if maak and beschikbaar is None and translate_is_configured():
         translator = get_translator()
         try:
             translation_service.translate_page(
                 session, translator, book, page, target_lang=settings.translate_lang
             )
-            has_translation = True
+            beschikbaar = translation_service.best_available(
+                session, book, page, settings.translate_lang
+            )
         except TranslationError as exc:
             logger.warning("vertalen van %s p%s: %s", book.id, page, exc)
         finally:
@@ -625,12 +630,18 @@ def lite_read(
 
     layer = ""
     toggle = ""
-    if has_translation:
+    if beschikbaar is not None:
+        stand, _rij = beschikbaar
         if opts.translated:
-            layer = (
-                f'<img class="layer" src="/api/books/{book.id}/pages/{page}/overlay'
-                f'{img_query}" alt="vertaling">'
-            )
+            if stand.is_image:
+                # Hertekend: de hele pagina is vervangen, dus geen laag
+                # eroverheen — dan zou de tekst dubbel staan.
+                img_src = f"/api/books/{book.id}/pages/{page}/full"
+            else:
+                layer = (
+                    f'<img class="layer" src="/api/books/{book.id}/pages/{page}/overlay'
+                    f'{img_query}" alt="vertaling">'
+                )
             toggle = (
                 f'<a href="/lite/books/{book.id}/read/{page}'
                 f'{opts.query(vertaal=False)}">Origineel</a>'
