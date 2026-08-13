@@ -31,11 +31,35 @@ class PdfBook(BookFile):
     def page_count(self) -> int:
         return int(self._doc.page_count)
 
+    def _scanned_width(self, page: pymupdf.Page) -> int | None:
+        """De pixelbreedte van een gescande pagina, als het er één beeld is.
+
+        Een pdf heeft geen eigen resolutie: hij wordt gerenderd op de breedte
+        die je vraagt. Bij een gescande strip zit daar één beeld in van een
+        vaste grootte, en daarboven renderen levert alleen grotere bestanden op
+        zonder één detail extra — bij het vertalen betaal je dat in tokens.
+
+        Alleen bij precies één beeld op de pagina. Een pdf met losse panelen of
+        met tekst erin moet gewoon op de gevraagde breedte gerenderd worden,
+        anders wordt die juist onleesbaar.
+        """
+        try:
+            beelden = page.get_images(full=True)
+        except (RuntimeError, ValueError):
+            return None
+        if len(beelden) != 1:
+            return None
+        breedte = int(beelden[0][2] or 0)
+        return breedte or None
+
     def get_page(self, index: int, target_width: int | None = None) -> RawPage:
         if not 0 <= index < self.page_count():
             raise IndexError(f"pagina {index} bestaat niet ({self.page_count()} pagina's)")
         page = self._doc.load_page(index)
         if target_width:
+            gescand = self._scanned_width(page)
+            if gescand:
+                target_width = min(target_width, gescand)
             width_pt = page.rect.width or 1.0
             scale = min(target_width / width_pt, MAX_SCALE)
         else:

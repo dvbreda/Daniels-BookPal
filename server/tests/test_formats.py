@@ -186,3 +186,77 @@ class TestFormatDetection:
         with open_book(path) as book:
             assert book.page_count() == 0
             assert book.cover() is None
+
+
+class TestPdfRenderWidth:
+    """Een pdf heeft geen eigen resolutie: hij wordt gerenderd op de breedte die
+    je vraagt. Bij een gescande strip zit daar één beeld in van een vaste
+    grootte, en daarboven renderen kost bytes — en bij het vertalen tokens —
+    zonder één detail extra."""
+
+    def _gescand(self, tmp_path: Path, breedte: int, hoogte: int) -> Path:
+        """Een pdf van één pagina met precies één ingesloten beeld."""
+        import pymupdf
+        from PIL import Image
+
+        plaatje = tmp_path / "scan.png"
+        Image.new("RGB", (breedte, hoogte), "white").save(plaatje)
+
+        doc = pymupdf.open()
+        # Ruim groter dan het beeld, zodat "op paginabreedte renderen" zou
+        # opschalen als we er niets aan deden.
+        pagina = doc.new_page(width=1200, height=1600)
+        pagina.insert_image(pymupdf.Rect(0, 0, 1200, 1600), filename=str(plaatje))
+        pad = tmp_path / "scan.pdf"
+        doc.save(pad)
+        doc.close()
+        return pad
+
+    def test_a_scan_is_not_rendered_larger_than_it_is(self, tmp_path: Path):
+        from io import BytesIO
+
+        from PIL import Image
+
+        from bookpal.formats.pdf import PdfBook
+
+        pad = self._gescand(tmp_path, 600, 800)
+        with PdfBook(pad) as boek:
+            raw = boek.get_page(0, target_width=1600)
+        with Image.open(BytesIO(raw.data)) as beeld:
+            assert beeld.width <= 600, f"opgeschaald naar {beeld.width}"
+
+    def test_a_smaller_request_is_still_honoured(self, tmp_path: Path):
+        """De grens is een plafond, geen vaste maat."""
+        from io import BytesIO
+
+        from PIL import Image
+
+        from bookpal.formats.pdf import PdfBook
+
+        pad = self._gescand(tmp_path, 600, 800)
+        with PdfBook(pad) as boek:
+            raw = boek.get_page(0, target_width=300)
+        with Image.open(BytesIO(raw.data)) as beeld:
+            assert beeld.width <= 300
+
+    def test_a_page_without_images_renders_at_the_asked_width(self, tmp_path: Path):
+        """Een pdf met tekst moet juist wél groot gerenderd worden, anders is
+        hij onleesbaar."""
+        from io import BytesIO
+
+        import pymupdf
+        from PIL import Image
+
+        from bookpal.formats.pdf import PdfBook
+
+        doc = pymupdf.open()
+        pagina = doc.new_page(width=600, height=800)
+        pagina.insert_text((72, 72), "Hallo")
+        pad = tmp_path / "tekst.pdf"
+        doc.save(pad)
+        doc.close()
+
+        with PdfBook(pad) as boek:
+            raw = boek.get_page(0, target_width=1600)
+        with Image.open(BytesIO(raw.data)) as beeld:
+            assert beeld.width > 1000
