@@ -39,6 +39,7 @@ from bookpal.translate.preferences import (
 )
 from bookpal.translate.queue import queue
 from bookpal.translate.service import (
+    AlreadyColour,
     best_available,
     bubbles_for,
     colorise_page,
@@ -413,6 +414,10 @@ def make_page_colour(
     translator = GeminiPageTranslator(settings.gemini_api_key, TranslateMode.IMAGE_PRO.model)
     try:
         colorise_page(session, translator, book, page_index, target_lang=_lang(lang), force=force)
+    except AlreadyColour as exc:
+        # 412 en geen 502: er is niets kapot. De lezer herkent deze code, vraagt
+        # het je, en stuurt het dan opnieuw met force.
+        raise HTTPException(status_code=412, detail=str(exc)) from exc
     except TranslationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:

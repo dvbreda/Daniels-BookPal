@@ -73,6 +73,14 @@ export function ComicReader({ book, onClose }: Props) {
   // overheen: dat is waarom kleur en de tekststand samen kunnen, zonder dat het
   // beeldmodel de ballonnen hoeft leeg te vegen — wat het niet betrouwbaar kan.
   const [coloured, setColoured] = useStoredState("reader.colour", false);
+  // Hoe vaak een pagina opnieuw is gemaakt. Zonder dit blijft na "opnieuw"
+  // dezelfde afbeelding staan: het adres verandert niet, dus de browser haalt
+  // niets op. Per pagina en niet één teller voor alles, anders laadt een heel
+  // hoofdstuk opnieuw omdat je één pagina overdeed.
+  const [versies, setVersies] = useState<Record<number, number>>({});
+  const opnieuwGemaakt = useCallback((index: number) => {
+    setVersies((huidig) => ({ ...huidig, [index]: (huidig[index] ?? 0) + 1 }));
+  }, []);
   const adjust = useMemo(() => ({ crop, contrast }), [crop, contrast]);
   const [dismissedNext, setDismissedNext] = useState(false);
 
@@ -283,6 +291,7 @@ export function ComicReader({ book, onClose }: Props) {
           translated={translated}
           coloured={coloured}
           adjust={adjust}
+          versies={versies}
         />
       ) : (
         <div
@@ -306,6 +315,7 @@ export function ComicReader({ book, onClose }: Props) {
                 fitClass={fitClass}
                 translated={translated}
                 coloured={coloured}
+                versie={versies[page] ?? 0}
                 adjust={adjust}
                 grid={
                   grid === 0
@@ -353,6 +363,7 @@ export function ComicReader({ book, onClose }: Props) {
           setTranslated={setTranslated}
           coloured={coloured}
           setColoured={setColoured}
+          onRemade={opnieuwGemaakt}
           onSeek={setPage}
           onClose={() => onClose(pendingPercent.current ?? 0)}
         />
@@ -371,6 +382,7 @@ interface VerticalProps {
   translated: boolean;
   coloured: boolean;
   adjust: { crop: boolean; contrast: number };
+  versies: Record<number, number>;
 }
 
 /** Doorlopende verticale weergave voor webtoons — daar zijn "pagina's" een
@@ -385,6 +397,7 @@ function VerticalReader({
   translated,
   coloured,
   adjust,
+  versies,
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);
@@ -493,6 +506,7 @@ function VerticalReader({
             adjust={adjust}
             translated={translated}
             coloured={coloured}
+            versie={versies[index] ?? 0}
             loaded={loaded.has(index)}
             onLoaded={(width, height) => {
               onAspect(index, width, height);
@@ -533,6 +547,8 @@ interface ChromeProps {
   setTranslated: (value: boolean) => void;
   coloured: boolean;
   setColoured: (value: boolean) => void;
+  /** Bijhouden dat een pagina opnieuw gemaakt is, zodat de afbeelding ververst. */
+  onRemade: (page: number) => void;
   onSeek: (page: number) => void;
   onClose: () => void;
 }
@@ -566,6 +582,7 @@ function Chrome(props: ChromeProps) {
     setTranslated,
     coloured,
     setColoured,
+    onRemade,
     onSeek,
     onClose,
   } = props;
@@ -713,9 +730,18 @@ function Chrome(props: ChromeProps) {
               <TranslateControl
                 bookId={book.id}
                 currentPage={currentPage}
+                translated={translated}
                 setActive={setTranslated}
+                onRemade={onRemade}
               />
             </div>
+
+            <RedoControl
+              bookId={book.id}
+              currentPage={currentPage}
+              translated={translated}
+              onRemade={onRemade}
+            />
 
             <p className="text-slate-500">
               Pijltjes bladeren, D dubbel, V doorlopend, F passend, Esc sluit.
@@ -800,6 +826,7 @@ function TranslatablePage({
   fitClass,
   translated,
   coloured,
+  versie,
   adjust,
   grid,
   onAspect,
@@ -810,6 +837,8 @@ function TranslatablePage({
   fitClass: string;
   translated: boolean;
   coloured: boolean;
+  /** Telt op als deze pagina opnieuw gemaakt is; hoort in de URL thuis. */
+  versie: number;
   adjust: { crop: boolean; contrast: number };
   grid: GridTransform | null;
   onAspect: (index: number, width: number, height: number) => void;
@@ -817,6 +846,11 @@ function TranslatablePage({
   const { data } = usePageTranslation(book.id, page, translated);
   const useFullPage = translated && data?.full_page === true;
   const [geenKleur, setGeenKleur] = useState(false);
+  // Maar na het inkleuren ís hij er wel. Zonder dit blijft de eerdere 404
+  // gelden en kijk je naar het origineel terwijl je net betaald hebt.
+  useEffect(() => {
+    setGeenKleur(false);
+  }, [versie]);
 
   return (
     // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
@@ -841,9 +875,9 @@ function TranslatablePage({
       <img
         src={
           useFullPage
-            ? imageUrl.fullTranslation(book.id, page)
+            ? imageUrl.fullTranslation(book.id, page, undefined, versie)
             : coloured && !geenKleur
-              ? imageUrl.colour(book.id, page, translated ? data?.target_lang : undefined)
+              ? imageUrl.colour(book.id, page, translated ? data?.target_lang : undefined, versie)
               : imageUrl.page(book.id, page, profile, adjust)
         }
         alt={`Pagina ${page + 1}`}
@@ -860,6 +894,149 @@ function TranslatablePage({
 }
 
 /**
+ * Inkleuren, met een vraag als de pagina al kleur heeft.
+ *
+ * Gedeeld door de gewone knop en het opnieuw-paneel, want de vraag hoort bij
+ * het inkleuren zelf en niet bij één van de twee knoppen. De server antwoordt
+ * met 412 als de tekenaar de pagina al kleurde; dat is geen storing maar een
+ * bevestiging die je nog kunt geven.
+ */
+function useColourise(
+  bookId: number,
+  page: number,
+  lang: string | undefined,
+  onRemade: (page: number) => void,
+) {
+  const [busy, setBusy] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+  const [vraag, setVraag] = useState(false);
+  const [klaar, setKlaar] = useState(false);
+
+  const start = useCallback(
+    async (force: boolean) => {
+      setBusy(true);
+      setFout(null);
+      setVraag(false);
+      setKlaar(false);
+      try {
+        await api.colourisePage(bookId, page, lang, force || undefined);
+        // De afbeelding staat op hetzelfde adres, dus zonder dit blijft de
+        // vorige versie in beeld.
+        onRemade(page);
+        setKlaar(true);
+      } catch (exc) {
+        if (exc instanceof ApiError && exc.status === 412) setVraag(true);
+        else setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
+      } finally {
+        setBusy(false);
+      }
+    },
+    [bookId, page, lang, onRemade],
+  );
+
+  return { busy, fout, vraag, klaar, start, annuleer: () => setVraag(false) };
+}
+
+/**
+ * Iets nog een keer laten maken.
+ *
+ * Een vertaling of inkleuring die er eenmaal ligt wordt nooit vanzelf
+ * vervangen — dat zou geld kosten bij elke pagina die je terugbladert. Maar
+ * soms is de opdracht beter geworden of viel het antwoord tegen, en dan is dit
+ * de enige manier om eroverheen te gaan. Bewust achter de instellingen: het
+ * kost per klik ongeveer evenveel als de eerste keer.
+ */
+function RedoControl({
+  bookId,
+  currentPage,
+  translated,
+  onRemade,
+}: {
+  bookId: number;
+  currentPage: number;
+  translated: boolean;
+  onRemade: (page: number) => void;
+}) {
+  const queryClient = useQueryClient();
+  // Dezelfde sleutels als de vertaalknop, dus dit kost geen extra verzoek.
+  const { data: vertaling } = usePageTranslation(bookId, currentPage, true);
+  const { data: status } = useQuery({
+    queryKey: ["translation-status", bookId],
+    queryFn: () => api.translationStatus(bookId),
+  });
+  const [busy, setBusy] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+  const [klaar, setKlaar] = useState<string | null>(null);
+  const kleur = useColourise(
+    bookId,
+    currentPage,
+    translated ? vertaling?.target_lang : undefined,
+    onRemade,
+  );
+
+  if (!status?.configured) return null;
+
+  // Opnieuw vertalen doet het in dezelfde stand als wat er ligt: heb je deze
+  // pagina laten hertekenen, dan wil je geen tekstvlakken terugkrijgen.
+  async function opnieuwVertalen() {
+    if (!vertaling) return;
+    setBusy(true);
+    setFout(null);
+    setKlaar(null);
+    try {
+      if (vertaling.full_page) {
+        await api.translatePageFully(bookId, currentPage, {
+          mode: vertaling.mode,
+          force: true,
+        });
+      } else {
+        await api.makePageTranslation(bookId, currentPage, undefined, true);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
+      onRemade(currentPage);
+      setKlaar("Opnieuw vertaald.");
+    } catch (exc) {
+      setFout(exc instanceof ApiError ? exc.message : "Vertalen mislukt.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 border-t border-ink-700 pt-2">
+      <span className="text-slate-500">Opnieuw</span>
+      <Toggle
+        active={false}
+        disabled={busy || kleur.busy || !vertaling}
+        onClick={() => void opnieuwVertalen()}
+        title={
+          vertaling
+            ? "Deze pagina opnieuw laten vertalen, in dezelfde stand als wat er ligt"
+            : "Deze pagina is nog niet vertaald"
+        }
+      >
+        {busy ? "Bezig…" : "Vertalen"}
+      </Toggle>
+      <Toggle
+        active={false}
+        disabled={busy || kleur.busy}
+        onClick={() => void kleur.start(true)}
+        title="Deze pagina opnieuw laten inkleuren (~$0,13), ook als hij al kleur heeft"
+      >
+        {kleur.busy ? "Bezig…" : "Inkleuren"}
+      </Toggle>
+      {(fout ?? kleur.fout ?? klaar ?? (kleur.klaar ? "Opnieuw ingekleurd." : null)) && (
+        <span
+          className={`max-w-[16rem] truncate ${fout ?? kleur.fout ? "text-danger" : "text-slate-400"}`}
+        >
+          {fout ?? kleur.fout ?? klaar ?? "Opnieuw ingekleurd."}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/**
  * Vertaalknop met voortgang (M8).
  *
  * Verschijnt alleen als er een Gemini-sleutel is: zonder sleutel zou hij je op
@@ -870,11 +1047,15 @@ function TranslatablePage({
 function TranslateControl({
   bookId,
   currentPage,
+  translated,
   setActive,
+  onRemade,
 }: {
   bookId: number;
   currentPage: number;
+  translated: boolean;
   setActive: (value: boolean) => void;
+  onRemade: (page: number) => void;
 }) {
   const queryClient = useQueryClient();
   const { data: vertaling } = usePageTranslation(bookId, currentPage, true);
@@ -897,7 +1078,14 @@ function TranslateControl({
 
   const [busy, setBusy] = useState<string | null>(null);
   const [fout, setFout] = useState<string | null>(null);
-  const [kleurKlaar, setKleurKlaar] = useState(false);
+  // De taal alleen meesturen als je de vertaling aan hebt staan: anders maak je
+  // een ingekleurde Nederlandse pagina die je vervolgens niet te zien krijgt.
+  const kleur = useColourise(
+    bookId,
+    currentPage,
+    translated ? vertaling?.target_lang : undefined,
+    onRemade,
+  );
 
   if (!status?.configured) return null;
 
@@ -923,25 +1111,6 @@ function TranslateControl({
       // hiervoor niet: de knop ging terug naar rust en er gebeurde niets, wat
       // niet te onderscheiden is van "deze pagina heeft geen tekst".
       setFout(exc instanceof ApiError ? exc.message : "Vertalen mislukt.");
-    } finally {
-      setBusy(null);
-    }
-  }
-
-  // De dure standen: altijd een bewuste keuze per pagina, ook als de
-  // schakelaar in de instellingen op goedkoop staat. Ze kosten tientallen
-  // centen per pagina, dus ze horen nooit vanzelf te lopen.
-  async function colouriseThisPage() {
-    setBusy("kleur");
-    setFout(null);
-    try {
-      // De taal meegeven zodra de vertaling aanstaat: dan wordt de hertekende
-      // vertaalde pagina ingekleurd in plaats van het kale origineel, en krijg
-      // je kleur en Nederlandse tekst in één beeld.
-      await api.colourisePage(bookId, currentPage, vertaling?.target_lang);
-      setKleurKlaar(true);
-    } catch (exc) {
-      setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
     } finally {
       setBusy(null);
     }
@@ -975,11 +1144,11 @@ function TranslateControl({
           hetzelfde beeldmodel gebruikt en per pagina evenveel kost. */}
       <Toggle
         active={false}
-        disabled={busy !== null}
-        onClick={() => void colouriseThisPage()}
+        disabled={busy !== null || kleur.busy}
+        onClick={() => void kleur.start(false)}
         title="Deze pagina laten inkleuren (~$0,13). Zet daarna 'Kleur' aan."
       >
-        {busy === "kleur" ? "Bezig…" : "Inkleuren"}
+        {kleur.busy ? "Bezig…" : "Inkleuren"}
       </Toggle>
       {/* Eén knop, met de stand die jij hebt gekozen. Eerder stonden hier
           "Volledig" en "Volledig+" naast elkaar, en dat zei niet wat het deed
@@ -1026,10 +1195,28 @@ function TranslateControl({
         </span>
       </span>
 
-      {(busy !== null || fout !== null || kleurKlaar) && (
-        <span className={`max-w-[16rem] truncate ${fout ? "text-danger" : "text-slate-400"}`}>
+      {/* Al kleur op de pagina? Dan is inkleuren overschilderen: het model
+          vervangt het palet van de tekenaar door zijn eigen aquarel. Vragen
+          dus, in plaats van het geld uitgeven en het daarna uitleggen. */}
+      {kleur.vraag && (
+        <span className="flex items-center gap-1 text-amber-300">
+          Al in kleur — toch overschilderen?
+          <Toggle active={false} onClick={() => void kleur.start(true)}>
+            Ja
+          </Toggle>
+          <Toggle active={false} onClick={kleur.annuleer}>
+            Nee
+          </Toggle>
+        </span>
+      )}
+
+      {(busy !== null || fout !== null || kleur.busy || kleur.fout || kleur.klaar) && (
+        <span
+          className={`max-w-[16rem] truncate ${fout ?? kleur.fout ? "text-danger" : "text-slate-400"}`}
+        >
           {fout ??
-            (busy === "kleur"
+            kleur.fout ??
+            (kleur.busy
               ? "Bezig met inkleuren…"
               : busy !== null
                 ? "Bezig met vertalen…"
@@ -1158,6 +1345,7 @@ function VerticalPage({
   adjust,
   translated,
   coloured,
+  versie,
   loaded,
   onLoaded,
 }: {
@@ -1167,6 +1355,8 @@ function VerticalPage({
   adjust: { crop: boolean; contrast: number };
   translated: boolean;
   coloured: boolean;
+  /** Telt op als deze pagina opnieuw gemaakt is; hoort in de URL thuis. */
+  versie: number;
   loaded: boolean;
   onLoaded: (width: number, height: number) => void;
 }) {
@@ -1175,6 +1365,11 @@ function VerticalPage({
   // Niet elke pagina is ingekleurd; dat merken we aan de afbeelding zelf in
   // plaats van er vooraf naar te vragen — dat scheelt een verzoek per pagina.
   const [geenKleur, setGeenKleur] = useState(false);
+  // Maar na het inkleuren ís hij er wel. Zonder dit blijft de eerdere 404
+  // gelden en kijk je naar het origineel terwijl je net betaald hebt.
+  useEffect(() => {
+    setGeenKleur(false);
+  }, [versie]);
 
   return (
     <div
@@ -1185,9 +1380,9 @@ function VerticalPage({
       <img
         src={
           hertekend
-            ? imageUrl.fullTranslation(book.id, index)
+            ? imageUrl.fullTranslation(book.id, index, undefined, versie)
             : coloured && !geenKleur
-              ? imageUrl.colour(book.id, index, translated ? data?.target_lang : undefined)
+              ? imageUrl.colour(book.id, index, translated ? data?.target_lang : undefined, versie)
               : imageUrl.page(book.id, index, profile, adjust)
         }
         alt={`Pagina ${index + 1}`}

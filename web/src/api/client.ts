@@ -361,9 +361,11 @@ export const api = {
     request<PageTranslation>(
       `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
     ),
-  makePageTranslation: (bookId: number, index: number, lang?: string) =>
+  // force gooit weg wat er ligt en vertaalt opnieuw — voor als de opdracht
+  // beter is geworden of het antwoord tegenviel.
+  makePageTranslation: (bookId: number, index: number, lang?: string, force?: boolean) =>
     request<PageTranslation>(
-      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
+      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang, force })}`,
       { method: "POST" },
     ),
   translateBook: (bookId: number, body: { lang?: string; from_page?: number } = {}) =>
@@ -383,9 +385,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  colourisePage: (bookId: number, pageIndex: number, lang?: string) =>
+  colourisePage: (bookId: number, pageIndex: number, lang?: string, force?: boolean) =>
     request<{ book_id: number; page_index: number; available: boolean }>(
-      `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang })}`,
+      `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang, force })}`,
       { method: "POST" },
     ),
   translatePageFully: (
@@ -404,8 +406,10 @@ export const imageUrl = {
   // Met taal krijg je de ingekleurde vertáling als die er is; zonder taal
   // alleen het ingekleurde origineel. Met de vertaling uit hoor je immers geen
   // Nederlandse tekst te zien.
-  colour: (bookId: number, pageIndex: number, lang?: string) =>
-    `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang })}`,
+  // v telt op zodra je een pagina opnieuw laat maken. Zonder dat blijft de
+  // browser de vorige versie tonen: dezelfde URL, dus geen nieuw verzoek.
+  colour: (bookId: number, pageIndex: number, lang?: string, v?: number) =>
+    `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang, v: v || undefined })}`,
   cover: (bookId: number, profile = "cover") =>
     `/api/books/${bookId}/cover${queryString({ profile })}`,
   /** De officiële omslag van een bron — alleen zinvol als has_cover_url. */
@@ -426,6 +430,6 @@ export const imageUrl = {
     })}`,
   file: (bookId: number) => `/api/books/${bookId}/file`,
   /** De hele pagina hertekend mét vertaling (beeldstanden, M8). */
-  fullTranslation: (bookId: number, index: number, lang?: string) =>
-    `/api/books/${bookId}/pages/${index}/full${queryString({ lang })}`,
+  fullTranslation: (bookId: number, index: number, lang?: string, v?: number) =>
+    `/api/books/${bookId}/pages/${index}/full${queryString({ lang, v: v || undefined })}`,
 };

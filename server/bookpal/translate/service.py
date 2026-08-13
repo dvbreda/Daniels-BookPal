@@ -198,6 +198,15 @@ COLOUR_PROVIDER = "gemini-color"
 COLOUR_VARIANT = "kleur"
 
 
+class AlreadyColour(TranslationError):
+    """Deze pagina heeft al kleur van de tekenaar zelf.
+
+    Een eigen soort omdat het geen storing is: er ging niets mis, het is alleen
+    de vraag of je dit wel wilt. De lezer maakt er een bevestiging van en stuurt
+    het desgewenst nog een keer met ``force``.
+    """
+
+
 def colour_variant(target_lang: str | None) -> str:
     """Onder welke naam een ingekleurde pagina wordt bewaard.
 
@@ -262,6 +271,11 @@ def colorise_page(
                 {"model": translator.model},
             )
             return stored
+
+        # Een pagina die de tekenaar zelf al kleurde wordt hier niet ingekleurd
+        # maar overschilderd, en dat kost evenveel. Vragen dus.
+        if recolour.is_colour(basis):
+            raise AlreadyColour("deze pagina heeft al kleur; inkleuren vervangt het palet")
 
     produced = translator.colorise_page(basis, media_type=media_type)
     # Alleen de kleur ervan gebruiken; het lijnwerk en de letters houden we

@@ -1060,3 +1060,102 @@ class TestRecompose:
         verf = Image.new("RGB", (60, 80), (200, 60, 60))
 
         assert recompose(self._bytes(pagina), self._bytes(verf)).size == (30, 40)
+
+
+def _colour_book(session: Session, tmp_path: Path) -> Book:
+    """Een boek waarvan de eerste pagina al kleur van de tekenaar heeft."""
+    import zipfile
+
+    from bookpal.models import File, LibraryRoot
+
+    pad = tmp_path / "kleurstrip.cbz"
+    plaat = io.BytesIO()
+    Image.new("RGB", (60, 90), (200, 40, 40)).save(plaat, format="PNG")
+    with zipfile.ZipFile(pad, "w") as archief:
+        for nummer in range(3):
+            archief.writestr(f"{nummer + 1:03d}.png", plaat.getvalue())
+
+    boek = _comic(session, pages=3)
+    root = LibraryRoot(name="R", path=str(tmp_path))
+    session.add(root)
+    session.flush()
+    bestand = File(
+        library_root_id=root.id,
+        path=str(pad),
+        size=pad.stat().st_size,
+        mtime=0.0,
+        extension=".cbz",
+    )
+    session.add(bestand)
+    session.flush()
+    boek.file_id = bestand.id
+    session.commit()
+    return boek
+
+
+class TestAlreadyColour:
+    """Een pagina die de tekenaar zelf kleurde wordt overschilderd, niet ingekleurd."""
+
+    def _bytes(self, image: Image.Image) -> bytes:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_a_black_and_white_page_is_not_colour(self):
+        from bookpal.translate.recolour import is_colour
+
+        pagina = Image.new("RGB", (60, 60), (255, 255, 255))
+        for x in range(60):
+            pagina.putpixel((x, 30), (0, 0, 0))
+        assert is_colour(self._bytes(pagina)) is False
+
+    def test_yellowed_paper_is_not_colour(self):
+        """Anders zou elke oude scan als kleurpagina gelden."""
+        from bookpal.translate.recolour import is_colour
+
+        assert is_colour(self._bytes(Image.new("RGB", (60, 60), (240, 228, 200)))) is False
+
+    def test_a_two_tone_page_counts_as_colour(self):
+        """Bewust: liever een vraag te veel dan een palet stilletjes vervangen."""
+        from bookpal.translate.recolour import is_colour
+
+        pagina = Image.new("RGB", (60, 60), (255, 255, 255))
+        for y in range(30):
+            for x in range(60):
+                pagina.putpixel((x, y), (200, 30, 30))
+        assert is_colour(self._bytes(pagina)) is True
+
+    def test_colourising_a_colour_page_asks_first(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _colour_book(session, tmp_path)
+        response = client.post(f"/api/books/{boek.id}/pages/0/colour")
+        assert response.status_code == 412
+        assert "kleur" in response.json()["detail"]
+
+    def test_force_goes_ahead(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """De vraag is een bevestiging, geen verbod."""
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _colour_book(session, tmp_path)
+        geverfd = Image.new("RGB", (40, 60), (40, 120, 40))
+        buffer = io.BytesIO()
+        geverfd.save(buffer, format="PNG")
+        monkeypatch.setattr(
+            "bookpal.translate.imagepage.GeminiPageTranslator.colorise_page",
+            lambda self, image, *, media_type: buffer.getvalue(),
+        )
+
+        response = client.post(f"/api/books/{boek.id}/pages/0/colour?force=true")
+        assert response.status_code == 200
+        assert client.get(f"/api/books/{boek.id}/pages/0/colour").status_code == 200
