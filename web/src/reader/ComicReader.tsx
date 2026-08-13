@@ -4,13 +4,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
-import type { BatchKind, BatchPlan, BookDetail, TranslateMode } from "../api/types";
+import type {
+  BatchKind,
+  BatchPlan,
+  BookDetail,
+  TranslateMode,
+} from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
 import type { GridTransform } from "./grid";
 import { cellOrder, cellTransform } from "./grid";
 import { TranslationOverlay } from "./TranslationOverlay";
 import { usePageColour } from "./usePageColour";
+import { wheelSteps } from "./wheel";
 import { usePageTranslation } from "./usePageTranslation";
 import {
   buildSpreads,
@@ -39,7 +45,10 @@ export function ComicReader({ book, onClose }: Props) {
   const pageCount = book.page_count ?? 0;
   const profile = useMemo(() => pickPageProfile(), []);
 
-  const [viewMode, setViewMode] = useStoredState<ViewMode>("reader.viewMode", "paged");
+  const [viewMode, setViewMode] = useStoredState<ViewMode>(
+    "reader.viewMode",
+    "paged",
+  );
   const [doublePage, setDoublePage] = useStoredState("reader.doublePage", true);
   const [fit, setFit] = useStoredState<FitMode>("reader.fit", "height");
   // De leesrichting komt uit de metadata, maar blijft overschrijfbaar: niet elk
@@ -61,7 +70,10 @@ export function ComicReader({ book, onClose }: Props) {
   });
   const [zoom, setZoom] = useState(1);
   const [showChrome, setShowChrome] = useState(true);
-  const [translated, setTranslated] = useStoredState("reader.translated", false);
+  const [translated, setTranslated] = useStoredState(
+    "reader.translated",
+    false,
+  );
   // Leesinstellingen die het beeld zelf raken; de server snijdt en rekt op en
   // cachet het resultaat, dus dit kost niets bij het omslaan.
   const [crop, setCrop] = useStoredState("reader.crop", false);
@@ -88,7 +100,12 @@ export function ComicReader({ book, onClose }: Props) {
   const spreads = useMemo(
     // Rasterzoom en dubbelpagina sluiten elkaar uit: een raster over twee
     // pagina's tegelijk zou per pagina apart schalen en uit elkaar lopen.
-    () => buildSpreads(pageCount, viewMode === "paged" && doublePage && grid === 0, { aspects }),
+    () =>
+      buildSpreads(
+        pageCount,
+        viewMode === "paged" && doublePage && grid === 0,
+        { aspects },
+      ),
     [pageCount, viewMode, doublePage, grid, aspects],
   );
 
@@ -96,12 +113,17 @@ export function ComicReader({ book, onClose }: Props) {
   const currentSpread = spreads[spreadIndex] ?? [];
   const currentPage = currentSpread[0] ?? 0;
 
-  const noteAspect = useCallback((index: number, width: number, height: number) => {
-    if (height <= 0) return;
-    setAspects((current) =>
-      current[index] === undefined ? { ...current, [index]: width / height } : current,
-    );
-  }, []);
+  const noteAspect = useCallback(
+    (index: number, width: number, height: number) => {
+      if (height <= 0) return;
+      setAspects((current) =>
+        current[index] === undefined
+          ? { ...current, [index]: width / height }
+          : current,
+      );
+    },
+    [],
+  );
 
   // Vooruit laden zodat een paginawissel geen laadmoment is.
   useEffect(() => {
@@ -210,7 +232,9 @@ export function ComicReader({ book, onClose }: Props) {
           setViewMode(viewMode === "paged" ? "vertical" : "paged");
           break;
         case "f":
-          setFit(fit === "width" ? "height" : fit === "height" ? "screen" : "width");
+          setFit(
+            fit === "width" ? "height" : fit === "height" ? "screen" : "width",
+          );
           break;
         case "Escape":
           onClose(pendingPercent.current ?? 0);
@@ -238,7 +262,10 @@ export function ComicReader({ book, onClose }: Props) {
     if (!event.ctrlKey) return;
     event.preventDefault();
     setZoom((current) =>
-      Math.min(MAX_ZOOM, Math.max(1, current - Math.sign(event.deltaY) * ZOOM_STEP)),
+      Math.min(
+        MAX_ZOOM,
+        Math.max(1, current - Math.sign(event.deltaY) * ZOOM_STEP),
+      ),
     );
   }
 
@@ -259,7 +286,10 @@ export function ComicReader({ book, onClose }: Props) {
       <div className="flex h-viewport items-center justify-center bg-ink-900 text-slate-300">
         <div className="text-center">
           <p>Dit boek heeft geen leesbare pagina's.</p>
-          <button className="mt-4 rounded bg-ink-700 px-4 py-2" onClick={() => onClose(0)}>
+          <button
+            className="mt-4 rounded bg-ink-700 px-4 py-2"
+            onClick={() => onClose(0)}
+          >
             Terug
           </button>
         </div>
@@ -321,7 +351,11 @@ export function ComicReader({ book, onClose }: Props) {
                 grid={
                   grid === 0
                     ? null
-                    : cellTransform(cells[cell] ?? { row: 0, col: 0 }, gridRows, gridCols)
+                    : cellTransform(
+                        cells[cell] ?? { row: 0, col: 0 },
+                        gridRows,
+                        gridCols,
+                      )
                 }
                 onAspect={noteAspect}
               />
@@ -331,7 +365,10 @@ export function ComicReader({ book, onClose }: Props) {
       )}
 
       {atEnd && !dismissedNext && (
-        <NextChapterPrompt bookId={book.id} onDismiss={() => setDismissedNext(true)} />
+        <NextChapterPrompt
+          bookId={book.id}
+          onDismiss={() => setDismissedNext(true)}
+        />
       )}
 
       {showChrome && (
@@ -425,7 +462,9 @@ function VerticalReader({
 
     let attempts = 0;
     const timer = window.setInterval(() => {
-      const target = container.querySelector<HTMLElement>(`[data-page="${initialPage}"]`);
+      const target = container.querySelector<HTMLElement>(
+        `[data-page="${initialPage}"]`,
+      );
       if (target) target.scrollIntoView({ block: "start" });
       attempts += 1;
       if (attempts >= 8) {
@@ -434,6 +473,24 @@ function VerticalReader({
       }
     }, 150);
     return () => window.clearInterval(timer);
+  }, [initialPage]);
+
+  // Daarna is elke wijziging van buitenaf een sprong: de tijdlijn, of een tik
+  // op een hoofdstukknop. Zonder dit deed de balk in deze weergave niets — hij
+  // veranderde de teller wel, maar niemand scrolde.
+  //
+  // De vergelijking met wat de observer als laatste meldde is het verschil
+  // tussen "jij vraagt om pagina 30" en "de observer zag zojuist pagina 30
+  // langskomen"; op dat tweede reageren zou het scrollen bij elke pagina
+  // onderbreken.
+  useEffect(() => {
+    if (!jumped.current || initialPage === visible.current) return;
+    const doel = containerRef.current?.querySelector<HTMLElement>(
+      `[data-page="${initialPage}"]`,
+    );
+    if (!doel) return;
+    visible.current = initialPage;
+    doel.scrollIntoView({ block: "start" });
   }, [initialPage]);
 
   useEffect(() => {
@@ -459,7 +516,8 @@ function VerticalReader({
       },
       { root: container, threshold: 0.5 },
     );
-    for (const child of container.querySelectorAll("[data-page]")) observer.observe(child);
+    for (const child of container.querySelectorAll("[data-page]"))
+      observer.observe(child);
     return () => observer.disconnect();
   }, [onVisiblePage, pageCount]);
 
@@ -557,6 +615,7 @@ interface ChromeProps {
 function Chrome(props: ChromeProps) {
   // Standaard dicht: een lezer hoort een strip te tonen, geen bedieningspaneel.
   const [showSettings, setShowSettings] = useState(false);
+  const tijdlijn = useRef<HTMLInputElement>(null);
   const {
     book,
     fit,
@@ -588,10 +647,36 @@ function Chrome(props: ChromeProps) {
     onClose,
   } = props;
 
+  // Scrollen over de balk bladert. Een eigen luisteraar en geen onWheel, omdat
+  // React die passief aanhangt: dan kan preventDefault niet, en scrolt de
+  // doorlopende weergave eronder mee terwijl je bladert.
+  useEffect(() => {
+    const element = tijdlijn.current;
+    if (!element) return;
+    let rest = 0;
+    function onWheel(event: WheelEvent) {
+      event.preventDefault();
+      const uitkomst = wheelSteps(rest, event.deltaY + event.deltaX);
+      rest = uitkomst.rest;
+      if (uitkomst.steps === 0) return;
+      onSeek(
+        Math.min(
+          Math.max(0, currentPage + uitkomst.steps),
+          Math.max(0, pageCount - 1),
+        ),
+      );
+    }
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, [currentPage, onSeek, pageCount]);
+
   return (
     <>
       <div className="absolute inset-x-0 top-0 flex items-center gap-3 bg-ink-900/90 px-4 py-3 text-sm text-slate-200 backdrop-blur">
-        <button className="rounded px-2 py-1 hover:bg-ink-700" onClick={onClose}>
+        <button
+          className="rounded px-2 py-1 hover:bg-ink-700"
+          onClick={onClose}
+        >
           ← Terug
         </button>
         <span className="truncate font-medium">
@@ -627,8 +712,11 @@ function Chrome(props: ChromeProps) {
         {/* Bij het begin van het hoofdstuk: de knoppen die het hele hoofdstuk
             klaarzetten. Daar maak je die keuze, niet halverwege — en het is
             precies waar je op de cover staat te kijken. */}
-        {currentPage === 0 && <BatchPanel bookId={book.id} currentPage={currentPage} />}
+        {currentPage === 0 && (
+          <BatchPanel bookId={book.id} currentPage={currentPage} />
+        )}
         <input
+          ref={tijdlijn}
           type="range"
           min={0}
           max={Math.max(0, pageCount - 1)}
@@ -644,11 +732,16 @@ function Chrome(props: ChromeProps) {
         <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
           <Toggle
             active={viewMode === "vertical"}
-            onClick={() => setViewMode(viewMode === "paged" ? "vertical" : "paged")}
+            onClick={() =>
+              setViewMode(viewMode === "paged" ? "vertical" : "paged")
+            }
           >
             {viewMode === "vertical" ? "Doorlopend" : "Pagina's"}
           </Toggle>
-          <Toggle active={translated} onClick={() => setTranslated(!translated)}>
+          <Toggle
+            active={translated}
+            onClick={() => setTranslated(!translated)}
+          >
             Vertaling
           </Toggle>
           {/* Kleur vervangt de pagina zelf; onze tekstvlakken komen er gewoon
@@ -663,7 +756,10 @@ function Chrome(props: ChromeProps) {
           >
             Kleur
           </Toggle>
-          <Toggle active={showSettings} onClick={() => setShowSettings(!showSettings)}>
+          <Toggle
+            active={showSettings}
+            onClick={() => setShowSettings(!showSettings)}
+          >
             ⚙ Weergave
           </Toggle>
           <span className="ml-auto tabular-nums text-slate-500">
@@ -681,21 +777,37 @@ function Chrome(props: ChromeProps) {
               >
                 Dubbel
               </Toggle>
-              <Toggle active={rightToLeft} onClick={() => setRightToLeft(!rightToLeft)}>
+              <Toggle
+                active={rightToLeft}
+                onClick={() => setRightToLeft(!rightToLeft)}
+              >
                 {rightToLeft ? "Rechts → links" : "Links → rechts"}
               </Toggle>
               <div className="flex gap-1">
                 {(["width", "height", "screen"] as FitMode[]).map((mode) => (
-                  <Toggle key={mode} active={fit === mode} onClick={() => setFit(mode)}>
-                    {mode === "width" ? "Breedte" : mode === "height" ? "Hoogte" : "Passend"}
+                  <Toggle
+                    key={mode}
+                    active={fit === mode}
+                    onClick={() => setFit(mode)}
+                  >
+                    {mode === "width"
+                      ? "Breedte"
+                      : mode === "height"
+                        ? "Hoogte"
+                        : "Passend"}
                   </Toggle>
                 ))}
               </div>
               <div className="ml-auto flex items-center gap-1">
-                <Toggle active={false} onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}>
+                <Toggle
+                  active={false}
+                  onClick={() => setZoom(Math.max(1, zoom - ZOOM_STEP))}
+                >
                   −
                 </Toggle>
-                <span className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</span>
+                <span className="w-12 text-center tabular-nums">
+                  {Math.round(zoom * 100)}%
+                </span>
                 <Toggle
                   active={false}
                   onClick={() => setZoom(Math.min(MAX_ZOOM, zoom + ZOOM_STEP))}
@@ -771,19 +883,29 @@ function Chrome(props: ChromeProps) {
  * abonnement is het volgende hoofdstuk vaak nog een verwijzing, en dan is
  * "bestaat niet" het verkeerde antwoord.
  */
-function NextChapterPrompt({ bookId, onDismiss }: { bookId: number; onDismiss: () => void }) {
+function NextChapterPrompt({
+  bookId,
+  onDismiss,
+}: {
+  bookId: number;
+  onDismiss: () => void;
+}) {
   const navigate = useNavigate();
   const [busy, setBusy] = useState(false);
   const { data } = useQuery({
     queryKey: ["next-chapter", bookId],
     queryFn: () => api.nextChapter(bookId),
-    retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
+    retry: (_count, error) =>
+      !(error instanceof ApiError && error.status === 404),
     staleTime: Infinity,
   });
 
   if (!data) return null;
 
-  const label = [data.volume ? `Deel ${data.volume}` : null, data.number ? `#${data.number}` : null]
+  const label = [
+    data.volume ? `Deel ${data.volume}` : null,
+    data.number ? `#${data.number}` : null,
+  ]
     .filter(Boolean)
     .join(" ");
 
@@ -814,7 +936,10 @@ function NextChapterPrompt({ bookId, onDismiss }: { bookId: number; onDismiss: (
         >
           {busy ? "Ophalen…" : data.has_file ? "Lezen" : "Ophalen en lezen"}
         </button>
-        <button onClick={onDismiss} className="rounded bg-ink-700 px-3 py-1.5 text-slate-300">
+        <button
+          onClick={onDismiss}
+          className="rounded bg-ink-700 px-3 py-1.5 text-slate-300"
+        >
           Later
         </button>
       </div>
@@ -901,17 +1026,28 @@ function TranslatablePage({
         draggable={false}
         onError={() => setGeenKleur(true)}
         onLoad={(event) =>
-          onAspect(page, event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+          onAspect(
+            page,
+            event.currentTarget.naturalWidth,
+            event.currentTarget.naturalHeight,
+          )
         }
       />
-      <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
+      <TranslationOverlay
+        bookId={book.id}
+        pageIndex={page}
+        enabled={translated}
+      />
     </div>
   );
 }
 
 const BATCH_LABELS: Record<BatchKind, { knop: string; wat: string }> = {
   tekst: { knop: "Tekst", wat: "tekstvlakken over het origineel" },
-  hertekend: { knop: "Ingetekend", wat: "de hele pagina hertekend mét vertaling" },
+  hertekend: {
+    knop: "Ingetekend",
+    wat: "de hele pagina hertekend mét vertaling",
+  },
   kleuren: { knop: "Inkleuren", wat: "ingekleurd" },
 };
 
@@ -926,7 +1062,13 @@ const BATCH_LABELS: Record<BatchKind, { knop: string; wat: string }> = {
  * Nooit starten zonder het bedrag te tonen. Dit is de enige knop in de app die
  * met één druk een heel hoofdstuk afrekent.
  */
-function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: number }) {
+function BatchPanel({
+  bookId,
+  currentPage,
+}: {
+  bookId: number;
+  currentPage: number;
+}) {
   const queryClient = useQueryClient();
   const { data: status } = useQuery({
     queryKey: ["translation-status", bookId],
@@ -936,7 +1078,8 @@ function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: numb
     queryKey: ["batch", bookId],
     queryFn: () => api.batchStatus(bookId),
     // Tijdens het werk meekijken; daarna niet meer pollen dan nodig.
-    refetchInterval: (query) => (query.state.data?.state === "bezig" ? 15000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.state === "bezig" ? 15000 : false,
   });
   const [vraag, setVraag] = useState<BatchPlan | null>(null);
   const [bezig, setBezig] = useState(false);
@@ -950,7 +1093,9 @@ function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: numb
     try {
       setVraag(await api.batchPlan(bookId, kind));
     } catch (exc) {
-      setFout(exc instanceof ApiError ? exc.message : "Kon de klus niet inschatten.");
+      setFout(
+        exc instanceof ApiError ? exc.message : "Kon de klus niet inschatten.",
+      );
     } finally {
       setBezig(false);
     }
@@ -1001,9 +1146,12 @@ function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: numb
           ) : (
             <>
               {vraag.pages} pagina&apos;s × ${vraag.price_per_page.toFixed(3)} ={" "}
-              <strong className="tabular-nums">${vraag.total.toFixed(2)}</strong>
+              <strong className="tabular-nums">
+                ${vraag.total.toFixed(2)}
+              </strong>
               <span className="text-slate-500">
-                (batch, {Math.round(vraag.batch_factor * 100)}% van het gewone tarief)
+                (batch, {Math.round(vraag.batch_factor * 100)}% van het gewone
+                tarief)
               </span>
               <Toggle active={false} onClick={() => void starten(vraag.kind)}>
                 Starten
@@ -1017,7 +1165,11 @@ function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: numb
       )}
 
       {klus && !vraag && (
-        <span className={klus.state === "mislukt" ? "text-danger" : "text-slate-400"}>
+        <span
+          className={
+            klus.state === "mislukt" ? "text-danger" : "text-slate-400"
+          }
+        >
           {klus.state === "bezig"
             ? `Bezig: ${BATCH_LABELS[klus.kind].knop.toLowerCase()}, ${klus.done}/${klus.total}`
             : klus.state === "klaar"
@@ -1027,7 +1179,9 @@ function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: numb
       )}
       {fout && <span className="text-danger">{fout}</span>}
       {currentPage > 0 && !loopt && !klus && (
-        <span className="text-slate-500">vanaf het begin van dit hoofdstuk</span>
+        <span className="text-slate-500">
+          vanaf het begin van dit hoofdstuk
+        </span>
       )}
     </div>
   );
@@ -1078,7 +1232,8 @@ function useColourise(
         setKlaar(true);
       } catch (exc) {
         if (exc instanceof ApiError && exc.status === 412) setVraag(true);
-        else setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
+        else
+          setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
       } finally {
         setBusy(false);
       }
@@ -1145,7 +1300,9 @@ function RedoControl({
       } else {
         await api.makePageTranslation(bookId, currentPage, undefined, true);
       }
-      await queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
+      await queryClient.invalidateQueries({
+        queryKey: ["translation", bookId, currentPage],
+      });
       onRemade(currentPage);
       setKlaar("Opnieuw vertaald.");
     } catch (exc) {
@@ -1178,9 +1335,12 @@ function RedoControl({
       >
         {kleur.busy ? "Bezig…" : "Inkleuren"}
       </Toggle>
-      {(fout ?? kleur.fout ?? klaar ?? (kleur.klaar ? "Opnieuw ingekleurd." : null)) && (
+      {(fout ??
+        kleur.fout ??
+        klaar ??
+        (kleur.klaar ? "Opnieuw ingekleurd." : null)) && (
         <span
-          className={`max-w-[16rem] truncate ${fout ?? kleur.fout ? "text-danger" : "text-slate-400"}`}
+          className={`max-w-[16rem] truncate ${(fout ?? kleur.fout) ? "text-danger" : "text-slate-400"}`}
         >
           {fout ?? kleur.fout ?? klaar ?? "Opnieuw ingekleurd."}
         </span>
@@ -1216,7 +1376,12 @@ function pageSource(
   if (coloured && colour?.available) {
     // Alleen om de taal vragen als die versie er ook is; anders krijg je het
     // ingekleurde origineel met de oorspronkelijke tekst erin.
-    return imageUrl.colour(bookId, index, colour.translated ? lang : undefined, versie);
+    return imageUrl.colour(
+      bookId,
+      index,
+      colour.translated ? lang : undefined,
+      versie,
+    );
   }
   if (translated && fullPage) {
     return imageUrl.fullTranslation(bookId, index, undefined, versie);
@@ -1252,7 +1417,8 @@ function TranslateControl({
     queryFn: () => api.translationStatus(bookId),
     // Terwijl de wachtrij loopt willen we de teller zien oplopen; daarna niet
     // meer pollen dan nodig.
-    refetchInterval: (query) => ((query.state.data?.queued ?? 0) > 0 ? 4000 : false),
+    refetchInterval: (query) =>
+      (query.state.data?.queued ?? 0) > 0 ? 4000 : false,
   });
 
   // Wat de knop doet staat in de instellingen, los van wat er vanzelf gebeurt:
@@ -1284,8 +1450,12 @@ function TranslateControl({
   const done = status.translated;
 
   function refresh() {
-    void queryClient.invalidateQueries({ queryKey: ["translation", bookId, currentPage] });
-    void queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] });
+    void queryClient.invalidateQueries({
+      queryKey: ["translation", bookId, currentPage],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["translation-status", bookId],
+    });
   }
 
   async function translateThisPage() {
@@ -1359,7 +1529,9 @@ function TranslateControl({
           void api
             .translateBook(bookId, { from_page: currentPage })
             .then(() =>
-              queryClient.invalidateQueries({ queryKey: ["translation-status", bookId] }),
+              queryClient.invalidateQueries({
+                queryKey: ["translation-status", bookId],
+              }),
             )
             .catch(() => {
               /* zacht falen */
@@ -1372,7 +1544,10 @@ function TranslateControl({
           per pagina; een teller alleen laat je raden of er iets gebeurt. */}
       <span className="flex items-center gap-2">
         {total > 0 && (
-          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-ink-700" aria-hidden>
+          <span
+            className="h-1.5 w-16 overflow-hidden rounded-full bg-ink-700"
+            aria-hidden
+          >
             <span
               className="block h-full rounded-full bg-accent transition-[width]"
               style={{ width: `${Math.round((done / total) * 100)}%` }}
@@ -1399,9 +1574,13 @@ function TranslateControl({
         </span>
       )}
 
-      {(busy !== null || fout !== null || kleur.busy || kleur.fout || kleur.klaar) && (
+      {(busy !== null ||
+        fout !== null ||
+        kleur.busy ||
+        kleur.fout ||
+        kleur.klaar) && (
         <span
-          className={`max-w-[16rem] truncate ${fout ?? kleur.fout ? "text-danger" : "text-slate-400"}`}
+          className={`max-w-[16rem] truncate ${(fout ?? kleur.fout) ? "text-danger" : "text-slate-400"}`}
         >
           {fout ??
             kleur.fout ??
@@ -1435,7 +1614,9 @@ function Toggle({
       onClick={onClick}
       title={title}
       className={`rounded px-2 py-1 transition ${
-        active ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-200 hover:bg-ink-600"
+        active
+          ? "bg-accent text-ink-900"
+          : "bg-ink-700 text-slate-200 hover:bg-ink-600"
       } ${disabled ? "cursor-not-allowed opacity-40" : ""}`}
     >
       {children}
@@ -1457,8 +1638,10 @@ const BUTTON_SHORT: Record<TranslateMode, string> = {
 
 const BUTTON_LABELS: Record<TranslateMode, string> = {
   text: "Tekstvlakken over de pagina (~$0,002 per pagina)",
-  image_fast: "Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)",
-  image_pro: "Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)",
+  image_fast:
+    "Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)",
+  image_pro:
+    "Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)",
 };
 
 /**
@@ -1493,8 +1676,12 @@ function TranslationBadge({
       onClick={onToggle}
       title={
         `${label} — ${MODE_NAMES[data.mode] ?? data.mode}. ` +
-        (visible ? "Tik om het origineel te zien." : "Tik om de vertaling te tonen.") +
-        (hertekend ? " Bij een hertekende pagina kun je niet op losse ballonnen tikken." : "")
+        (visible
+          ? "Tik om het origineel te zien."
+          : "Tik om de vertaling te tonen.") +
+        (hertekend
+          ? " Bij een hertekende pagina kun je niet op losse ballonnen tikken."
+          : "")
       }
       aria-pressed={visible}
       className={`rounded-full px-2 py-0.5 text-xs ${
@@ -1638,10 +1825,19 @@ function VerticalPage({
         draggable={false}
         onError={() => setGeenKleur(true)}
         onLoad={(event) =>
-          onLoaded(event.currentTarget.naturalWidth, event.currentTarget.naturalHeight)
+          onLoaded(
+            event.currentTarget.naturalWidth,
+            event.currentTarget.naturalHeight,
+          )
         }
       />
-      {loaded && <TranslationOverlay bookId={book.id} pageIndex={index} enabled={translated} />}
+      {loaded && (
+        <TranslationOverlay
+          bookId={book.id}
+          pageIndex={index}
+          enabled={translated}
+        />
+      )}
     </div>
   );
 }
