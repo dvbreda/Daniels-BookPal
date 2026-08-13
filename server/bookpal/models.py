@@ -169,6 +169,11 @@ class Series(Base):
         ForeignKey("library_root.id", ondelete="CASCADE"), default=None
     )
     folder_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # Waar de sidecars van deze serie staan: vertalingen, ingekleurde pagina's,
+    # metadata. Eenmaal gekozen blijft dit staan, ook als de serie later ergens
+    # anders terechtkomt — anders zou betaald werk verweesd raken op een pad
+    # dat niemand meer uitrekent.
+    sidecar_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     origin_language: Mapped[str | None] = mapped_column(String(8), default=None)
     origin_country: Mapped[str | None] = mapped_column(String(8), default=None)

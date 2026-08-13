@@ -20,13 +20,36 @@ def _cbz(tmp_path: Path, naam: str = "Storm 01.cbz") -> Path:
 
 
 class TestWritingAndReading:
-    def test_it_lands_next_to_the_file(self, tmp_path: Path):
+    def test_it_lands_in_the_hidden_folder_next_to_the_file(self, tmp_path: Path):
+        """Alles van ons bij elkaar, en uit het zicht bij normaal bladeren."""
         boek = _cbz(tmp_path)
         zijkant = sidecars.Sidecar(titles={"": "Herring Roe"})
         pad = sidecars.write(boek, zijkant)
 
-        assert pad == tmp_path / "Storm 01.cbz.bookpal.json"
+        assert pad == tmp_path / ".sidecars" / "Storm 01.cbz.json"
         assert pad.is_file()
+
+    def test_an_old_sidecar_is_still_read(self, tmp_path: Path):
+        """Een map van een oudere installatie hoort gewoon te werken."""
+        boek = _cbz(tmp_path)
+        sidecars.legacy_path_for(boek).write_text(
+            '{"titles": {"": "Oude Titel"}}', encoding="utf-8"
+        )
+
+        gelezen = sidecars.read(boek)
+        assert gelezen is not None
+        assert gelezen.titles[""] == "Oude Titel"
+
+    def test_writing_cleans_up_the_old_one(self, tmp_path: Path):
+        """Twee waarheden naast elkaar is hoe ze uit elkaar gaan lopen."""
+        boek = _cbz(tmp_path)
+        oud = sidecars.legacy_path_for(boek)
+        oud.write_text('{"titles": {"": "Oude Titel"}}', encoding="utf-8")
+
+        sidecars.write(boek, sidecars.Sidecar(titles={"": "Nieuwe Titel"}))
+
+        assert not oud.exists()
+        assert sidecars.read(boek).titles[""] == "Nieuwe Titel"
 
     def test_what_you_wrote_comes_back(self, tmp_path: Path):
         boek = _cbz(tmp_path)
@@ -65,13 +88,17 @@ class TestWritingAndReading:
 
     def test_a_broken_sidecar_is_ignored_not_fatal(self, tmp_path: Path):
         boek = _cbz(tmp_path)
-        sidecars.path_for(boek).write_text("{dit is geen json", encoding="utf-8")
+        pad = sidecars.path_for(boek)
+        pad.parent.mkdir(parents=True, exist_ok=True)
+        pad.write_text("{dit is geen json", encoding="utf-8")
         assert sidecars.read(boek) is None
 
     def test_a_hand_written_title_as_plain_text_is_accepted(self, tmp_path: Path):
         """Wie dit met de hand invult schrijft geen kaartje met taalcodes."""
         boek = _cbz(tmp_path)
-        sidecars.path_for(boek).write_text('{"titles": "Met de hand"}', encoding="utf-8")
+        pad = sidecars.path_for(boek)
+        pad.parent.mkdir(parents=True, exist_ok=True)
+        pad.write_text('{"titles": "Met de hand"}', encoding="utf-8")
         zijkant = sidecars.read(boek)
         assert zijkant is not None
         assert zijkant.title() == "Met de hand"
@@ -143,7 +170,7 @@ class TestTheScannerUsesThem:
         session.commit()
 
         scan_root(session, root)
-        assert (wortel / "Storm" / "Storm 01.cbz.bookpal.json").is_file()
+        assert (wortel / "Storm" / ".sidecars" / "Storm 01.cbz.json").is_file()
 
     def test_a_title_in_the_sidecar_wins_from_the_filename(self, session, tmp_path: Path):
         from bookpal.library import scan_root
@@ -207,12 +234,12 @@ class TestBackfill:
         scan_root(session, root)
         session.commit()
         # Doe alsof ze er nog niet waren.
-        for pad in wortel.rglob("*.bookpal.json"):
+        for pad in wortel.rglob(".sidecars/*.json"):
             pad.unlink()
 
         body = client.post("/api/libraries/sidecars").json()
         assert body["written"] == 2
-        assert len(list(wortel.rglob("*.bookpal.json"))) == 2
+        assert len(list(wortel.rglob(".sidecars/*.json"))) == 2
 
     def test_running_twice_writes_nothing_new(self, client, session, tmp_path: Path):
         from bookpal.library import scan_root

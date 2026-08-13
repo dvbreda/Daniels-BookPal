@@ -5,7 +5,17 @@ opnieuw begint. Een sidecar zet het náást het bestand, waar het thuishoort:
 verhuis je map naar een andere machine, dan verhuist wat je erover wist mee, en
 een verse installatie vindt het bij de eerste scan gewoon terug.
 
-Het formaat is bewust saai: json, één bestand per boek, ``<bestandsnaam>.bookpal.json``.
+Het formaat is bewust saai: json, één bestand per boek, in de verborgen map
+``.sidecars`` naast het bestand:
+
+    Oishinbo/.sidecars/Oishinbo - v03 - 012.cbz.json     wat we van dit bestand weten
+    Oishinbo/.sidecars/v03c012/p0007-nl.json             de vertalingen van dat hoofdstuk
+
+Eén verborgen map per serie dus, met alles van ons erin — dezelfde plek waar de
+vertalingen staan, zodat je niet op twee plaatsen hoeft te kijken. De naam is af
+te leiden uit het bestandspad alleen, en dat moet ook: de scanner leest de
+sidecar vóórdat hij weet welke serie of welk nummer het is.
+
 Te openen in een teksteditor, met de hand te corrigeren, en te negeren door elk
 ander programma dat je map inleest.
 
@@ -40,7 +50,14 @@ logger = logging.getLogger(__name__)
 #: Achter de bestandsnaam geplakt, niet in plaats van de extensie: zo blijft
 #: zichtbaar bij welk bestand het hoort, ook als er een cbz en een pdf van
 #: hetzelfde deel naast elkaar staan.
-SUFFIX = ".bookpal.json"
+SUFFIX = ".json"
+
+#: De verborgen map waar alles van ons in staat, naast het bestand zelf.
+DIRNAME = ".sidecars"
+
+#: Waar ze vroeger stonden: los naast het bestand. Blijft leesbaar, zodat een
+#: map die je van een oudere installatie meeneemt gewoon werkt.
+LEGACY_SUFFIX = ".bookpal.json"
 
 #: Meegeschreven zodat een latere versie weet wat hij voor zich heeft.
 VERSION = 1
@@ -136,7 +153,12 @@ class Sidecar:
 
 def path_for(book_path: Path) -> Path:
     """Waar de sidecar van dit bestand staat."""
-    return book_path.with_name(book_path.name + SUFFIX)
+    return book_path.parent / DIRNAME / (book_path.name + SUFFIX)
+
+
+def legacy_path_for(book_path: Path) -> Path:
+    """Waar hij vroeger stond: pal naast het bestand."""
+    return book_path.with_name(book_path.name + LEGACY_SUFFIX)
 
 
 def read(book_path: Path) -> Sidecar | None:
@@ -147,7 +169,12 @@ def read(book_path: Path) -> Sidecar | None:
     """
     pad = path_for(book_path)
     if not pad.is_file():
-        return None
+        # Nog van de oude indeling? Dan lezen we die gewoon; bij de eerste
+        # schrijfronde verhuist hij vanzelf mee.
+        oud = legacy_path_for(book_path)
+        if not oud.is_file():
+            return None
+        pad = oud
     try:
         ruw = json.loads(pad.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
@@ -189,11 +216,15 @@ def write(book_path: Path, sidecar: Sidecar) -> Path | None:
     sidecar.updated_at = datetime.now(UTC).isoformat(timespec="seconds")
     tijdelijk = pad.with_name(pad.name + ".deel")
     try:
+        pad.parent.mkdir(parents=True, exist_ok=True)
         tijdelijk.write_text(
             json.dumps(sidecar.to_json(), ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         tijdelijk.replace(pad)
+        # Stond hij nog los naast het bestand, dan is die nu overbodig: twee
+        # waarheden naast elkaar is hoe ze uit elkaar gaan lopen.
+        legacy_path_for(book_path).unlink(missing_ok=True)
     except OSError as exc:
         logger.warning("sidecar %s schrijven mislukt: %s", pad.name, exc)
         tijdelijk.unlink(missing_ok=True)
@@ -229,6 +260,8 @@ def encode_cover(data: bytes, media_type: str = "image/webp") -> str | None:
 
 
 __all__ = [
+    "DIRNAME",
+    "LEGACY_SUFFIX",
     "MAX_COVER_BYTES",
     "ORDER",
     "SUFFIX",
@@ -236,6 +269,7 @@ __all__ = [
     "Sidecar",
     "cover_bytes",
     "encode_cover",
+    "legacy_path_for",
     "path_for",
     "read",
     "write",

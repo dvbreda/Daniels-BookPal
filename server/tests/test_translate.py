@@ -640,7 +640,8 @@ class TestModePreference:
 
 
 class TestSidecar:
-    def test_the_path_is_named_after_series_and_chapter(self, session: Session):
+    def test_the_path_sits_next_to_the_series(self, session: Session, temp_settings):
+        """Naast de serie in je eigen bibliotheek, in een verborgen map."""
         series = Series(title="Shinya Shokudo", sort_title="shinya")
         session.add(series)
         session.flush()
@@ -650,7 +651,8 @@ class TestSidecar:
 
         path = sidecar.json_path(series, book, 7, "nl")
         assert "Shinya Shokudo" in str(path)
-        assert "03 Deel" in str(path)
+        assert sidecar.SIDECAR_DIRNAME in path.parts
+        assert path.parent.name == "c003", "nullen ervoor, zodat ls op volgorde staat"
         assert path.name == "p0007-nl.json"
 
     def test_unsafe_characters_are_stripped(self, session: Session):
@@ -1312,3 +1314,194 @@ class TestTheAutomaticMode:
         session.commit()
 
         assert _done_pages(session, boek.id, "nl") == {0, 4}
+
+
+class TestWhereSidecarsLive:
+    """Naast de serie in je eigen bibliotheek, in een verborgen map.
+
+    Belangrijk genoeg om vast te leggen: hier staat betaald werk, en een pad
+    dat stilletjes verschuift betekent dat je er opnieuw voor betaalt.
+    """
+
+    def _serie(self, session: Session, **velden) -> Series:
+        series = Series(title="Oishinbo", sort_title="oishinbo", **velden)
+        session.add(series)
+        session.flush()
+        return series
+
+    def _boek(self, session: Session, series: Series, **velden) -> Book:
+        velden.setdefault("title", "Deel")
+        book = Book(series_id=series.id, kind=BookKind.COMIC, **velden)
+        session.add(book)
+        session.flush()
+        return book
+
+    def test_volume_and_chapter_are_padded(self, session: Session, temp_settings):
+        """Zodat een ls op leesvolgorde staat in plaats van 1, 10, 2."""
+        series = self._serie(session)
+        book = self._boek(session, series, volume="3", number="12", title="Iets")
+        assert sidecar.chapter_slug(book) == "v03c012"
+
+    def test_a_half_chapter_keeps_its_half(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, number="12.5")
+        assert sidecar.chapter_slug(book) == "c012.5"
+
+    def test_something_unnumbered_falls_back_to_its_title(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, title="Extra hoofdstuk")
+        assert sidecar.chapter_slug(book) == "Extra hoofdstuk"
+
+    def test_the_place_is_remembered(self, session: Session, temp_settings):
+        """Een serie kan verhuizen; het betaalde werk mag niet meeverhuizen."""
+        from bookpal.models import LibraryRoot
+
+        root = LibraryRoot(name="Manga", path="/library/manga")
+        session.add(root)
+        session.flush()
+        series = self._serie(session, library_root_id=root.id)
+        book = self._boek(session, series, number="1")
+
+        eerst = sidecar.chapter_dir(series, book)
+        assert series.sidecar_path, "de plek hoort vastgelegd te worden"
+
+        # Serie verhuist naar een andere root: het pad blijft waar het stond.
+        series.library_root_id = None
+        session.flush()
+        assert sidecar.chapter_dir(series, book) == eerst
+
+    def test_the_download_cache_is_never_chosen(self, session: Session, temp_settings):
+        """Daar wordt opgeruimd, en dan is een betaalde vertaling weg."""
+        from bookpal.models import LibraryRoot
+
+        cache = LibraryRoot(name="Downloads", path=str(app_settings.download_dir))
+        eigen = LibraryRoot(name="Manga", path="/library/manga")
+        session.add_all([cache, eigen])
+        session.flush()
+        series = self._serie(session, library_root_id=cache.id)
+        book = self._boek(session, series, number="1")
+
+        pad = sidecar.chapter_dir(series, book)
+        assert str(app_settings.download_dir) not in str(pad)
+        assert "/library/manga" in str(pad)
+
+    def test_the_hidden_folder_sits_between_them(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, number="1")
+        pad = sidecar.chapter_dir(series, book)
+        assert pad.parent.name == sidecar.SIDECAR_DIRNAME
+        assert pad.parent.parent.name == "Oishinbo"
+
+
+class TestMovingTheOldOnes:
+    def test_files_move_to_the_new_place(self, session: Session, temp_settings):
+        series = Series(title="Oishinbo", sort_title="oishinbo")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, number="12", title="Iets")
+        session.add(book)
+        session.commit()
+
+        oud = sidecar.legacy_chapter_dir(series, book)
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text('{"bubbles": []}', encoding="utf-8")
+
+        verplaatst = sidecar.move_legacy(session)
+
+        assert verplaatst == 1
+        assert (sidecar.chapter_dir(series, book) / "p0001-nl.json").is_file()
+        assert not oud.exists()
+
+    def test_it_only_runs_once(self, session: Session, temp_settings):
+        """Anders zou elke herstart de hele bibliotheek langslopen."""
+        sidecar.move_legacy(session)
+        assert sidecar.move_legacy(session) == 0
+
+    def test_a_failed_move_is_not_ticked_off(self, session: Session, temp_settings, monkeypatch):
+        """Wat er niet mee kwam is betaald werk; dat probeer je opnieuw."""
+        from bookpal.models import Setting
+
+        series = Series(title="Oishinbo", sort_title="oishinbo")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, number="12", title="Iets")
+        session.add(book)
+        session.commit()
+        oud = sidecar.legacy_chapter_dir(series, book)
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text("{}", encoding="utf-8")
+
+        def stuk(*_args, **_kwargs):
+            raise OSError("andere schijf")
+
+        monkeypatch.setattr("bookpal.translate.sidecar.shutil.move", stuk)
+        sidecar.move_legacy(session)
+
+        assert session.get(Setting, sidecar.MOVED_KEY) is None
+        assert (oud / "p0001-nl.json").is_file(), "het origineel blijft staan"
+
+
+class TestRecoveringOrphans:
+    """Mappen die niet meer op naam te vinden waren, alsnog thuisbrengen.
+
+    Hoofdstukken zijn onderweg hernoemd; die vertalingen waren daarmee ook in
+    de oude indeling al onvindbaar. Er is wel voor betaald.
+    """
+
+    def _serie_met_boek(self, session: Session, titel: str, nummer: str) -> tuple[Series, Book]:
+        series = Series(title=titel, sort_title=titel.lower())
+        session.add(series)
+        session.flush()
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+        )
+        session.add(book)
+        session.commit()
+        return series, book
+
+    def test_a_renamed_chapter_is_found_by_its_number(self, session: Session, temp_settings):
+        series, book = self._serie_met_boek(session, "Shinya Shokudo", "39")
+        # Zoals hij vroeger heette: op de titel van toen.
+        oud = app_settings.sidecar_dir / "Shinya Shokudo" / "39 Yarō Abe"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0003-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0003-nl.json").is_file()
+
+    def test_an_edition_suffix_still_matches_the_series(self, session: Session, temp_settings):
+        """De map heette naar de uitgave, de serie heet nu zonder."""
+        series, book = self._serie_met_boek(session, "One Piece", "251")
+        oud = app_settings.sidecar_dir / "One Piece (Official Colored)" / "251 Overture"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0002-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0002-nl.json").is_file()
+
+    def test_capitals_do_not_matter(self, session: Session, temp_settings):
+        """Dezelfde serie heette ooit "Crayon Shin-chan" en nu "Crayon Shin-Chan"."""
+        series, book = self._serie_met_boek(session, "Crayon Shin-Chan", "0")
+        oud = app_settings.sidecar_dir / "Crayon Shin-chan" / "0 Vol.2 Ch.0"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0004-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0004-nl.json").is_file()
+
+    def test_something_unrecognisable_is_left_alone(self, session: Session, temp_settings):
+        """Niet begrijpen is geen reden om iets weg te gooien."""
+        self._serie_met_boek(session, "Shinya Shokudo", "39")
+        oud = app_settings.sidecar_dir / "Iets Anders" / "geen nummer"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (oud / "p0001-nl.json").is_file()
