@@ -1,5 +1,7 @@
 import { useState } from "react";
 
+import { type Box, expandBox, fontScale } from "./bubbles";
+
 import type { Bubble } from "../api/types";
 import { usePageTranslation } from "./usePageTranslation";
 
@@ -56,27 +58,42 @@ function isAllCaps(source: string): boolean {
 
 function BubbleBox({ bubble }: { bubble: Bubble }) {
   const [showSource, setShowSource] = useState(false);
-  const [x0, y0, x1, y1] = bubble.box;
+  const [x0, , x1] = bubble.box;
   const upper = isAllCaps(bubble.source);
+
+  const tekst = showSource ? bubble.source : bubble.translation;
+
+  // De ronde vorm moet ruimer zijn dan het tekstvlak, niet krapper. Een pil die
+  // ín het gedetecteerde vlak past verliest juist de hoeken waar de tekst zat —
+  // dus rekken we het vlak een paar procent op en houden we de tekstruimte
+  // gelijk. Begrensd op de pagina, zodat een ballon aan de rand niet uitloopt.
+  const [bx0, by0, bx1, by1] = expandBox(bubble.box as Box);
+
+  // Hoeveel tekst er in dit vlak past, ruw geschat. De maat hiervoor keek
+  // alleen naar de breedte van het vlak, dus een lange zin in een klein vlak
+  // liep over en werd weggeknipt — een lege ballon. Kleiner wordt hij alleen
+  // als het nodig is; groter dan voorheen nooit.
+  const krimp = fontScale(bubble.box as Box, tekst.length);
 
   return (
     <div
-      // Zo rond als het kan: een pilvorm volgt de kortste zijde, dus bij een
-      // ongeveer vierkant vlak is het een cirkel en bij een breed vlak een
-      // ovaal met ronde uiteinden. Dat dekt merkbaar minder tekening af dan
-      // een rechthoek, en het lijkt op wat er onder zit — een tekstballon is
-      // zelf ook rond. De zijkantmarge is een percentage van het vlak zelf,
-      // zodat de tekst niet in de bocht loopt.
-      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-full border border-black/40 bg-white text-center leading-tight text-black"
+      // Zo rond als het vlak toelaat: een pilvorm volgt de kortste zijde, dus
+      // een ongeveer vierkant vlak wordt een cirkel. Dat dekt merkbaar minder
+      // tekening af dan een rechthoek.
+      //
+      // Géén overflow-hidden: tekst die net niet past hoort iets buiten het wit
+      // te vallen en leesbaar te blijven. Wegknippen levert een lege ballon op,
+      // en dat is onbruikbaar terwijl het eruitziet alsof er niets vertaald is.
+      className="pointer-events-auto absolute flex items-center justify-center rounded-full border border-black/40 bg-white text-center leading-tight text-black"
       style={{
-        left: `${x0 * 100}%`,
-        top: `${y0 * 100}%`,
-        width: `${(x1 - x0) * 100}%`,
-        height: `${(y1 - y0) * 100}%`,
-        paddingInline: "8%",
+        left: `${bx0 * 100}%`,
+        top: `${by0 * 100}%`,
+        width: `${(bx1 - bx0) * 100}%`,
+        height: `${(by1 - by0) * 100}%`,
+        paddingInline: "4%",
         // Meeschalen met het vlak zelf: cqw is een procent van de breedte van
         // de pagina-container, dus de tekst blijft in verhouding bij zoomen.
-        fontSize: `clamp(7px, ${Math.max(1.1, (x1 - x0) * 7)}cqw, 20px)`,
+        fontSize: `clamp(6px, ${Math.max(0.9, (x1 - x0) * 7 * krimp)}cqw, 20px)`,
         fontFamily: '"Comic Neue", sans-serif',
         fontWeight: bubble.bold ? 700 : 400,
         fontStyle: bubble.italic ? "italic" : "normal",
@@ -88,9 +105,7 @@ function BubbleBox({ bubble }: { bubble: Bubble }) {
       }}
       title={bubble.source}
     >
-      <span className="max-h-full overflow-hidden">
-        {showSource ? bubble.source : bubble.translation}
-      </span>
+      <span>{tekst}</span>
     </div>
   );
 }

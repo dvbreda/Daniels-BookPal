@@ -577,6 +577,12 @@ function Chrome(props: ChromeProps) {
           {book.series_title}
           {book.number ? ` ${book.number}` : ""}
         </span>
+        <TranslationBadge
+          bookId={book.id}
+          page={currentPage}
+          visible={translated}
+          onToggle={() => setTranslated(!translated)}
+        />
         <span className="ml-auto tabular-nums text-slate-400">
           {currentPage + 1} / {pageCount}
         </span>
@@ -1022,4 +1028,57 @@ const BUTTON_LABELS: Record<TranslateMode, string> = {
   text: "Tekstvlakken over de pagina (~$0,002 per pagina)",
   image_fast: "Hele pagina hertekenen met het snelle beeldmodel (~$0,07 per pagina)",
   image_pro: "Hele pagina hertekenen met het zware beeldmodel (~$0,13 per pagina)",
+};
+
+/**
+ * Wat er voor deze pagina klaarligt, klein en in de hoek.
+ *
+ * Zonder dit is er geen verschil te zien tussen "niet vertaald", "vertaald maar
+ * uitgezet" en "je kijkt nu naar een hertekende pagina" — terwijl dat laatste
+ * betekent dat je niet op een ballon kunt tikken voor het origineel. Een tik
+ * op het merkje zet de vertaling aan of uit.
+ */
+function TranslationBadge({
+  bookId,
+  page,
+  visible,
+  onToggle,
+}: {
+  bookId: number;
+  page: number;
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  // Ook opvragen als de vertaling uitstaat: anders weet je niet dát er iets
+  // ligt. Dezelfde query als de overlay, dus samen één verzoek per pagina.
+  const { data } = usePageTranslation(bookId, page, true);
+  if (!data) return null;
+
+  const hertekend = data.full_page;
+  const label = hertekend ? "Hertekend" : "Tekstvlakken";
+
+  return (
+    <button
+      onClick={onToggle}
+      title={
+        `${label} — ${MODE_NAMES[data.mode] ?? data.mode}. ` +
+        (visible ? "Tik om het origineel te zien." : "Tik om de vertaling te tonen.") +
+        (hertekend ? " Bij een hertekende pagina kun je niet op losse ballonnen tikken." : "")
+      }
+      aria-pressed={visible}
+      className={`rounded-full px-2 py-0.5 text-xs ${
+        visible ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-400"
+      }`}
+    >
+      <span aria-hidden>{hertekend ? "▣" : "💬"}</span>
+      <span className="ml-1 hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
+/** Voor in de uitleg bij het merkje; korter dan de volle omschrijving. */
+const MODE_NAMES: Record<string, string> = {
+  text: "taalmodel met tekstvlakken",
+  image_fast: "beeldmodel (snel)",
+  image_pro: "beeldmodel (zwaar)",
 };

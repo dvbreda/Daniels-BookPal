@@ -223,9 +223,19 @@ def _draw_onto(
             # zijde, dus een ongeveer vierkant vlak wordt een cirkel en een breed
             # vlak een ovaal met ronde uiteinden. Dat dekt merkbaar minder
             # tekening af dan een rechthoek, en het lijkt op wat eronder zit.
-            straal = min(x1 - x0, y1 - y0) / 2
+            #
+            # De vorm groeit een paar procent buiten het tekstvlak. Een pil die
+            # er precies ín past verliest juist de hoeken waar de tekst staat,
+            # en dan valt die op de tekening in plaats van op het wit.
+            groei_x = (x1 - x0) * 0.05
+            groei_y = (y1 - y0) * 0.05
+            vx0 = max(0.0, x0 - groei_x)
+            vy0 = max(0.0, y0 - groei_y)
+            vx1 = min(float(width), x1 + groei_x)
+            vy1 = min(float(height), y1 + groei_y)
+            straal = min(vx1 - vx0, vy1 - vy0) / 2
             draw.rounded_rectangle(
-                (x0, y0, x1, y1), radius=straal, fill=white, outline=black, width=1
+                (vx0, vy0, vx1, vy1), radius=straal, fill=white, outline=black, width=1
             )
 
         # Striplettering staat traditioneel in kapitalen; een vertaling in
