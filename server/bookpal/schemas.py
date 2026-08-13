@@ -915,6 +915,35 @@ class TranslateModeIn(BaseModel):
     colour_mode: str | None = Field(default=None, max_length=20)
 
 
+class BatchPlanOut(BaseModel):
+    """Wat een klus voor dit hoofdstuk gaat inhouden, vóór je hem start.
+
+    Met de prijs erbij, want dit is de enige knop in de app die in één druk
+    een heel hoofdstuk kost. Zonder bedrag is dat een gok.
+    """
+
+    kind: str
+    mode: str
+    pages: int
+    price_per_page: float
+    total: float
+    # Batchwerk kost bij Google de helft van een gewone aanroep; dat staat hier
+    # zodat de lezer het verschil kan laten zien in plaats van te suggereren
+    # dat dit het normale tarief is.
+    batch_factor: float
+
+
+class BatchStatusOut(BaseModel):
+    kind: str
+    book_id: int
+    mode: str
+    state: str
+    done: int
+    total: int
+    failed: int
+    error: str | None = None
+
+
 class TranslatePageIn(BaseModel):
     """De knop "vertaal deze pagina volledig". Bewust een expliciete keuze per
     aanroep: deze standen kosten geld, dus ze horen nooit vanzelf te lopen."""
@@ -933,6 +962,13 @@ class TranslationStatusOut(BaseModel):
     page_count: int | None
     translated: int
     queued: int
+
+
+class BatchStartIn(BaseModel):
+    """Welke soort klus, en vanaf welke pagina."""
+
+    kind: str = Field(max_length=20)
+    from_page: int = Field(default=0, ge=0)
 
 
 class TranslateBookIn(BaseModel):

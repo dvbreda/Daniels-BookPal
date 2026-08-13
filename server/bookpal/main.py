@@ -19,6 +19,7 @@ from bookpal.formats import book_cache
 from bookpal.sources.ahead import stop_all as stop_readahead
 from bookpal.sources.worker import start_worker, stop_worker
 from bookpal.trackers.scheduler import stop_all as stop_tracker_scheduler
+from bookpal.translate import batch as translate_batch
 from bookpal.translate.queue import queue as translate_queue
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -35,6 +36,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     logger.info("BookPal gestart — data in %s", settings.data_dir.resolve())
     start_worker()
     translate_queue.start()
+    # Een batch die nog liep toen we stopten draait bij Google gewoon door.
+    # Zonder dit zou niemand het antwoord nog ophalen — betaald werk dat je
+    # daarna nergens terugziet.
+    if translate_batch.resume() is not None:
+        logger.info("een lopende batch weer opgepakt")
     yield
     stop_worker()
     stop_readahead()

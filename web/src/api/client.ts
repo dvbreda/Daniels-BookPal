@@ -1,4 +1,7 @@
 import type {
+  BatchKind,
+  BatchPlan,
+  BatchStatus,
   BookDetail,
   Collection,
   ContinueInfo,
@@ -378,6 +381,19 @@ export const api = {
       `/api/books/${bookId}/translation-status${queryString({ lang })}`,
     ),
   translateMode: () => request<TranslateModeInfo>("/api/translate/mode"),
+  // Een heel hoofdstuk in één keer, via de batch van Gemini: minuten werk in
+  // plaats van seconden, voor de helft van de prijs. Eerst het plan opvragen
+  // (hoeveel pagina's, wat kost het), dan pas starten.
+  batchPlan: (bookId: number, kind: BatchKind, fromPage = 0) =>
+    request<BatchPlan>(
+      `/api/books/${bookId}/batch/plan${queryString({ kind, from_page: fromPage })}`,
+    ),
+  startBatch: (bookId: number, kind: BatchKind, fromPage = 0) =>
+    request<BatchStatus>(`/api/books/${bookId}/batch`, {
+      method: "POST",
+      body: JSON.stringify({ kind, from_page: fromPage }),
+    }),
+  batchStatus: (bookId: number) => request<BatchStatus | null>(`/api/books/${bookId}/batch`),
   // Twee losse standen: wat er vanzelf gebeurt en wat de knop in de lezer doet.
   // Wat je niet meestuurt blijft staan.
   setTranslateMode: (body: {

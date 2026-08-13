@@ -197,9 +197,7 @@ class TranslationQueue:
                     mode=job.mode,
                 )
         except TranslationError as exc:
-            logger.warning(
-                "hertekenen mislukt (boek %s p%s): %s", job.book_id, job.page_index, exc
-            )
+            logger.warning("hertekenen mislukt (boek %s p%s): %s", job.book_id, job.page_index, exc)
         finally:
             translator.close()
 

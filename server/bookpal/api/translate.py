@@ -17,6 +17,9 @@ from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile
 from bookpal.schemas import (
+    BatchPlanOut,
+    BatchStartIn,
+    BatchStatusOut,
     BubbleOut,
     PageColourOut,
     PageTranslationOut,
@@ -27,7 +30,7 @@ from bookpal.schemas import (
     TranslatePageIn,
     TranslationStatusOut,
 )
-from bookpal.translate import get_translator, is_configured, sidecar
+from bookpal.translate import batch, get_translator, is_configured, sidecar
 from bookpal.translate.base import PageResult, TranslationError
 from bookpal.translate.imagepage import GeminiPageTranslator
 from bookpal.translate.modes import TranslateMode
@@ -477,3 +480,84 @@ def get_page_colour(
         media_type="image/webp",
         headers={"Cache-Control": "public, max-age=86400"},
     )
+
+
+# -- een heel hoofdstuk in één keer -------------------------------------
+#
+# Via de batch-API van Gemini: die doet er minuten over ongeacht hoeveel
+# pagina's je meegeeft, en kost de helft. Precies verkeerd voor de pagina waar
+# je op wacht, precies goed voor een hoofdstuk dat je klaarzet voor vanavond.
+
+
+def _plan_out(plan: batch.BatchPlan) -> BatchPlanOut:
+    return BatchPlanOut(
+        kind=plan.kind,
+        mode=str(plan.mode),
+        pages=len(plan.pages),
+        price_per_page=plan.price_per_page,
+        total=plan.total,
+        batch_factor=batch.BATCH_FACTOR,
+    )
+
+
+def _status_out(state: batch.BatchState) -> BatchStatusOut:
+    return BatchStatusOut(
+        kind=state.kind,
+        book_id=state.book_id,
+        mode=str(state.mode),
+        state=state.state,
+        done=state.done,
+        total=state.total,
+        failed=state.failed,
+        error=state.error,
+    )
+
+
+@router.get("/{book_id}/batch/plan", response_model=BatchPlanOut)
+def batch_plan(
+    book_id: int,
+    kind: str = Query(max_length=20),
+    from_page: int = Query(default=0, ge=0),
+    session: Session = Depends(get_session),
+) -> BatchPlanOut:
+    """Hoeveel pagina's er nog moeten en wat dat kost.
+
+    Apart van het starten, zodat de lezer eerst het bedrag kan tonen. Een knop
+    die ongevraagd een hoofdstuk afrekent is precies wat je hier niet wilt.
+    """
+    book = deps.get_book(session, book_id)
+    if kind not in batch.SOORTEN:
+        raise HTTPException(status_code=400, detail=f"onbekende soort: {kind!r}")
+    try:
+        return _plan_out(batch.plan(session, book, kind=kind, from_page=from_page))
+    except TranslationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/{book_id}/batch", response_model=BatchStatusOut)
+def batch_start(
+    book_id: int,
+    payload: BatchStartIn,
+    session: Session = Depends(get_session),
+) -> BatchStatusOut:
+    """Zet het hoofdstuk in de batch."""
+    book = deps.get_book(session, book_id)
+    if payload.kind not in batch.SOORTEN:
+        raise HTTPException(status_code=400, detail=f"onbekende soort: {payload.kind!r}")
+    if not is_configured():
+        raise HTTPException(
+            status_code=409,
+            detail="er is geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)",
+        )
+    try:
+        plan = batch.plan(session, book, kind=payload.kind, from_page=payload.from_page)
+        return _status_out(batch.start(book.id, plan))
+    except TranslationError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/{book_id}/batch", response_model=BatchStatusOut | None)
+def batch_status(book_id: int) -> BatchStatusOut | None:
+    """Wat er loopt. Ook van een ander boek: er kan er maar één tegelijk."""
+    state = batch.status()
+    return None if state is None else _status_out(state)

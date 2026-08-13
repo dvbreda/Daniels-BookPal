@@ -630,3 +630,27 @@ export interface PushReport {
   results: PushResultRow[];
   errors: string[];
 }
+
+/** Wat een klus voor een heel hoofdstuk gaat inhouden, vóór je hem start. */
+export interface BatchPlan {
+  kind: BatchKind;
+  mode: TranslateMode;
+  pages: number;
+  price_per_page: number;
+  total: number;
+  /** Batchwerk kost bij Google de helft van een gewone aanroep. */
+  batch_factor: number;
+}
+
+export type BatchKind = "tekst" | "hertekend" | "kleuren";
+
+export interface BatchStatus {
+  kind: BatchKind;
+  book_id: number;
+  mode: TranslateMode;
+  state: "bezig" | "klaar" | "mislukt";
+  done: number;
+  total: number;
+  failed: number;
+  error: string | null;
+}

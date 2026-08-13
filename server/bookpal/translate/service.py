@@ -239,6 +239,13 @@ def colour_base(
     return image, media_type, None
 
 
+def recompose_to_webp(original: bytes, coloured: bytes) -> bytes:
+    """Kleur van het model over ons eigen lijnwerk, klaar om te bewaren."""
+    buffer = BytesIO()
+    recolour.recompose(original, coloured).save(buffer, format="WEBP", quality=88, method=4)
+    return buffer.getvalue()
+
+
 def colorise_page(
     session: Session,
     translator: GeminiPageTranslator,
@@ -277,12 +284,9 @@ def colorise_page(
         if recolour.is_colour(basis):
             raise AlreadyColour("deze pagina heeft al kleur; inkleuren vervangt het palet")
 
-    produced = translator.colorise_page(basis, media_type=media_type)
-    # Alleen de kleur ervan gebruiken; het lijnwerk en de letters houden we
-    # zelf vast. Zie recolour voor waarom dat nodig is.
-    samen = BytesIO()
-    recolour.recompose(basis, produced).save(samen, format="WEBP", quality=88, method=4)
-    produced = samen.getvalue()
+    # Alleen de kleur van het model gebruiken; het lijnwerk en de letters
+    # houden we zelf vast. Zie recolour voor waarom dat nodig is.
+    produced = recompose_to_webp(basis, translator.colorise_page(basis, media_type=media_type))
 
     sidecar.write_bytes(path, produced)
     _record(

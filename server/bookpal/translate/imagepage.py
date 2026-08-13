@@ -99,6 +99,44 @@ over deze heen, en dan moet elke lijn samenvallen.
 Geef alleen de geschilderde pagina terug, op exact dezelfde afmeting als deze."""
 
 
+def build_image_request(image: bytes, media_type: str, target_lang: str) -> dict[str, Any]:
+    """Het verzoek om deze pagina te hertekenen mét vertaling.
+
+    Losgetrokken van de klasse zodat de batch exact hetzelfde stuurt; twee
+    plekken met elk hun eigen opbouw lopen vroeg of laat uit elkaar.
+    """
+    language = _LANGUAGE_NAMES.get(target_lang.lower(), target_lang)
+    return _request(image, media_type, _PROMPT.format(language=language))
+
+
+def build_colour_request(image: bytes, media_type: str) -> dict[str, Any]:
+    """Het verzoek om deze pagina in te kleuren."""
+    return _request(image, media_type, _COLOUR_PROMPT)
+
+
+def _request(image: bytes, media_type: str, prompt: str) -> dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": media_type,
+                            "data": base64.b64encode(image).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+
+def read_image(payload: dict[str, Any], original: bytes, *, keep_gray: bool) -> bytes:
+    """Het beeld uit een antwoord halen en terugbrengen naar onze maat."""
+    return _match_original(_extract_image(payload), original, keep_gray=keep_gray)
+
+
 class GeminiPageTranslator:
     """Levert een hele vertaalde pagina in plaats van losse tekstvlakken."""
 
@@ -130,8 +168,9 @@ class GeminiPageTranslator:
         return self._model
 
     def translate_page(self, image: bytes, *, media_type: str, target_lang: str) -> bytes:
-        language = _LANGUAGE_NAMES.get(target_lang.lower(), target_lang)
-        return self._run(image, media_type, _PROMPT.format(language=language))
+        return self._send(
+            build_image_request(image, media_type, target_lang), image, keep_gray=True
+        )
 
     def colorise_page(self, image: bytes, *, media_type: str) -> bytes:
         """Dezelfde pagina, ingekleurd.
@@ -141,25 +180,9 @@ class GeminiPageTranslator:
         plaats komt van een vertaalde. Wel houden we grijs níét terug — dat is
         precies wat er hier moet veranderen.
         """
-        return self._run(image, media_type, _COLOUR_PROMPT, keep_gray=False)
+        return self._send(build_colour_request(image, media_type), image, keep_gray=False)
 
-    def _run(self, image: bytes, media_type: str, prompt: str, *, keep_gray: bool = True) -> bytes:
-        body = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": media_type,
-                                "data": base64.b64encode(image).decode("ascii"),
-                            }
-                        },
-                    ]
-                }
-            ]
-        }
-
+    def _send(self, body: dict[str, Any], original: bytes, *, keep_gray: bool) -> bytes:
         self._limiter.acquire()
         try:
             response = self._client.post(
@@ -174,8 +197,7 @@ class GeminiPageTranslator:
         if response.status_code >= 400:
             raise TranslationError(f"Gemini gaf {response.status_code}")
 
-        produced = _extract_image(response.json())
-        return _match_original(produced, image, keep_gray=keep_gray)
+        return read_image(response.json(), original, keep_gray=keep_gray)
 
     def close(self) -> None:
         self._client.close()
@@ -241,8 +263,11 @@ def _is_grayscale(image: Image.Image, *, sample: int = 64) -> bool:
     if image.mode in ("L", "1"):
         return True
     small = image.convert("RGB").resize((sample, sample), Image.Resampling.BILINEAR)
-    for pixel in list(small.getdata()):
-        red, green, blue = pixel[0], pixel[1], pixel[2]
+    # tobytes en niet getdata: dat laatste is in nieuwere Pillow afgeschaft, en
+    # drie bytes per pixel uitlezen komt op hetzelfde neer.
+    raw = small.tobytes()
+    for start in range(0, len(raw), 3):
+        red, green, blue = raw[start], raw[start + 1], raw[start + 2]
         if abs(red - green) > 12 or abs(green - blue) > 12 or abs(red - blue) > 12:
             return False
     return True

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
-import type { BookDetail, TranslateMode } from "../api/types";
+import type { BatchKind, BatchPlan, BookDetail, TranslateMode } from "../api/types";
 import { pickPageProfile } from "../lib/profile";
 import { useStoredState } from "../lib/useStoredState";
 import type { GridTransform } from "./grid";
@@ -617,6 +617,10 @@ function Chrome(props: ChromeProps) {
             Hoog genoeg om met een duim te raken: een tik op de balk springt
             naar die pagina, en dat is op een telefoon de snelste manier om
             terug te bladeren. */}
+        {/* Bij het begin van het hoofdstuk: de knoppen die het hele hoofdstuk
+            klaarzetten. Daar maak je die keuze, niet halverwege — en het is
+            precies waar je op de cover staat te kijken. */}
+        {currentPage === 0 && <BatchPanel bookId={book.id} currentPage={currentPage} />}
         <input
           type="range"
           min={0}
@@ -889,6 +893,130 @@ function TranslatablePage({
         }
       />
       <TranslationOverlay bookId={book.id} pageIndex={page} enabled={translated} />
+    </div>
+  );
+}
+
+const BATCH_LABELS: Record<BatchKind, { knop: string; wat: string }> = {
+  tekst: { knop: "Tekst", wat: "tekstvlakken over het origineel" },
+  hertekend: { knop: "Ingetekend", wat: "de hele pagina hertekend mét vertaling" },
+  kleuren: { knop: "Inkleuren", wat: "ingekleurd" },
+};
+
+/**
+ * Het hele hoofdstuk in één keer, via de batch van Gemini.
+ *
+ * Staat bij het begin van een hoofdstuk, want dat is waar je die keuze maakt:
+ * je zet het klaar en komt later terug. Gemeten duurt een batch minuten
+ * ongeacht het aantal pagina's — voor de pagina waar je nú op staat is de
+ * gewone knop sneller.
+ *
+ * Nooit starten zonder het bedrag te tonen. Dit is de enige knop in de app die
+ * met één druk een heel hoofdstuk afrekent.
+ */
+function BatchPanel({ bookId, currentPage }: { bookId: number; currentPage: number }) {
+  const queryClient = useQueryClient();
+  const { data: status } = useQuery({
+    queryKey: ["translation-status", bookId],
+    queryFn: () => api.translationStatus(bookId),
+  });
+  const { data: klus } = useQuery({
+    queryKey: ["batch", bookId],
+    queryFn: () => api.batchStatus(bookId),
+    // Tijdens het werk meekijken; daarna niet meer pollen dan nodig.
+    refetchInterval: (query) => (query.state.data?.state === "bezig" ? 15000 : false),
+  });
+  const [vraag, setVraag] = useState<BatchPlan | null>(null);
+  const [bezig, setBezig] = useState(false);
+  const [fout, setFout] = useState<string | null>(null);
+
+  if (!status?.configured) return null;
+
+  async function vraagPrijs(kind: BatchKind) {
+    setFout(null);
+    setBezig(true);
+    try {
+      setVraag(await api.batchPlan(bookId, kind));
+    } catch (exc) {
+      setFout(exc instanceof ApiError ? exc.message : "Kon de klus niet inschatten.");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  async function starten(kind: BatchKind) {
+    setVraag(null);
+    setBezig(true);
+    setFout(null);
+    try {
+      await api.startBatch(bookId, kind);
+      await queryClient.invalidateQueries({ queryKey: ["batch", bookId] });
+    } catch (exc) {
+      setFout(exc instanceof ApiError ? exc.message : "Starten mislukt.");
+    } finally {
+      setBezig(false);
+    }
+  }
+
+  const loopt = klus?.state === "bezig";
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+      <span className="text-slate-500">Hele hoofdstuk</span>
+      {(Object.keys(BATCH_LABELS) as BatchKind[]).map((kind) => (
+        <Toggle
+          key={kind}
+          active={false}
+          disabled={bezig || loopt}
+          onClick={() => void vraagPrijs(kind)}
+          title={`Het hele hoofdstuk ${BATCH_LABELS[kind].wat}, op de achtergrond`}
+        >
+          {BATCH_LABELS[kind].knop}
+        </Toggle>
+      ))}
+
+      {/* De bevestiging met het bedrag erin. Zonder dit zou één tik een
+          hoofdstuk van tweehonderd pagina's afrekenen. */}
+      {vraag && (
+        <span className="flex flex-wrap items-center gap-1 text-amber-300">
+          {vraag.pages === 0 ? (
+            <>
+              Er is niets meer te doen.
+              <Toggle active={false} onClick={() => setVraag(null)}>
+                Sluiten
+              </Toggle>
+            </>
+          ) : (
+            <>
+              {vraag.pages} pagina&apos;s × ${vraag.price_per_page.toFixed(3)} ={" "}
+              <strong className="tabular-nums">${vraag.total.toFixed(2)}</strong>
+              <span className="text-slate-500">
+                (batch, {Math.round(vraag.batch_factor * 100)}% van het gewone tarief)
+              </span>
+              <Toggle active={false} onClick={() => void starten(vraag.kind)}>
+                Starten
+              </Toggle>
+              <Toggle active={false} onClick={() => setVraag(null)}>
+                Annuleren
+              </Toggle>
+            </>
+          )}
+        </span>
+      )}
+
+      {klus && !vraag && (
+        <span className={klus.state === "mislukt" ? "text-danger" : "text-slate-400"}>
+          {klus.state === "bezig"
+            ? `Bezig: ${BATCH_LABELS[klus.kind].knop.toLowerCase()}, ${klus.done}/${klus.total}`
+            : klus.state === "klaar"
+              ? `Klaar: ${klus.done} pagina's${klus.failed ? `, ${klus.failed} mislukt` : ""}`
+              : (klus.error ?? "Mislukt.")}
+        </span>
+      )}
+      {fout && <span className="text-danger">{fout}</span>}
+      {currentPage > 0 && !loopt && !klus && (
+        <span className="text-slate-500">vanaf het begin van dit hoofdstuk</span>
+      )}
     </div>
   );
 }
