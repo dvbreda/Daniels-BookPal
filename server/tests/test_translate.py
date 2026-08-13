@@ -23,7 +23,13 @@ from bookpal.translate.modes import BEST_FIRST, TranslateMode, from_provider
 from bookpal.translate.overlay import _fit, _load_font, bake, draw_bubbles, render_layer
 from bookpal.translate.preferences import get_mode, set_mode
 from bookpal.translate.queue import TranslationQueue
-from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
+from bookpal.translate.service import (
+    find,
+    plan_pages,
+    render_for_translation,
+    translate_page,
+    translated_pages,
+)
 from tests.fixtures import make_cbz
 
 
@@ -1531,3 +1537,110 @@ class TestTheColourBadgeKnows:
         samen._kleur(session, boek)
 
         assert has_colour_for_language(session, boek, 0, "nl") is False
+
+
+class TestColourRepairsItself:
+    """De ruwe plaat van het model is het enige waar geld in zit.
+
+    Zolang die er ligt is elke bewerking opnieuw te maken: een andere taal, een
+    betere samenstelling, of een bestand dat kwijt is.
+    """
+
+    def _boek_met_bestand(self, session: Session, tmp_path: Path) -> Book:
+        from bookpal.models import File, LibraryRoot
+
+        boek = _comic(session, pages=3)
+        pad = make_cbz(tmp_path / "h.cbz", pages=3)
+        root = LibraryRoot(name="R", path=str(tmp_path))
+        session.add(root)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek.file_id = bestand.id
+        session.commit()
+        return boek
+
+    def _plaat(self, kleur=(40, 160, 40)) -> bytes:
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 60), kleur).save(buffer, format="WEBP")
+        return buffer.getvalue()
+
+    def test_the_finished_page_is_rebuilt_from_the_raw_one(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        from bookpal.translate.service import COLOUR_RAW_VARIANT, COLOUR_VARIANT, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(sidecar.variant_path(serie, boek, 0, COLOUR_RAW_VARIANT), self._plaat())
+
+        assert read_colour(session, boek, 0) is not None
+        assert sidecar.variant_path(serie, boek, 0, COLOUR_VARIANT).is_file()
+
+    def test_an_old_language_version_can_restore_the_plain_one(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """De kleur erin komt van het model en klopt nog; alleen de letters niet."""
+        from bookpal.translate.service import COLOUR_VARIANT, colour_variant, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(
+            sidecar.variant_path(serie, boek, 0, colour_variant("nl")), self._plaat()
+        )
+
+        assert read_colour(session, boek, 0) is not None
+        assert sidecar.variant_path(serie, boek, 0, COLOUR_VARIANT).is_file()
+
+    def test_no_ghost_text_when_restoring_from_a_language_version(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """De letters van de vertaling mogen niet door het origineel heen."""
+        from bookpal.translate.service import colour_variant, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        # Een taalversie met een zwarte regel waar het origineel wit is.
+        plaat = Image.new("RGB", (40, 60), (40, 160, 40))
+        for x in range(40):
+            plaat.putpixel((x, 5), (0, 0, 0))
+        buffer = io.BytesIO()
+        plaat.save(buffer, format="WEBP", lossless=True)
+        sidecar.write_bytes(
+            sidecar.variant_path(serie, boek, 0, colour_variant("nl")), buffer.getvalue()
+        )
+
+        hersteld = Image.open(io.BytesIO(read_colour(session, boek, 0))).convert("RGB")
+        origineel = Image.open(io.BytesIO(render_for_translation(session, boek, 0)[0])).convert(
+            "RGB"
+        )
+        rood, groen, blauw = hersteld.getpixel((20, int(5 * hersteld.height / 60)))
+        was = origineel.getpixel((20, int(5 * origineel.height / 60)))
+        assert max(rood, groen, blauw) > 60 or max(was) < 60, (
+            "hier stond geen inkt in het origineel, dus hier hoort niets zwart te zijn"
+        )
+
+    def test_the_raw_plate_is_not_mistaken_for_a_language(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """ "kleur-ruw" ziet eruit als "kleur-<taal>" en is het niet."""
+        from bookpal.translate.service import COLOUR_RAW_VARIANT, _any_language_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(sidecar.variant_path(serie, boek, 0, COLOUR_RAW_VARIANT), self._plaat())
+
+        assert _any_language_colour(serie, boek, 0) is None
+
+    def test_nothing_at_all_stays_nothing(self, session: Session, temp_settings, tmp_path: Path):
+        from bookpal.translate.service import read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        assert read_colour(session, boek, 0) is None

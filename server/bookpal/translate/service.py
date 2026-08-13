@@ -197,6 +197,12 @@ def translate_page_as_image(
 COLOUR_PROVIDER = "gemini-color"
 COLOUR_VARIANT = "kleur"
 
+#: Wat het model letterlijk teruggaf, vóór onze bewerking. Dat is het enige
+#: stuk waar geld in zit: de rest is rekenwerk dat we altijd opnieuw kunnen
+#: doen. Zolang dit er ligt kost een andere samenstelling — een nieuwe taal,
+#: een betere regel — geen aanroep meer.
+COLOUR_RAW_VARIANT = "kleur-ruw"
+
 
 class AlreadyColour(TranslationError):
     """Deze pagina heeft al kleur van de tekenaar zelf.
@@ -274,9 +280,13 @@ def colorise_page(
         if recolour.is_colour(basis):
             raise AlreadyColour("deze pagina heeft al kleur; inkleuren vervangt het palet")
 
+    geverfd = translator.colorise_page(basis, media_type=media_type)
+    # Eerst de ruwe plaat bewaren, dan pas onze bewerking. Andersom zou een
+    # fout in het samenstellen betekenen dat het betaalde beeld weg is.
+    sidecar.write_bytes(sidecar.variant_path(series, book, page_index, COLOUR_RAW_VARIANT), geverfd)
     # Alleen de kleur van het model gebruiken; het lijnwerk en de letters
     # houden we zelf vast. Zie recolour voor waarom dat nodig is.
-    produced = recompose_to_webp(basis, translator.colorise_page(basis, media_type=media_type))
+    produced = recompose_to_webp(basis, geverfd)
 
     sidecar.write_bytes(path, produced)
     _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
@@ -286,10 +296,12 @@ def colorise_page(
 def has_colour(
     session: Session, book: Book, page_index: int, target_lang: str | None = None
 ) -> bool:
-    """Ligt er een ingekleurde versie? Kijkt alleen of het bestand bestaat.
+    """Is er een ingekleurde versie — of te maken zonder aanroep?
 
-    Apart van ``read_colour`` omdat het merkje in de lezer alleen wil weten
-    dát er iets is; de pagina zelf van schijf trekken is daar zonde van.
+    Kijkt niet alleen naar de bewerkte plaat maar ook naar de ruwe van het
+    model en naar een taalversie van vroeger: uit allebei is het ingekleurde
+    origineel te herstellen. Alleen naar het ene bestand kijken zou "geen
+    kleur" melden terwijl je er wel voor betaald hebt.
     """
     series = session.get(Series, book.series_id)
     if (
@@ -297,7 +309,10 @@ def has_colour(
         and sidecar.variant_path(series, book, page_index, colour_variant(target_lang)).is_file()
     ):
         return True
-    return sidecar.variant_path(series, book, page_index, COLOUR_VARIANT).is_file()
+    for variant in (COLOUR_VARIANT, COLOUR_RAW_VARIANT):
+        if sidecar.variant_path(series, book, page_index, variant).is_file():
+            return True
+    return _any_language_colour(series, book, page_index) is not None
 
 
 def has_colour_for_language(
@@ -313,7 +328,7 @@ def has_colour_for_language(
     series = session.get(Series, book.series_id)
     if sidecar.variant_path(series, book, page_index, colour_variant(target_lang)).is_file():
         return True
-    if not sidecar.variant_path(series, book, page_index, COLOUR_VARIANT).is_file():
+    if not has_colour(session, book, page_index):
         return False
     return _has_redrawn(session, book, page_index, target_lang)
 
@@ -339,7 +354,7 @@ def read_colour(
     hoeveel talen je er ook overheen legt.
     """
     series = session.get(Series, book.series_id)
-    kleur = sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
+    kleur = _plain_colour(session, book, page_index)
     if not target_lang:
         return kleur
 
@@ -360,6 +375,61 @@ def read_colour(
     samen = _as_webp(recolour.tint_only(hertekend, kleur))
     sidecar.write_bytes(pad, samen)
     return samen
+
+
+def _plain_colour(session: Session, book: Book, page_index: int) -> bytes | None:
+    """Het ingekleurde origineel, desnoods opnieuw samengesteld.
+
+    Zelfherstellend, want de kleur zelf raakt niet zoek: ligt de bewerkte
+    versie er niet maar de ruwe plaat van het model wel, dan maken we hem
+    opnieuw. En is er alleen een taalversie van vóór deze opzet, dan zit de
+    kleur daar nog in — die halen we eruit en leggen we over het origineel.
+    Allebei rekenwerk; geen van beide kost een aanroep.
+    """
+    series = session.get(Series, book.series_id)
+    gereed = sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
+    if gereed is not None:
+        return gereed
+
+    bron = sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_RAW_VARIANT))
+    # De ruwe plaat heeft dezelfde tekst als het origineel; een taalversie niet.
+    # Daar mag de donkerte dus niet mee, anders drukken de vertaalde letters
+    # dwars door de oorspronkelijke heen.
+    zelfde_tekst = bron is not None
+    if bron is None:
+        bron = _any_language_colour(series, book, page_index)
+    if bron is None:
+        return None
+
+    try:
+        origineel, _media_type = colour_base(session, book, page_index)
+    except TranslationError:
+        return None
+    hersteld = (
+        recompose_to_webp(origineel, bron)
+        if zelfde_tekst
+        else _as_webp(recolour.tint_only(origineel, bron))
+    )
+    sidecar.write_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT), hersteld)
+    logger.info("ingekleurde pagina %s van boek %s opnieuw samengesteld", page_index, book.id)
+    return hersteld
+
+
+def _any_language_colour(series: Series | None, book: Book, page_index: int) -> bytes | None:
+    """Een ingekleurde taalversie, als die er nog van vroeger ligt.
+
+    De kleur erin komt van het model en klopt nog; alleen de letters eronder
+    zijn de verkeerde. Genoeg om het ingekleurde origineel mee te herstellen.
+    """
+    map_ = sidecar.chapter_dir(series, book)
+    if not map_.is_dir():
+        return None
+    voorvoegsel = f"{sidecar.page_stem(page_index)}-{COLOUR_VARIANT}-"
+    for pad in sorted(map_.glob(f"{voorvoegsel}*.webp")):
+        if pad.stem.endswith(COLOUR_RAW_VARIANT):
+            continue  # dat is de ruwe plaat zelf, geen taalversie
+        return sidecar.read_bytes(pad)
+    return None
 
 
 def _redrawn_page(session: Session, book: Book, page_index: int, target_lang: str) -> bytes | None:
