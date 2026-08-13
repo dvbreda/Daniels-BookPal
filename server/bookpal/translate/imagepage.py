@@ -64,19 +64,29 @@ Geef alleen de bewerkte pagina terug, op exact dezelfde afmeting als deze."""
 
 _COLOUR_PROMPT = """Dit is een zwart-witte pagina uit een stripverhaal.
 
-Kleur hem in alsof hij zo gedrukt is: natuurlijke, ingetogen kleuren die bij het
-onderwerp passen.
+Kleur hem in met aquarel, zoals de kleurpagina's die mangaka zelf schilderen:
+transparante lagen waterverf onder het inktwerk, op papier.
+
+Zo ziet dat eruit:
+- Doorschijnende wassingen, geen egale vlakken. Binnen één vlak mag de kleur
+  verlopen van vol naar bijna niets, en het wit van het papier schijnt eronder
+  door.
+- Zachte, iets onregelmatige randen. Een wassing die net buiten de lijn valt of
+  er net binnen stopt hoort erbij; dat is precies wat het penseel doet.
+- Waar twee kleuren elkaar raken mogen ze in elkaar lopen.
+- Een ingetogen, aardse palet: gebroken tinten in plaats van felle, verzadigde
+  kleuren. Denk aan gewassen inkt en gouache, niet aan digitale vulling.
 
 Regels:
 - Verander de tekening niet. Geen lijn erbij, geen lijn weg, geen paneel
   verschoven, geen detail opnieuw getekend.
 - Laat alle tekst staan zoals hij is, in dezelfde letters. Vertaal niets en
   herschrijf niets.
-- Houd de arcering en het lijnwerk zichtbaar; kleur ligt eronder, niet erover.
-- Wit blijft wit en zwart blijft zwart waar dat de bedoeling is: papier is
-  papier en inkt is inkt.
-- Kies rustige kleuren. Een overdreven verzadigde pagina leest slechter dan
-  het zwart-witte origineel.
+- Het zwarte lijnwerk en de arcering blijven scherp en volledig zichtbaar: de
+  verf ligt eronder, nooit erover. Schilder de lijnen niet over.
+- Tekstballonnen en de papierrand blijven wit. Papier is papier en inkt is inkt.
+- Houd het rustig genoeg om te blijven lezen. Een overdreven verzadigde pagina
+  leest slechter dan het zwart-witte origineel.
 
 Geef alleen de ingekleurde pagina terug, op exact dezelfde afmeting als deze."""
 
