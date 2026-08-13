@@ -61,12 +61,19 @@ function BubbleBox({ bubble }: { bubble: Bubble }) {
 
   return (
     <div
-      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-sm border border-black/40 bg-white px-0.5 text-center leading-tight text-black"
+      // Zo rond als het kan: een pilvorm volgt de kortste zijde, dus bij een
+      // ongeveer vierkant vlak is het een cirkel en bij een breed vlak een
+      // ovaal met ronde uiteinden. Dat dekt merkbaar minder tekening af dan
+      // een rechthoek, en het lijkt op wat er onder zit — een tekstballon is
+      // zelf ook rond. De zijkantmarge is een percentage van het vlak zelf,
+      // zodat de tekst niet in de bocht loopt.
+      className="pointer-events-auto absolute flex items-center justify-center overflow-hidden rounded-full border border-black/40 bg-white text-center leading-tight text-black"
       style={{
         left: `${x0 * 100}%`,
         top: `${y0 * 100}%`,
         width: `${(x1 - x0) * 100}%`,
         height: `${(y1 - y0) * 100}%`,
+        paddingInline: "8%",
         // Meeschalen met het vlak zelf: cqw is een procent van de breedte van
         // de pagina-container, dus de tekst blijft in verhouding bij zoomen.
         fontSize: `clamp(7px, ${Math.max(1.1, (x1 - x0) * 7)}cqw, 20px)`,

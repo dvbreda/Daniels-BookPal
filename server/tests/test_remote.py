@@ -8,11 +8,13 @@ BookPal bij je router of je andere containers te komen.
 from __future__ import annotations
 
 import io
+import time
 import zipfile
 from pathlib import Path
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from bookpal.library import remote
 
@@ -207,3 +209,138 @@ class TestWhatComesIn:
         remote.download("https://example.com/H5.cbz", tmp_path, client=_client(handler))
         with zipfile.ZipFile(tmp_path / "H5.cbz") as opnieuw:
             assert len(opnieuw.namelist()) == 4
+
+
+class TestFetchingInTheBackground:
+    """Een gedeelde map is zomaar een gigabyte.
+
+    Daar in het verzoek zelf op wachten is minutenlang een browser die niets
+    zegt, en dat is niet te onderscheiden van "er gebeurt niets".
+    """
+
+    def _wacht(self, timeout: float = 5.0):
+        from bookpal.library import fetchjob
+
+        eind = time.monotonic() + timeout
+        while time.monotonic() < eind:
+            job = fetchjob.status()
+            if job is not None and not job.running:
+                return job
+            time.sleep(0.02)
+        raise AssertionError("de klus liep niet af")
+
+    def test_it_answers_before_the_download_is_done(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.config import settings
+        from bookpal.library import fetchjob
+
+        fetchjob.reset()
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+        monkeypatch.setattr(fetchjob.remote, "download", lambda *a, **k: _traag(*a, **k))
+
+        body = client.post("/api/intake/fetch", json={"url": "https://x.test/map.zip"}).json()
+        assert body["state"] == "bezig", "meteen antwoord, niet pas als alles binnen is"
+        self._wacht()
+
+    def test_the_status_says_how_far_it_is(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.config import settings
+        from bookpal.library import fetchjob, remote
+
+        fetchjob.reset()
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+
+        def nep(url, doel, *, client=None, on_progress=None):
+            if on_progress:
+                on_progress(500, 1000)
+            return remote.FetchReport(saved=["a.cbz"])
+
+        monkeypatch.setattr(fetchjob.remote, "download", nep)
+
+        client.post("/api/intake/fetch", json={"url": "https://x.test/map.zip"})
+        self._wacht()
+
+        stand = client.get("/api/intake/fetch").json()
+        assert stand["state"] == "klaar"
+        assert stand["bytes_done"] == 500
+        assert stand["bytes_total"] == 1000
+        assert stand["saved"] == ["a.cbz"]
+
+    def test_a_failure_is_reported_and_not_swallowed(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.config import settings
+        from bookpal.library import fetchjob, remote
+
+        fetchjob.reset()
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+
+        def stuk(*args, **kwargs):
+            raise remote.RemoteError("de server gaf 404")
+
+        monkeypatch.setattr(fetchjob.remote, "download", stuk)
+
+        client.post("/api/intake/fetch", json={"url": "https://x.test/weg.zip"})
+        self._wacht()
+
+        stand = client.get("/api/intake/fetch").json()
+        assert stand["state"] == "mislukt"
+        assert "404" in stand["errors"][0]
+
+    def test_a_second_one_is_refused_while_the_first_runs(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Twee downloads tegelijk maken het alleen trager en de melding vager."""
+        from bookpal.config import settings
+        from bookpal.library import fetchjob
+
+        fetchjob.reset()
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+        monkeypatch.setattr(fetchjob.remote, "download", lambda *a, **k: _traag(*a, **k))
+
+        client.post("/api/intake/fetch", json={"url": "https://x.test/een.zip"})
+        tweede = client.post("/api/intake/fetch", json={"url": "https://x.test/twee.zip"})
+        assert tweede.status_code == 409
+        self._wacht()
+
+    def test_a_subfolder_is_used(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.config import settings
+        from bookpal.library import fetchjob, remote
+
+        fetchjob.reset()
+        folder = tmp_path / "intake"
+        folder.mkdir()
+        monkeypatch.setattr(settings, "intake_dirs", [str(folder)])
+
+        gezien: list[Path] = []
+
+        def nep(url, doel, *, client=None, on_progress=None):
+            gezien.append(doel)
+            return remote.FetchReport()
+
+        monkeypatch.setattr(fetchjob.remote, "download", nep)
+
+        client.post(
+            "/api/intake/fetch", json={"url": "https://x.test/map.zip", "folder": "Dirk Jan"}
+        )
+        self._wacht()
+        assert gezien and gezien[0].name == "Dirk Jan"
+
+
+def _traag(url, doel, *, client=None, on_progress=None):
+    from bookpal.library import remote
+
+    time.sleep(0.1)
+    return remote.FetchReport()

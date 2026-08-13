@@ -203,9 +203,23 @@ function SearchPanel({
 
   const subscribe = useMutation({
     mutationFn: ({ bron, hit }: { bron: SourceRow; hit: SearchHit }) =>
-      api.subscribe(bron.id, { ref: hit.ref, policy, language }),
+      api.subscribe(bron.id, { ref: hit.ref, policy, language: volgTaal(hit) }),
     onSuccess: onChanged,
   });
+
+  /**
+   * In welke taal je deze reeks gaat volgen.
+   *
+   * Zoek je met "alle talen", dan is er geen keuze om op te slaan — en een leeg
+   * veld belandde in het abonnement, waarna de achtergrondronde om hoofdstukken
+   * in het niets vroeg. Dan kiezen we er zelf een uit wat de reeks werkelijk
+   * heeft, met Engels voorop omdat daar het meeste van bestaat.
+   */
+  function volgTaal(hit: SearchHit): string {
+    if (language) return language;
+    if (hit.languages.includes("en")) return "en";
+    return hit.languages[0] ?? "en";
+  }
 
   return (
     <section className="mt-6 rounded border border-ink-600 p-4">

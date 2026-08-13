@@ -776,6 +776,15 @@ class IntakeFetchIn(BaseModel):
 
 
 class IntakeFetchOut(BaseModel):
+    """De stand van het ophalen: bezig, klaar, mislukt of niets."""
+
+    state: str = "niets"
+    url: str = ""
+    folder: str | None = None
+    bytes_done: int = 0
+    # Wat de server zei dat er zou komen; bij een gedeelde map weet hij dat
+    # vaak zelf niet, en dan is het aantal bytes het enige teken van leven.
+    bytes_total: int | None = None
     saved: list[str] = Field(default_factory=list)
     skipped: int = 0
     errors: list[str] = Field(default_factory=list)

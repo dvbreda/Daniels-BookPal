@@ -225,10 +225,28 @@ class TestOverlay:
 
     def test_the_layer_is_much_smaller_than_the_page(self):
         """De reden om een laag te sturen in plaats van de pagina opnieuw: hij
-        kost een fractie van de bytes."""
-        page = _png(800, 1200)
+        kost een fractie van de bytes.
+
+        Met een geruisde pagina in plaats van een egaal wit vlak, want dat
+        laatste comprimeert tot een paar kilobyte en is dus geen eerlijke maat
+        voor een echte scan.
+        """
+        import random
+
+        ruis = Image.new("RGB", (800, 1200))
+        willekeurig = random.Random(1)
+        ruis.putdata(
+            [
+                (willekeurig.randrange(256), willekeurig.randrange(256), willekeurig.randrange(256))
+                for _ in range(800 * 1200)
+            ]
+        )
+        buffer = BytesIO()
+        ruis.save(buffer, format="PNG")
+        page = buffer.getvalue()
+
         layer = render_layer((800, 1200), [Bubble(0.1, 0.1, 0.4, 0.2, "HI", "HOI")])
-        assert len(layer) < len(page)
+        assert len(layer) < len(page) / 10
 
     def test_baking_keeps_the_format(self):
         data = bake(_png(), [Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")], media_type="image/png")

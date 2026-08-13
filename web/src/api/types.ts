@@ -502,6 +502,13 @@ export interface IntakeUpload {
 }
 
 export interface IntakeFetch {
+  /** bezig | klaar | mislukt | niets */
+  state: string;
+  url: string;
+  folder: string | null;
+  bytes_done: number;
+  /** Wat de server zei dat er zou komen; bij een gedeelde map vaak onbekend. */
+  bytes_total: number | null;
   saved: string[];
   skipped: number;
   errors: string[];

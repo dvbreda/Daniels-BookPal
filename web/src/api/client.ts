@@ -318,6 +318,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ url, folder: folder || null }),
     }),
+  intakeFetchStatus: () => request<IntakeFetch>("/api/intake/fetch"),
   setReadState: (bookId: number, finished: boolean) =>
     request<ReadState>(`/api/books/${bookId}/read-state`, {
       method: "POST",

@@ -31,6 +31,7 @@ from bookpal.models import (
     Edition,
     File,
     LibraryRoot,
+    OriginRegion,
     Progress,
     Series,
     Source,
@@ -350,9 +351,11 @@ def sync_chapters(
                 sort_number=_sort_number(chapter.number),
                 sort_volume=_sort_number(chapter.volume),
                 page_count=chapter.page_count,
-                # Manga leest van rechts naar links; dat is bij een
-                # manga-bron de juiste aanname.
-                right_to_left=True,
+                # Rechts naar links hoort bij de herkomst, niet bij "het komt
+                # van een bron". Dat laatste stond hier hardgecodeerd, waardoor
+                # een Europese strip van het Internet Archive net zo goed
+                # omgekeerd werd gelezen.
+                right_to_left=series.origin_region is OriginRegion.JAPAN,
                 source_id=series.source_id,
                 source_ref=chapter.ref,
                 source_group_id=chapter.group_id,
@@ -424,6 +427,11 @@ def subscribe(
     # Shinya Shokudo is maar een klein deel vertaald, dus de Engelse uitgave
     # voorop en het Japanse origineel eronder om verder te kunnen lezen. Zonder
     # de taal in de sleutel zou het tweede abonnement het eerste overschrijven.
+    # Een lege taal is geen taal. Zoek je met "alle talen" en volg je dan,
+    # dan kwam die leegte in het abonnement terecht en vroeg de ronde daarna
+    # om hoofdstukken in het niets.
+    language = (language or "").strip() or "en"
+
     subscription = session.scalar(
         select(Subscription).where(
             Subscription.source_id == source_row.id,

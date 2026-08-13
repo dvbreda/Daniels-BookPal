@@ -108,6 +108,17 @@ def _to_result(doc: dict[str, Any]) -> SearchResult:
         # Elk item heeft een afbeeldingsdienst; die kiest zelf de omslag.
         cover_url=f"{API_BASE}/services/img/{identifier}",
         authors=[maker] if maker else [],
+        # De taal van het item zelf, als het er één is. Daarmee klopt de
+        # herkomst — en daarmee de leesrichting, want rechts naar links hoort
+        # bij Japans en niet bij "het komt van een bron".
+        original_language=next(
+            (
+                code
+                for code, drieletterig in _LANGUAGES.items()
+                if drieletterig in (doc.get("language") or [])
+            ),
+            None,
+        ),
         languages=[
             code
             for code, drieletterig in _LANGUAGES.items()

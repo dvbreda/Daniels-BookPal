@@ -11,7 +11,7 @@ from starlette.concurrency import run_in_threadpool
 
 from bookpal.config import settings
 from bookpal.db import get_session
-from bookpal.library import intake, remote
+from bookpal.library import fetchjob, intake
 from bookpal.models import LibraryRoot
 from bookpal.schemas import (
     IntakeCandidateOut,
@@ -116,8 +116,12 @@ async def upload_file(file: UploadFile = FastAPIFile(...)) -> IntakeUploadOut:
 
 
 @router.post("/fetch", response_model=IntakeFetchOut)
-async def fetch_link(payload: IntakeFetchIn) -> IntakeFetchOut:
+def fetch_link(payload: IntakeFetchIn) -> IntakeFetchOut:
     """Haal een deellink op — een Dropbox-map, een los bestand.
+
+    Begint meteen en geeft direct antwoord: een gedeelde map is zomaar een
+    gigabyte, en daar minutenlang op wachten in het verzoek zelf is niet te
+    onderscheiden van "er gebeurt niets". Kijk met ``GET /fetch`` hoe ver het is.
 
     Een gedeelde map komt binnen als zip; daar wordt uitgepakt wat BookPal kan
     lezen. De rest blijft waar het is.
@@ -129,8 +133,29 @@ async def fetch_link(payload: IntakeFetchIn) -> IntakeFetchOut:
         raise HTTPException(status_code=409, detail=f"{folder} is niet beschrijfbaar")
 
     try:
-        report = await run_in_threadpool(remote.download, payload.url.strip(), folder)
-    except remote.RemoteError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        job = fetchjob.start(payload.url.strip(), folder)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _fetch_out(job)
 
-    return IntakeFetchOut(saved=report.saved, skipped=report.skipped, errors=report.errors)
+
+@router.get("/fetch", response_model=IntakeFetchOut)
+def fetch_status() -> IntakeFetchOut:
+    """Hoe ver het ophalen is, of hoe het is afgelopen."""
+    job = fetchjob.status()
+    if job is None:
+        return IntakeFetchOut(state="niets")
+    return _fetch_out(job)
+
+
+def _fetch_out(job: fetchjob.FetchJob) -> IntakeFetchOut:
+    return IntakeFetchOut(
+        state=job.state,
+        url=job.url,
+        folder=job.folder,
+        bytes_done=job.bytes_done,
+        bytes_total=job.bytes_total,
+        saved=job.saved,
+        skipped=job.skipped,
+        errors=[job.error] if job.error else [],
+    )

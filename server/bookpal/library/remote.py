@@ -24,6 +24,7 @@ import logging
 import re
 import socket
 import zipfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import parse_qsl, unquote, urlencode, urlparse, urlunparse
@@ -124,7 +125,13 @@ def _filename(url: str, headers: httpx.Headers) -> str:
     return voorstel or "download"
 
 
-def download(url: str, target_dir: Path, *, client: httpx.Client | None = None) -> FetchReport:
+def download(
+    url: str,
+    target_dir: Path,
+    *,
+    client: httpx.Client | None = None,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> FetchReport:
     """Haal deze link op en zet wat leesbaar is in ``target_dir``.
 
     Een zip met hoofdstukken erin — zoals een gedeelde Dropbox-map — wordt
@@ -140,7 +147,7 @@ def download(url: str, target_dir: Path, *, client: httpx.Client | None = None) 
         naam = _filename(str(response.url), response.headers)
         tijdelijk = target_dir / f".{naam}.binnenkomend"
         try:
-            _stream_to(response, tijdelijk)
+            _stream_to(response, tijdelijk, on_progress)
             return _place(tijdelijk, naam, target_dir)
         finally:
             tijdelijk.unlink(missing_ok=True)
@@ -176,7 +183,17 @@ def _get_following_redirects(http: httpx.Client, url: str) -> httpx.Response:
     raise RemoteError("te veel omleidingen")
 
 
-def _stream_to(response: httpx.Response, target: Path) -> None:
+def _stream_to(
+    response: httpx.Response,
+    target: Path,
+    on_progress: Callable[[int, int | None], None] | None = None,
+) -> None:
+    # Hoeveel er komt, als de server het zegt. Bij een Dropbox-map is dat vaak
+    # onbekend, en dan is het aantal binnengehaalde bytes het enige teken van
+    # leven dat we kunnen geven.
+    ruw = response.headers.get("content-length")
+    totaal = int(ruw) if ruw and ruw.isdigit() else None
+
     geschreven = 0
     with target.open("wb") as uit:
         for blok in response.iter_bytes(_CHUNK):
@@ -184,6 +201,8 @@ def _stream_to(response: httpx.Response, target: Path) -> None:
             if geschreven > MAX_BYTES:
                 raise RemoteError("dit bestand is groter dan BookPal in één keer ophaalt")
             uit.write(blok)
+            if on_progress is not None:
+                on_progress(geschreven, totaal)
     if geschreven == 0:
         raise RemoteError("er kwam niets binnen")
 

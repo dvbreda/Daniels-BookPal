@@ -219,7 +219,14 @@ def _draw_onto(
             continue
 
         if boxes:
-            draw.rectangle((x0, y0, x1, y1), fill=white, outline=black, width=1)
+            # Zo rond als het vlak toelaat: de straal is de helft van de kortste
+            # zijde, dus een ongeveer vierkant vlak wordt een cirkel en een breed
+            # vlak een ovaal met ronde uiteinden. Dat dekt merkbaar minder
+            # tekening af dan een rechthoek, en het lijkt op wat eronder zit.
+            straal = min(x1 - x0, y1 - y0) / 2
+            draw.rounded_rectangle(
+                (x0, y0, x1, y1), radius=straal, fill=white, outline=black, width=1
+            )
 
         # Striplettering staat traditioneel in kapitalen; een vertaling in
         # onderkast daartussen valt meteen op als "ingeplakt". We vragen dit

@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
@@ -530,11 +530,37 @@ function IntakePanel() {
 function AddToIntake() {
   const queryClient = useQueryClient();
   const [url, setUrl] = useState("");
+  const [map, setMap] = useState("");
   const [melding, setMelding] = useState<string | null>(null);
 
   const klaar = () => {
     void queryClient.invalidateQueries({ queryKey: ["intake"] });
   };
+
+  // Zolang er iets binnenkomt elke seconde kijken hoe ver het is. Een gedeelde
+  // map is zomaar een gigabyte; zonder teken van leven is dat niet te
+  // onderscheiden van "er gebeurt niets".
+  const { data: stand } = useQuery({
+    queryKey: ["intake-fetch"],
+    queryFn: api.intakeFetchStatus,
+    refetchInterval: (query) => (query.state.data?.state === "bezig" ? 1000 : false),
+  });
+
+  const bezig = stand?.state === "bezig";
+
+  useEffect(() => {
+    if (stand?.state === "klaar") {
+      setMelding(
+        stand.saved.length === 0
+          ? `Niets nieuws (${stand.skipped} stond er al).`
+          : `${stand.saved.length} bestand(en) opgehaald.`,
+      );
+      klaar();
+    }
+    if (stand?.state === "mislukt") setMelding(stand.errors[0] ?? "Ophalen mislukt.");
+    // klaar() is stabiel genoeg; alleen op een statuswissel reageren.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stand?.state]);
 
   const upload = useMutation({
     mutationFn: (file: File) => api.intakeUpload(file),
@@ -547,15 +573,11 @@ function AddToIntake() {
   });
 
   const ophalen = useMutation({
-    mutationFn: () => api.intakeFetch(url.trim()),
-    onSuccess: (result) => {
-      setMelding(
-        result.saved.length === 0
-          ? `Niets nieuws (${result.skipped} stond er al).`
-          : `${result.saved.length} bestand(en) opgehaald.`,
-      );
+    mutationFn: () => api.intakeFetch(url.trim(), map.trim() || undefined),
+    onSuccess: () => {
       setUrl("");
-      klaar();
+      setMelding(null);
+      void queryClient.invalidateQueries({ queryKey: ["intake-fetch"] });
     },
     onError: (error: unknown) =>
       setMelding(error instanceof ApiError ? error.message : "Ophalen mislukt."),
@@ -587,7 +609,7 @@ function AddToIntake() {
         className="mt-3 flex flex-wrap gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          if (url.trim()) ophalen.mutate();
+          if (url.trim() && !bezig) ophalen.mutate();
         }}
       >
         <input
@@ -596,17 +618,45 @@ function AddToIntake() {
           placeholder="Dropbox-deellink of directe https-link"
           className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
         />
+        <input
+          value={map}
+          onChange={(event) => setMap(event.target.value)}
+          placeholder="Submap (optioneel)"
+          className="w-44 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+        />
         <button
           type="submit"
-          disabled={ophalen.isPending || !url.trim()}
+          disabled={bezig || !url.trim()}
           className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
         >
-          {ophalen.isPending ? "Ophalen…" : "Ophalen"}
+          {bezig ? "Bezig…" : "Ophalen"}
         </button>
       </form>
       <p className="mt-1 text-xs text-slate-500">
         Een gedeelde map wordt uitgepakt; alleen leesbare bestanden komen eruit.
       </p>
+
+      {bezig && stand && (
+        <div className="mt-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700">
+            <div
+              className={`h-full rounded-full bg-accent ${
+                stand.bytes_total ? "transition-[width]" : "animate-pulse w-1/3"
+              }`}
+              style={
+                stand.bytes_total
+                  ? { width: `${Math.round((stand.bytes_done / stand.bytes_total) * 100)}%` }
+                  : undefined
+              }
+            />
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            {formatMB(stand.bytes_done)}
+            {stand.bytes_total ? ` van ${formatMB(stand.bytes_total)}` : " binnen"}
+            {stand.folder ? ` → ${stand.folder}` : ""}
+          </p>
+        </div>
+      )}
 
       {melding && <p className="mt-2 text-xs text-slate-300">{melding}</p>}
     </div>
@@ -710,4 +760,9 @@ function ModeChoice({
       </div>
     </div>
   );
+}
+
+/** Bytes als iets leesbaars; een teller in bytes zegt niets tijdens het wachten. */
+function formatMB(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }
