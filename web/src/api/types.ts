@@ -654,3 +654,12 @@ export interface BatchStatus {
   failed: number;
   error: string | null;
 }
+
+/** Wat er qua kleur voor een pagina klaarligt. */
+export interface PageColourInfo {
+  available: boolean;
+  /** Van de tekenaar zelf: dan valt er niets in te kleuren. */
+  native: boolean;
+  /** De vertaling zit in dit beeld gebakken. */
+  translated: boolean;
+}

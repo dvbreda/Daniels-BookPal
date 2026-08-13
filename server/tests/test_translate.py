@@ -887,11 +887,13 @@ class TestColourising:
         assert response.status_code == 404
 
 
-class TestColourisingTheTranslation:
-    """Ligt er al een hertekende vertaling, dan is díe de betere basis.
+class TestColourAndTranslationTogether:
+    """Eén keer inkleuren, en die kleur over elke vertaling.
 
-    Dan krijg je kleur en vertaalde tekst in één beeld, in plaats van onze witte
-    vlakjes over een ingekleurde pagina heen.
+    Eerder werd de hertekende vertaling zelf ingekleurd; dat werkte, maar
+    maakte kleur taalgebonden — elke taal een nieuwe aanroep van tientallen
+    centen voor dezelfde verf. Nu is de kleur taalloos en wordt de combinatie
+    ter plekke berekend.
     """
 
     def _serie(self, session: Session, boek: Book) -> Series:
@@ -899,37 +901,28 @@ class TestColourisingTheTranslation:
         assert gevonden is not None
         return gevonden
 
-    def _met_bestand(self, session: Session, tmp_path: Path) -> Book:
-        """Een boek met een echt cbz eronder, want zonder valt er niets te renderen."""
-        from bookpal.models import File, LibraryRoot
+    def _kleur(self, session: Session, boek: Book, kleur=(40, 160, 40)) -> None:
+        from bookpal.translate.service import COLOUR_VARIANT
 
-        boek = _comic(session)
-        pad = make_cbz(tmp_path / "kleur.cbz", pages=5)
-        root = LibraryRoot(name="R", path=str(tmp_path))
-        session.add(root)
-        session.flush()
-        bestand = File(
-            library_root_id=root.id,
-            path=str(pad),
-            size=pad.stat().st_size,
-            mtime=0.0,
-            extension=".cbz",
+        plaat = io.BytesIO()
+        Image.new("RGB", (40, 60), kleur).save(plaat, format="WEBP")
+        sidecar.write_bytes(
+            sidecar.variant_path(self._serie(session, boek), boek, 0, COLOUR_VARIANT),
+            plaat.getvalue(),
         )
-        session.add(bestand)
-        session.flush()
-        boek.file_id = bestand.id
-        session.commit()
-        return boek
 
-    def _met_hertekende_vertaling(self, session: Session, boek: Book) -> bytes:
+    def _hertekend(self, session: Session, boek: Book) -> None:
         from bookpal.models import Translation
-        from bookpal.translate import sidecar
         from bookpal.translate.modes import TranslateMode
 
-        beeld = _png(40, 60)
+        plaat = Image.new("RGB", (40, 60), (255, 255, 255))
+        for x in range(40):
+            plaat.putpixel((x, 30), (0, 0, 0))  # "tekst" op de vertaalde pagina
+        buffer = io.BytesIO()
+        plaat.save(buffer, format="WEBP", lossless=True)
         sidecar.write_bytes(
             sidecar.image_path(self._serie(session, boek), boek, 0, "nl", TranslateMode.IMAGE_PRO),
-            beeld,
+            buffer.getvalue(),
         )
         session.add(
             Translation(
@@ -941,79 +934,72 @@ class TestColourisingTheTranslation:
             )
         )
         session.commit()
-        return beeld
 
-    def test_the_redrawn_page_is_used_as_the_base(
-        self, session: Session, temp_settings, tmp_path: Path
-    ):
-        from bookpal.translate.service import colour_base
+    def test_the_colour_page_is_language_free(self, session: Session, temp_settings):
+        """Anders betaal je twee keer voor dezelfde verf."""
+        from bookpal.translate.service import COLOUR_VARIANT, colour_variant
 
-        boek = self._met_bestand(session, tmp_path)
-        vertaald = self._met_hertekende_vertaling(session, boek)
+        assert colour_variant(None) == COLOUR_VARIANT
 
-        basis, _mt, van_taal = colour_base(session, boek, 0, "nl")
-        assert basis == vertaald
-        assert van_taal == "nl", "het resultaat hoort bij die taal te horen"
-
-    def test_without_a_redraw_the_original_is_used(
-        self, session: Session, temp_settings, tmp_path: Path
-    ):
-        from bookpal.translate.service import colour_base
-
-        boek = self._met_bestand(session, tmp_path)
-
-        basis, _mt, van_taal = colour_base(session, boek, 0, "nl")
-        assert basis, "er hoort een pagina uit het bestand te komen"
-        assert van_taal is None, "een ingekleurd origineel hoort bij geen enkele taal"
-
-    def test_a_text_only_translation_is_not_a_base(
-        self, session: Session, temp_settings, tmp_path: Path
-    ):
-        """Losse ballontekst is geen pagina; daar valt niets van in te kleuren."""
-        from bookpal.translate.service import colour_base
-
-        boek = self._met_bestand(session, tmp_path)
-        _store(session, boek, 0, "nl")
-        session.commit()
-
-        _basis, _mt, van_taal = colour_base(session, boek, 0, "nl")
-        assert van_taal is None
-
-    def test_the_two_are_stored_apart(self):
-        from bookpal.translate.service import colour_variant
-
-        assert colour_variant("nl") != colour_variant(None)
-
-    def test_a_translated_colour_page_does_not_leak_when_translation_is_off(
-        self, session: Session, temp_settings
-    ):
-        """Met de vertaling uit hoor je geen Nederlandse tekst te zien."""
-        from bookpal.translate import sidecar
+    def test_asking_with_a_language_builds_the_combination(self, session: Session, temp_settings):
         from bookpal.translate.service import colour_variant, read_colour
 
         boek = _comic(session)
         session.commit()
-        sidecar.write_bytes(
-            sidecar.variant_path(self._serie(session, boek), boek, 0, colour_variant("nl")),
-            _png(40, 60),
-        )
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        gemaakt = read_colour(session, boek, 0, "nl")
+        assert gemaakt is not None
+        # En hij wordt bewaard, zodat het rekenwerk eenmalig is.
+        assert sidecar.variant_path(
+            self._serie(session, boek), boek, 0, colour_variant("nl")
+        ).is_file()
+
+    def test_the_translated_text_survives(self, session: Session, temp_settings):
+        """De letters komen van onze pagina, niet van de ingekleurde."""
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        beeld = Image.open(io.BytesIO(read_colour(session, boek, 0, "nl"))).convert("RGB")
+        rood, groen, blauw = beeld.getpixel((20, 30))
+        assert max(rood, groen, blauw) < 60, "de zwarte regel hoort zwart te blijven"
+
+    def test_colour_arrives_where_the_page_is_white(self, session: Session, temp_settings):
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        beeld = Image.open(io.BytesIO(read_colour(session, boek, 0, "nl"))).convert("RGB")
+        rood, groen, blauw = beeld.getpixel((20, 10))
+        assert groen > rood and groen > blauw, "het groen van de verf hoort door te komen"
+
+    def test_without_a_redrawn_page_you_get_the_plain_colour(self, session: Session, temp_settings):
+        """Onze eigen tekstvlakken komen er in de lezer gewoon overheen."""
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
 
         assert read_colour(session, boek, 0, "nl") is not None
-        assert read_colour(session, boek, 0) is None
 
-    def test_the_plain_colour_page_is_the_fallback(self, session: Session, temp_settings):
-        from bookpal.translate import sidecar
-        from bookpal.translate.service import colour_variant, read_colour
+    def test_nothing_coloured_means_nothing(self, session: Session, temp_settings):
+        from bookpal.translate.service import read_colour
 
         boek = _comic(session)
         session.commit()
-        sidecar.write_bytes(
-            sidecar.variant_path(self._serie(session, boek), boek, 0, colour_variant(None)),
-            _png(40, 60),
-        )
+        self._hertekend(session, boek)
 
-        assert read_colour(session, boek, 0, "nl") is not None, "terugvallen mag"
-        assert read_colour(session, boek, 0) is not None
+        assert read_colour(session, boek, 0, "nl") is None
+        assert read_colour(session, boek, 0) is None
 
 
 class TestRecompose:
@@ -1505,3 +1491,43 @@ class TestRecoveringOrphans:
         sidecar.move_legacy(session)
 
         assert (oud / "p0001-nl.json").is_file()
+
+
+class TestTheColourBadgeKnows:
+    """Wat het merkje meldt bepaalt welke plaat de lezer opvraagt."""
+
+    def test_a_combination_that_can_be_made_counts_as_available(
+        self, session: Session, temp_settings
+    ):
+        """Anders zie je de eerste keer de kale kleurversie met de oude tekst."""
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._kleur(session, boek)
+        samen._hertekend(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is True
+
+    def test_without_colour_there_is_nothing_to_combine(self, session: Session, temp_settings):
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._hertekend(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is False
+
+    def test_without_a_redrawn_page_there_is_nothing_to_combine(
+        self, session: Session, temp_settings
+    ):
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._kleur(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is False

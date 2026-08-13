@@ -915,6 +915,19 @@ class TranslateModeIn(BaseModel):
     colour_mode: str | None = Field(default=None, max_length=20)
 
 
+class PageColourInfoOut(BaseModel):
+    """Wat er qua kleur voor deze pagina is, voor het merkje in de lezer."""
+
+    available: bool
+    # Van de tekenaar zelf: dan valt er niets in te kleuren en hoort het merkje
+    # dat te zeggen in plaats van een knop aan te bieden die niets toevoegt.
+    native: bool
+    # Zit de vertaling in dit beeld gebakken? Dan is dít de versie die je wilt
+    # zien als kleur en vertaling allebei aanstaan — anders wint de hertekende
+    # pagina en zie je de kleur nooit.
+    translated: bool = False
+
+
 class BatchPlanOut(BaseModel):
     """Wat een klus voor dit hoofdstuk gaat inhouden, vóór je hem start.
 

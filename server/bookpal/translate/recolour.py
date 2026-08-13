@@ -25,7 +25,7 @@ import io
 
 from PIL import Image, ImageChops
 
-__all__ = ["colour_fraction", "is_colour", "recompose"]
+__all__ = ["colour_fraction", "is_colour", "recompose", "tint_only"]
 
 #: Waarboven een pagina "heeft al kleur" heet. Zwart-witte binnenpagina's meten
 #: over de hele bibliotheek 0,0%; alles met kleur van de tekenaar zelf zit op
@@ -84,4 +84,25 @@ def recompose(original: bytes, coloured: bytes) -> Image.Image:
     # De donkerste van de twee: onze inkt blijft inkt, en een wassing die
     # donkerder is dan het papier blijft zichtbaar als schaduw.
     licht = ImageChops.darker(pagina_licht, verf_licht)
+    return Image.merge("HSV", (tint, verzadiging, licht)).convert("RGB")
+
+
+def tint_only(page: bytes, coloured: bytes) -> Image.Image:
+    """Alleen de kleur van ``coloured``, met de pagina onaangetast eronder.
+
+    Voor als de twee lagen niet dezelfde tekst hebben: de ingekleurde pagina is
+    van het origineel gemaakt en heeft dus de oorspronkelijke letters, terwijl
+    de pagina eronder de vertaalde versie is. ``recompose`` neemt de donkerste
+    van de twee en drukt die oude letters dan dwars door de nieuwe ballonnen
+    heen — gemeten en gezien, en volstrekt onleesbaar.
+
+    Zonder die donkerte gaat wel de wassing verloren die de aquarel zijn
+    textuur geeft. Dat is hier de goede ruil: leesbaarheid gaat voor.
+    """
+    onder = Image.open(io.BytesIO(page)).convert("RGB")
+    verf = Image.open(io.BytesIO(coloured)).convert("RGB")
+    if verf.size != onder.size:
+        verf = verf.resize(onder.size, Image.Resampling.LANCZOS)
+    tint, verzadiging, _ = verf.convert("HSV").split()
+    _, _, licht = onder.convert("HSV").split()
     return Image.merge("HSV", (tint, verzadiging, licht)).convert("RGB")

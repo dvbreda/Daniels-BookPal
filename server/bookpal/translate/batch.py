@@ -224,9 +224,7 @@ def _requests(state: BatchState) -> tuple[list[dict[str, Any]], dict[int, bytes]
             raise TranslationError("dit boek bestaat niet meer")
         for index in state.pages:
             if state.kind == KLEUREN:
-                image, media_type, _van_taal = colour_base(
-                    session, book, index, settings.translate_lang
-                )
+                image, media_type = colour_base(session, book, index)
                 verzoek = build_colour_request(image, media_type)
             elif state.kind == HERTEKEND:
                 image, media_type = render_for_translation(session, book, index)

@@ -21,6 +21,7 @@ from bookpal.schemas import (
     BatchStartIn,
     BatchStatusOut,
     BubbleOut,
+    PageColourInfoOut,
     PageColourOut,
     PageTranslationOut,
     TranslateBookIn,
@@ -30,7 +31,7 @@ from bookpal.schemas import (
     TranslatePageIn,
     TranslationStatusOut,
 )
-from bookpal.translate import batch, get_translator, is_configured, sidecar
+from bookpal.translate import batch, get_translator, is_configured, recolour, sidecar
 from bookpal.translate.base import PageResult, TranslationError
 from bookpal.translate.imagepage import GeminiPageTranslator
 from bookpal.translate.modes import TranslateMode
@@ -49,9 +50,12 @@ from bookpal.translate.service import (
     bubbles_for,
     colorise_page,
     find,
+    has_colour,
+    has_colour_for_language,
     plan_pages,
     read_colour,
     read_page_image,
+    render_for_translation,
     render_layer_for,
     translate_page,
     translate_page_as_image,
@@ -444,7 +448,7 @@ def make_page_colour(
     # geen letter aan te pas, en het lijnwerk houden we zelf vast.
     translator = GeminiPageTranslator(settings.gemini_api_key, get_colour_mode(session).model)
     try:
-        colorise_page(session, translator, book, page_index, target_lang=_lang(lang), force=force)
+        colorise_page(session, translator, book, page_index, force=force)
     except AlreadyColour as exc:
         # 412 en geen 502: er is niets kapot. De lezer herkent deze code, vraagt
         # het je, en stuurt het dan opnieuw met force.
@@ -455,6 +459,31 @@ def make_page_colour(
         translator.close()
 
     return PageColourOut(book_id=book.id, page_index=page_index, available=True)
+
+
+@router.get("/{book_id}/pages/{page_index}/colour/info", response_model=PageColourInfoOut)
+def page_colour_info(
+    book_id: int,
+    page_index: int,
+    lang: str | None = Query(default=None, max_length=8),
+    session: Session = Depends(get_session),
+) -> PageColourInfoOut:
+    """Is er kleur voor deze pagina, en van wie?
+
+    Het renderen om te kijken of de pagina van zichzelf al kleur heeft doen we
+    alleen als er geen ingekleurde versie ligt: dan is het antwoord toch al ja,
+    en scheelt het werk bij elke paginawissel.
+    """
+    book = deps.get_book(session, book_id)
+    taal = _lang(lang)
+    met_tekst = lang is not None and has_colour_for_language(session, book, page_index, taal)
+    if met_tekst or has_colour(session, book, page_index):
+        return PageColourInfoOut(available=True, native=False, translated=met_tekst)
+    try:
+        image, _media_type = render_for_translation(session, book, page_index)
+    except TranslationError:
+        return PageColourInfoOut(available=False, native=False)
+    return PageColourInfoOut(available=False, native=recolour.is_colour(image))
 
 
 @router.get("/{book_id}/pages/{page_index}/colour")

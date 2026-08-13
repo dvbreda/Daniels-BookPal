@@ -10,6 +10,7 @@ import { useStoredState } from "../lib/useStoredState";
 import type { GridTransform } from "./grid";
 import { cellOrder, cellTransform } from "./grid";
 import { TranslationOverlay } from "./TranslationOverlay";
+import { usePageColour } from "./usePageColour";
 import { usePageTranslation } from "./usePageTranslation";
 import {
   buildSpreads,
@@ -603,6 +604,12 @@ function Chrome(props: ChromeProps) {
           visible={translated}
           onToggle={() => setTranslated(!translated)}
         />
+        <ColourBadge
+          bookId={book.id}
+          page={currentPage}
+          visible={coloured}
+          onToggle={() => setColoured(!coloured)}
+        />
         <span className="ml-auto tabular-nums text-slate-400">
           {currentPage + 1} / {pageCount}
         </span>
@@ -848,7 +855,12 @@ function TranslatablePage({
   onAspect: (index: number, width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, page, translated);
-  const useFullPage = translated && data?.full_page === true;
+  const { data: kleur } = usePageColour(
+    book.id,
+    page,
+    translated ? data?.target_lang : undefined,
+    coloured,
+  );
   const [geenKleur, setGeenKleur] = useState(false);
   // Maar na het inkleuren ís hij er wel. Zonder dit blijft de eerdere 404
   // gelden en kijk je naar het origineel terwijl je net betaald hebt.
@@ -877,13 +889,13 @@ function TranslatablePage({
       }
     >
       <img
-        src={
-          useFullPage
-            ? imageUrl.fullTranslation(book.id, page, undefined, versie)
-            : coloured && !geenKleur
-              ? imageUrl.colour(book.id, page, translated ? data?.target_lang : undefined, versie)
-              : imageUrl.page(book.id, page, profile, adjust)
-        }
+        src={pageSource(book.id, page, profile, adjust, versie, {
+          translated,
+          coloured: coloured && !geenKleur,
+          fullPage: data?.full_page === true,
+          lang: data?.target_lang,
+          colour: kleur,
+        })}
         alt={`Pagina ${page + 1}`}
         className={`object-contain ${fitClass}`}
         draggable={false}
@@ -1178,6 +1190,41 @@ function RedoControl({
 }
 
 /**
+ * Welke van de drie versies van deze pagina je te zien krijgt.
+ *
+ * De volgorde deed er eerder niet toe omdat kleur en hertekend elkaar niet
+ * raakten. Nu wel: is de ingekleurde pagina gemaakt ván de hertekende
+ * vertaling, dan zit de Nederlandse tekst er al in gebakken en is dát het
+ * beeld dat je wilt zien. Zonder deze voorrang won de hertekende pagina altijd
+ * en kreeg je de kleur nooit te zien, terwijl er wel voor betaald was.
+ */
+function pageSource(
+  bookId: number,
+  index: number,
+  profile: string,
+  adjust: { crop: boolean; contrast: number },
+  versie: number,
+  opties: {
+    translated: boolean;
+    coloured: boolean;
+    fullPage: boolean;
+    lang: string | undefined;
+    colour: { available: boolean; translated: boolean } | undefined;
+  },
+): string {
+  const { translated, coloured, fullPage, lang, colour } = opties;
+  if (coloured && colour?.available) {
+    // Alleen om de taal vragen als die versie er ook is; anders krijg je het
+    // ingekleurde origineel met de oorspronkelijke tekst erin.
+    return imageUrl.colour(bookId, index, colour.translated ? lang : undefined, versie);
+  }
+  if (translated && fullPage) {
+    return imageUrl.fullTranslation(bookId, index, undefined, versie);
+  }
+  return imageUrl.page(bookId, index, profile, adjust);
+}
+
+/**
  * Vertaalknop met voortgang (M8).
  *
  * Verschijnt alleen als er een Gemini-sleutel is: zonder sleutel zou hij je op
@@ -1460,6 +1507,59 @@ function TranslationBadge({
   );
 }
 
+/**
+ * Of er kleur is voor deze pagina, en van wie.
+ *
+ * Naast het vertaalmerkje, met dezelfde werking: het zegt wat er ligt en één
+ * tik zet het aan of uit. Een pagina die de tekenaar zelf al kleurde krijgt
+ * een eigen tekst — daar valt niets in te kleuren, en dat is iets anders dan
+ * "nog niet gedaan".
+ */
+function ColourBadge({
+  bookId,
+  page,
+  visible,
+  onToggle,
+}: {
+  bookId: number;
+  page: number;
+  lang?: string;
+  visible: boolean;
+  onToggle: () => void;
+}) {
+  // Ook als kleur uitstaat: anders weet je niet dát er iets ligt.
+  const { data } = usePageColour(bookId, page, undefined, true);
+  if (!data || (!data.available && !data.native)) return null;
+
+  const eigen = data.native;
+  const label = eigen ? "Al in kleur" : "Kleur";
+
+  return (
+    <button
+      onClick={eigen ? undefined : onToggle}
+      disabled={eigen}
+      title={
+        eigen
+          ? "Deze pagina is van zichzelf in kleur; inkleuren zou het palet van de tekenaar vervangen."
+          : visible
+            ? "Ingekleurd — tik om het origineel te zien."
+            : "Er ligt een ingekleurde versie. Tik om die te tonen."
+      }
+      aria-pressed={eigen ? undefined : visible}
+      className={`rounded-full px-2 py-0.5 text-xs ${
+        eigen
+          ? "bg-ink-800 text-slate-500"
+          : visible
+            ? "bg-accent text-ink-900"
+            : "bg-ink-700 text-slate-400"
+      }`}
+    >
+      <span aria-hidden>{eigen ? "🖌" : "🎨"}</span>
+      <span className="ml-1 hidden sm:inline">{label}</span>
+    </button>
+  );
+}
+
 /** Voor in de uitleg bij het merkje; korter dan de volle omschrijving. */
 const MODE_NAMES: Record<string, string> = {
   text: "taalmodel met tekstvlakken",
@@ -1503,7 +1603,12 @@ function VerticalPage({
   onLoaded: (width: number, height: number) => void;
 }) {
   const { data } = usePageTranslation(book.id, index, translated && loaded);
-  const hertekend = translated && data?.full_page === true;
+  const { data: kleur } = usePageColour(
+    book.id,
+    index,
+    translated ? data?.target_lang : undefined,
+    coloured && loaded,
+  );
   // Niet elke pagina is ingekleurd; dat merken we aan de afbeelding zelf in
   // plaats van er vooraf naar te vragen — dat scheelt een verzoek per pagina.
   const [geenKleur, setGeenKleur] = useState(false);
@@ -1520,13 +1625,13 @@ function VerticalPage({
       style={loaded ? undefined : { aspectRatio: "2 / 3" }}
     >
       <img
-        src={
-          hertekend
-            ? imageUrl.fullTranslation(book.id, index, undefined, versie)
-            : coloured && !geenKleur
-              ? imageUrl.colour(book.id, index, translated ? data?.target_lang : undefined, versie)
-              : imageUrl.page(book.id, index, profile, adjust)
-        }
+        src={pageSource(book.id, index, profile, adjust, versie, {
+          translated,
+          coloured: coloured && !geenKleur,
+          fullPage: data?.full_page === true,
+          lang: data?.target_lang,
+          colour: kleur,
+        })}
         alt={`Pagina ${index + 1}`}
         className="w-full"
         loading="lazy"

@@ -2,6 +2,7 @@ import type {
   BatchKind,
   BatchPlan,
   BatchStatus,
+  PageColourInfo,
   BookDetail,
   Collection,
   ContinueInfo,
@@ -405,6 +406,10 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
+  pageColourInfo: (bookId: number, pageIndex: number, lang?: string) =>
+    request<PageColourInfo>(
+      `/api/books/${bookId}/pages/${pageIndex}/colour/info${queryString({ lang })}`,
+    ),
   colourisePage: (bookId: number, pageIndex: number, lang?: string, force?: boolean) =>
     request<{ book_id: number; page_index: number; available: boolean }>(
       `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang, force })}`,

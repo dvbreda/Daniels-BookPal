@@ -218,31 +218,30 @@ def colour_variant(target_lang: str | None) -> str:
     return f"{COLOUR_VARIANT}-{target_lang}" if target_lang else COLOUR_VARIANT
 
 
-def colour_base(
-    session: Session, book: Book, page_index: int, target_lang: str
-) -> tuple[bytes, str, str | None]:
-    """Wat er ingekleurd moet worden, en hoe het resultaat gaat heten.
+def colour_base(session: Session, book: Book, page_index: int) -> tuple[bytes, str]:
+    """Wat er ingekleurd wordt: altijd het origineel.
 
-    Ligt er al een hertekende vertaling, dan is díe de betere basis: je krijgt
-    kleur en vertaalde tekst in één beeld, in plaats van onze witte vlakjes
-    over een ingekleurde pagina heen. Anders het origineel.
+    Eerder werd een hertekende vertaling ingekleurd als die er lag, zodat kleur
+    en vertaalde tekst in één beeld zaten. Dat werkte, maar het maakte kleur
+    taalgebonden: elke taal was een nieuwe aanroep van tientallen centen, voor
+    dezelfde verf.
+
+    Nu wordt er één keer per pagina ingekleurd en wordt de kleur daarna over
+    elke gewenste versie gelegd — zie ``read_colour``. Dat kan sinds we van het
+    model alleen de kleur overnemen: de tekst in het beeld is dan niet meer van
+    hem maar van ons.
     """
-    gevonden = best_available(session, book, page_index, target_lang)
-    if gevonden is not None:
-        mode, _row = gevonden
-        if mode.is_image:
-            vertaald = read_page_image(session, book, page_index, target_lang, mode)
-            if vertaald is not None:
-                return vertaald, "image/webp", target_lang
-
-    image, media_type = render_for_translation(session, book, page_index)
-    return image, media_type, None
+    return render_for_translation(session, book, page_index)
 
 
 def recompose_to_webp(original: bytes, coloured: bytes) -> bytes:
     """Kleur van het model over ons eigen lijnwerk, klaar om te bewaren."""
+    return _as_webp(recolour.recompose(original, coloured))
+
+
+def _as_webp(image: Image.Image) -> bytes:
     buffer = BytesIO()
-    recolour.recompose(original, coloured).save(buffer, format="WEBP", quality=88, method=4)
+    image.save(buffer, format="WEBP", quality=88, method=4)
     return buffer.getvalue()
 
 
@@ -252,31 +251,22 @@ def colorise_page(
     book: Book,
     page_index: int,
     *,
-    target_lang: str,
     force: bool = False,
 ) -> bytes:
     """Laat het beeldmodel deze pagina inkleuren.
 
-    Dezelfde volgorde als bij het hertekenen: eerst kijken of hij er al ligt en
-    pas dan betalen. Het resultaat gaat naar de sidecar-map, want dat is wat je
-    bij een herbouwde database niet opnieuw wilt aanschaffen.
+    Eén keer per pagina, ongeacht in hoeveel talen je hem leest: wat er
+    terugkomt is verf, en die is taalloos. Verder dezelfde volgorde als bij het
+    hertekenen — eerst kijken of hij er al ligt en pas dan betalen.
     """
     series = session.get(Series, book.series_id)
-    basis, media_type, van_taal = colour_base(session, book, page_index, target_lang)
-    variant = colour_variant(van_taal)
-    path = sidecar.variant_path(series, book, page_index, variant)
+    basis, media_type = colour_base(session, book, page_index)
+    path = sidecar.variant_path(series, book, page_index, COLOUR_VARIANT)
 
     if not force:
         stored = sidecar.read_bytes(path)
         if stored is not None:
-            _record(
-                session,
-                book,
-                page_index,
-                van_taal or "src",
-                COLOUR_PROVIDER,
-                {"model": translator.model},
-            )
+            _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
             return stored
 
         # Een pagina die de tekenaar zelf al kleurde wordt hier niet ingekleurd
@@ -289,29 +279,98 @@ def colorise_page(
     produced = recompose_to_webp(basis, translator.colorise_page(basis, media_type=media_type))
 
     sidecar.write_bytes(path, produced)
-    _record(
-        session, book, page_index, van_taal or "src", COLOUR_PROVIDER, {"model": translator.model}
-    )
+    _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
     return produced
+
+
+def has_colour(
+    session: Session, book: Book, page_index: int, target_lang: str | None = None
+) -> bool:
+    """Ligt er een ingekleurde versie? Kijkt alleen of het bestand bestaat.
+
+    Apart van ``read_colour`` omdat het merkje in de lezer alleen wil weten
+    dát er iets is; de pagina zelf van schijf trekken is daar zonde van.
+    """
+    series = session.get(Series, book.series_id)
+    if (
+        target_lang
+        and sidecar.variant_path(series, book, page_index, colour_variant(target_lang)).is_file()
+    ):
+        return True
+    return sidecar.variant_path(series, book, page_index, COLOUR_VARIANT).is_file()
+
+
+def has_colour_for_language(
+    session: Session, book: Book, page_index: int, target_lang: str
+) -> bool:
+    """Is er een ingekleurde versie mét de vertaling erin — of te maken?
+
+    Ook "te maken" telt: die combinatie kost geen aanroep, alleen rekenwerk, en
+    hij ontstaat bij het eerste opvragen. Zou dit alleen naar het bestand
+    kijken, dan koos de lezer de eerste keer nog de kale kleurversie — met de
+    oorspronkelijke tekst erin, terwijl je de vertaling aan hebt staan.
+    """
+    series = session.get(Series, book.series_id)
+    if sidecar.variant_path(series, book, page_index, colour_variant(target_lang)).is_file():
+        return True
+    if not sidecar.variant_path(series, book, page_index, COLOUR_VARIANT).is_file():
+        return False
+    return _has_redrawn(session, book, page_index, target_lang)
+
+
+def _has_redrawn(session: Session, book: Book, page_index: int, target_lang: str) -> bool:
+    """Ligt er een hertekende vertaling van deze pagina?"""
+    gevonden = best_available(session, book, page_index, target_lang)
+    if gevonden is None or not gevonden[0].is_image:
+        return False
+    series = session.get(Series, book.series_id)
+    return sidecar.image_path(series, book, page_index, target_lang, gevonden[0]).is_file()
 
 
 def read_colour(
     session: Session, book: Book, page_index: int, target_lang: str | None = None
 ) -> bytes | None:
-    """Een al ingekleurde pagina van schijf, of None.
+    """Een ingekleurde pagina van schijf, of None.
 
-    Met een taal erbij krijg je de versie die van de vertaalde pagina is
-    gemaakt, als die er is. Zonder taal alleen het ingekleurde origineel — want
-    met de vertaling uit hoor je geen Nederlandse tekst te zien.
+    Zonder taal het ingekleurde origineel. Mét taal de versie waar de vertaling
+    in zit: die wordt de eerste keer ter plekke samengesteld uit de kleur en de
+    hertekende pagina, en daarna bewaard. Dat kost niets — het is rekenwerk,
+    geen aanroep — en daarom hoeft kleur maar één keer gemaakt te worden,
+    hoeveel talen je er ook overheen legt.
     """
     series = session.get(Series, book.series_id)
-    if target_lang:
-        vertaald = sidecar.read_bytes(
-            sidecar.variant_path(series, book, page_index, colour_variant(target_lang))
-        )
-        if vertaald is not None:
-            return vertaald
-    return sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
+    kleur = sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
+    if not target_lang:
+        return kleur
+
+    pad = sidecar.variant_path(series, book, page_index, colour_variant(target_lang))
+    klaar = sidecar.read_bytes(pad)
+    if klaar is not None:
+        return klaar
+    if kleur is None:
+        return None
+
+    hertekend = _redrawn_page(session, book, page_index, target_lang)
+    if hertekend is None:
+        # Geen hertekende versie: dan is er niets om de kleur overheen te
+        # leggen, en is het ingekleurde origineel wat je krijgt. Onze eigen
+        # tekstvlakken komen daar in de lezer gewoon overheen.
+        return kleur
+
+    samen = _as_webp(recolour.tint_only(hertekend, kleur))
+    sidecar.write_bytes(pad, samen)
+    return samen
+
+
+def _redrawn_page(session: Session, book: Book, page_index: int, target_lang: str) -> bytes | None:
+    """De hertekende vertaling van deze pagina, als die er is."""
+    gevonden = best_available(session, book, page_index, target_lang)
+    if gevonden is None:
+        return None
+    mode, _row = gevonden
+    if not mode.is_image:
+        return None
+    return read_page_image(session, book, page_index, target_lang, mode)
 
 
 def read_page_image(
