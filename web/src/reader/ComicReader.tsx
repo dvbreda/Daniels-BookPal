@@ -843,7 +843,7 @@ function TranslatablePage({
           useFullPage
             ? imageUrl.fullTranslation(book.id, page)
             : coloured && !geenKleur
-              ? imageUrl.colour(book.id, page)
+              ? imageUrl.colour(book.id, page, translated ? data?.target_lang : undefined)
               : imageUrl.page(book.id, page, profile, adjust)
         }
         alt={`Pagina ${page + 1}`}
@@ -877,6 +877,7 @@ function TranslateControl({
   setActive: (value: boolean) => void;
 }) {
   const queryClient = useQueryClient();
+  const { data: vertaling } = usePageTranslation(bookId, currentPage, true);
   const { data: status } = useQuery({
     queryKey: ["translation-status", bookId],
     queryFn: () => api.translationStatus(bookId),
@@ -934,7 +935,10 @@ function TranslateControl({
     setBusy("kleur");
     setFout(null);
     try {
-      await api.colourisePage(bookId, currentPage);
+      // De taal meegeven zodra de vertaling aanstaat: dan wordt de hertekende
+      // vertaalde pagina ingekleurd in plaats van het kale origineel, en krijg
+      // je kleur en Nederlandse tekst in één beeld.
+      await api.colourisePage(bookId, currentPage, vertaling?.target_lang);
       setKleurKlaar(true);
     } catch (exc) {
       setFout(exc instanceof ApiError ? exc.message : "Inkleuren mislukt.");
@@ -1183,7 +1187,7 @@ function VerticalPage({
           hertekend
             ? imageUrl.fullTranslation(book.id, index)
             : coloured && !geenKleur
-              ? imageUrl.colour(book.id, index)
+              ? imageUrl.colour(book.id, index, translated ? data?.target_lang : undefined)
               : imageUrl.page(book.id, index, profile, adjust)
         }
         alt={`Pagina ${index + 1}`}

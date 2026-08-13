@@ -383,9 +383,9 @@ export const api = {
       method: "PUT",
       body: JSON.stringify(body),
     }),
-  colourisePage: (bookId: number, pageIndex: number) =>
+  colourisePage: (bookId: number, pageIndex: number, lang?: string) =>
     request<{ book_id: number; page_index: number; available: boolean }>(
-      `/api/books/${bookId}/pages/${pageIndex}/colour`,
+      `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang })}`,
       { method: "POST" },
     ),
   translatePageFully: (
@@ -401,8 +401,11 @@ export const api = {
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */
 export const imageUrl = {
-  colour: (bookId: number, pageIndex: number) =>
-    `/api/books/${bookId}/pages/${pageIndex}/colour`,
+  // Met taal krijg je de ingekleurde vertáling als die er is; zonder taal
+  // alleen het ingekleurde origineel. Met de vertaling uit hoor je immers geen
+  // Nederlandse tekst te zien.
+  colour: (bookId: number, pageIndex: number, lang?: string) =>
+    `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang })}`,
   cover: (bookId: number, profile = "cover") =>
     `/api/books/${bookId}/cover${queryString({ profile })}`,
   /** De officiële omslag van een bron — alleen zinvol als has_cover_url. */

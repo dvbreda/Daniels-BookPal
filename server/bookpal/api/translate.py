@@ -390,6 +390,7 @@ def write_mode(
 def make_page_colour(
     book_id: int,
     page_index: int,
+    lang: str | None = Query(default=None, max_length=8),
     force: bool = Query(default=False, description="Opnieuw laten inkleuren."),
     session: Session = Depends(get_session),
 ) -> PageColourOut:
@@ -411,7 +412,9 @@ def make_page_colour(
     # pagina, en dan is de mindere variant de kosten niet waard.
     translator = GeminiPageTranslator(settings.gemini_api_key, TranslateMode.IMAGE_PRO.model)
     try:
-        colorise_page(session, translator, book, page_index, force=force)
+        colorise_page(
+            session, translator, book, page_index, target_lang=_lang(lang), force=force
+        )
     except TranslationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
@@ -422,11 +425,20 @@ def make_page_colour(
 
 @router.get("/{book_id}/pages/{page_index}/colour")
 def get_page_colour(
-    book_id: int, page_index: int, session: Session = Depends(get_session)
+    book_id: int,
+    page_index: int,
+    lang: str | None = Query(default=None, max_length=8),
+    session: Session = Depends(get_session),
 ) -> Response:
-    """De ingekleurde pagina zelf."""
+    """De ingekleurde pagina zelf.
+
+    Met een taal erbij krijg je de versie die van de vertaalde pagina is
+    gemaakt, als die er is — kleur en vertaalde tekst in één beeld. Zonder taal
+    alleen het ingekleurde origineel, want met de vertaling uit hoor je geen
+    Nederlandse tekst te zien.
+    """
     book = deps.get_book(session, book_id)
-    data = read_colour(session, book, page_index)
+    data = read_colour(session, book, page_index, lang)
     if data is None:
         raise HTTPException(status_code=404, detail="deze pagina is nog niet ingekleurd")
     return Response(

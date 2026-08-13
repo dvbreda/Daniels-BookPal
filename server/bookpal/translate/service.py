@@ -53,9 +53,7 @@ def find(
 
 def render_for_translation(session: Session, book: Book, page_index: int) -> tuple[bytes, str]:
     """De pagina als bytes, in hetzelfde profiel dat de browser toont."""
-    return render_for_translation_profile(
-        session, book, page_index, get_profile(TRANSLATE_PROFILE)
-    )
+    return render_for_translation_profile(session, book, page_index, get_profile(TRANSLATE_PROFILE))
 
 
 def render_for_translation_profile(
@@ -200,12 +198,45 @@ COLOUR_PROVIDER = "gemini-color"
 COLOUR_VARIANT = "kleur"
 
 
+def colour_variant(target_lang: str | None) -> str:
+    """Onder welke naam een ingekleurde pagina wordt bewaard.
+
+    Met taal erin als hij van een vertaalde pagina is gemaakt: dan zit de
+    vertaalde tekst in het beeld gebakken, en een ingekleurde Nederlandse
+    pagina is iets anders dan een ingekleurd origineel. Zonder dat onderscheid
+    zou je met de vertaling uit alsnog Nederlandse tekst zien.
+    """
+    return f"{COLOUR_VARIANT}-{target_lang}" if target_lang else COLOUR_VARIANT
+
+
+def colour_base(
+    session: Session, book: Book, page_index: int, target_lang: str
+) -> tuple[bytes, str, str | None]:
+    """Wat er ingekleurd moet worden, en hoe het resultaat gaat heten.
+
+    Ligt er al een hertekende vertaling, dan is díe de betere basis: je krijgt
+    kleur en vertaalde tekst in één beeld, in plaats van onze witte vlakjes
+    over een ingekleurde pagina heen. Anders het origineel.
+    """
+    gevonden = best_available(session, book, page_index, target_lang)
+    if gevonden is not None:
+        mode, _row = gevonden
+        if mode.is_image:
+            vertaald = read_page_image(session, book, page_index, target_lang, mode)
+            if vertaald is not None:
+                return vertaald, "image/webp", target_lang
+
+    image, media_type = render_for_translation(session, book, page_index)
+    return image, media_type, None
+
+
 def colorise_page(
     session: Session,
     translator: GeminiPageTranslator,
     book: Book,
     page_index: int,
     *,
+    target_lang: str,
     force: bool = False,
 ) -> bytes:
     """Laat het beeldmodel deze pagina inkleuren.
@@ -215,25 +246,48 @@ def colorise_page(
     bij een herbouwde database niet opnieuw wilt aanschaffen.
     """
     series = session.get(Series, book.series_id)
-    path = sidecar.variant_path(series, book, page_index, COLOUR_VARIANT)
+    basis, media_type, van_taal = colour_base(session, book, page_index, target_lang)
+    variant = colour_variant(van_taal)
+    path = sidecar.variant_path(series, book, page_index, variant)
 
     if not force:
         stored = sidecar.read_bytes(path)
         if stored is not None:
-            _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
+            _record(
+                session,
+                book,
+                page_index,
+                van_taal or "src",
+                COLOUR_PROVIDER,
+                {"model": translator.model},
+            )
             return stored
 
-    image, media_type = render_for_translation(session, book, page_index)
-    produced = translator.colorise_page(image, media_type=media_type)
+    produced = translator.colorise_page(basis, media_type=media_type)
 
     sidecar.write_bytes(path, produced)
-    _record(session, book, page_index, "src", COLOUR_PROVIDER, {"model": translator.model})
+    _record(
+        session, book, page_index, van_taal or "src", COLOUR_PROVIDER, {"model": translator.model}
+    )
     return produced
 
 
-def read_colour(session: Session, book: Book, page_index: int) -> bytes | None:
-    """Een al ingekleurde pagina van schijf, of None."""
+def read_colour(
+    session: Session, book: Book, page_index: int, target_lang: str | None = None
+) -> bytes | None:
+    """Een al ingekleurde pagina van schijf, of None.
+
+    Met een taal erbij krijg je de versie die van de vertaalde pagina is
+    gemaakt, als die er is. Zonder taal alleen het ingekleurde origineel — want
+    met de vertaling uit hoor je geen Nederlandse tekst te zien.
+    """
     series = session.get(Series, book.series_id)
+    if target_lang:
+        vertaald = sidecar.read_bytes(
+            sidecar.variant_path(series, book, page_index, colour_variant(target_lang))
+        )
+        if vertaald is not None:
+            return vertaald
     return sidecar.read_bytes(sidecar.variant_path(series, book, page_index, COLOUR_VARIANT))
 
 
