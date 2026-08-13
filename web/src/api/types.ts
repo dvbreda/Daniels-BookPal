@@ -349,6 +349,8 @@ export interface TranslateModeInfo {
   mode: TranslateMode;
   /** Wat de knop in de lezer doet; los van wat er vanzelf gebeurt. */
   button_mode: TranslateMode;
+  /** Met welk beeldmodel er ingekleurd wordt; altijd een beeldstand. */
+  colour_mode: TranslateMode;
   /** Zonder Gemini-sleutel is er niets te kiezen. */
   configured: boolean;
   /** Ruwe richtprijs per pagina in dollar, per stand. */

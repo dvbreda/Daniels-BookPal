@@ -380,7 +380,11 @@ export const api = {
   translateMode: () => request<TranslateModeInfo>("/api/translate/mode"),
   // Twee losse standen: wat er vanzelf gebeurt en wat de knop in de lezer doet.
   // Wat je niet meestuurt blijft staan.
-  setTranslateMode: (body: { mode?: TranslateMode; button_mode?: TranslateMode }) =>
+  setTranslateMode: (body: {
+    mode?: TranslateMode;
+    button_mode?: TranslateMode;
+    colour_mode?: TranslateMode;
+  }) =>
     request<TranslateModeInfo>("/api/translate/mode", {
       method: "PUT",
       body: JSON.stringify(body),

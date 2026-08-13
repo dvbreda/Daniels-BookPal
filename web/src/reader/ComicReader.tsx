@@ -893,6 +893,18 @@ function TranslatablePage({
   );
 }
 
+/** Wat inkleuren nu kost, in de stand die je hebt ingesteld. */
+function useColourPrice(): string {
+  const { data } = useQuery({
+    queryKey: ["translate-mode"],
+    queryFn: api.translateMode,
+    staleTime: 5 * 60 * 1000,
+  });
+  const stand = data?.colour_mode ?? "image_fast";
+  const prijs = data?.costs?.[stand];
+  return prijs === undefined ? "" : ` (~$${prijs.toFixed(2)})`;
+}
+
 /**
  * Inkleuren, met een vraag als de pagina al kleur heeft.
  *
@@ -967,6 +979,7 @@ function RedoControl({
   const [busy, setBusy] = useState(false);
   const [fout, setFout] = useState<string | null>(null);
   const [klaar, setKlaar] = useState<string | null>(null);
+  const prijs = useColourPrice();
   const kleur = useColourise(
     bookId,
     currentPage,
@@ -1021,7 +1034,7 @@ function RedoControl({
         active={false}
         disabled={busy || kleur.busy}
         onClick={() => void kleur.start(true)}
-        title="Deze pagina opnieuw laten inkleuren (~$0,13), ook als hij al kleur heeft"
+        title={`Deze pagina opnieuw laten inkleuren${prijs}, ook als hij al kleur heeft`}
       >
         {kleur.busy ? "Bezig…" : "Inkleuren"}
       </Toggle>
@@ -1078,6 +1091,7 @@ function TranslateControl({
 
   const [busy, setBusy] = useState<string | null>(null);
   const [fout, setFout] = useState<string | null>(null);
+  const prijs = useColourPrice();
   // De taal alleen meesturen als je de vertaling aan hebt staan: anders maak je
   // een ingekleurde Nederlandse pagina die je vervolgens niet te zien krijgt.
   const kleur = useColourise(
@@ -1146,7 +1160,7 @@ function TranslateControl({
         active={false}
         disabled={busy !== null || kleur.busy}
         onClick={() => void kleur.start(false)}
-        title="Deze pagina laten inkleuren (~$0,13). Zet daarna 'Kleur' aan."
+        title={`Deze pagina laten inkleuren${prijs}. Zet daarna 'Kleur' aan.`}
       >
         {kleur.busy ? "Bezig…" : "Inkleuren"}
       </Toggle>

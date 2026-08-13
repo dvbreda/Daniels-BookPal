@@ -71,3 +71,38 @@ def set_mode(session: Session, mode: TranslateMode) -> TranslateMode:
     row.value = {**row.value, "mode": str(mode)}
     session.commit()
     return mode
+
+
+def get_colour_mode(session: Session) -> TranslateMode:
+    """Met welk beeldmodel er ingekleurd wordt.
+
+    Een eigen stand en niet die van de vertaalknop: inkleuren en vertalen
+    stellen heel andere eisen. Bij vertalen telt elke letter, en daar liet het
+    snelle model op drie van de vier proefpagina's iets liggen. Bij inkleuren
+    komt er geen tekst aan te pas — en sinds we alleen de kleur van het model
+    overnemen en het lijnwerk zelf vasthouden, valt zijn zwakke punt weg.
+
+    Gemeten over twee pagina's: uitlijning 0,87 tegen 0,89, en de hoeveelheid
+    kleur wisselt per pagina welke kant op. Voor de helft van de prijs en de
+    helft van de tijd. Vandaar het snelle model als standaard.
+    """
+    row = session.get(Setting, SETTING_KEY)
+    if row is None:
+        return TranslateMode.IMAGE_FAST
+    try:
+        gekozen = TranslateMode(str(row.value.get("colour_mode", TranslateMode.IMAGE_FAST)))
+    except ValueError:
+        logger.warning("onbekende inkleurstand in instellingen: %r", row.value)
+        return TranslateMode.IMAGE_FAST
+    # De tekststand levert geen afbeelding op en kan hier dus niet.
+    return gekozen if gekozen.is_image else TranslateMode.IMAGE_FAST
+
+
+def set_colour_mode(session: Session, mode: TranslateMode) -> TranslateMode:
+    row = session.get(Setting, SETTING_KEY)
+    if row is None:
+        row = Setting(key=SETTING_KEY, value={})
+        session.add(row)
+    row.value = {**row.value, "colour_mode": str(mode)}
+    session.commit()
+    return mode

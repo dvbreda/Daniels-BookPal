@@ -33,8 +33,10 @@ from bookpal.translate.imagepage import GeminiPageTranslator
 from bookpal.translate.modes import TranslateMode
 from bookpal.translate.preferences import (
     get_button_mode,
+    get_colour_mode,
     get_mode,
     set_button_mode,
+    set_colour_mode,
     set_mode,
 )
 from bookpal.translate.queue import queue
@@ -359,6 +361,7 @@ def _mode_out(session: Session) -> TranslateModeOut:
     return TranslateModeOut(
         mode=str(get_mode(session)),
         button_mode=str(get_button_mode(session)),
+        colour_mode=str(get_colour_mode(session)),
         configured=is_configured(),
         costs=_COSTS,
         sidecar_dir=str(settings.sidecar_dir),
@@ -384,6 +387,13 @@ def write_mode(
         set_mode(session, _parse_mode(payload.mode))
     if payload.button_mode is not None:
         set_button_mode(session, _parse_mode(payload.button_mode))
+    if payload.colour_mode is not None:
+        stand = _parse_mode(payload.colour_mode)
+        if not stand.is_image:
+            raise HTTPException(
+                status_code=400, detail="inkleuren vraagt een beeldstand, geen tekststand"
+            )
+        set_colour_mode(session, stand)
     return _mode_out(session)
 
 
@@ -409,9 +419,10 @@ def make_page_colour(
             detail="er is geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)",
         )
 
-    # Het zware model: inkleuren is een eenmalige, bewuste handeling per
-    # pagina, en dan is de mindere variant de kosten niet waard.
-    translator = GeminiPageTranslator(settings.gemini_api_key, TranslateMode.IMAGE_PRO.model)
+    # Standaard het snelle model, in te stellen bij Instellingen -> Vertaling.
+    # Dat het snelle model bij vertalen tekortschiet geldt hier niet: er komt
+    # geen letter aan te pas, en het lijnwerk houden we zelf vast.
+    translator = GeminiPageTranslator(settings.gemini_api_key, get_colour_mode(session).model)
     try:
         colorise_page(session, translator, book, page_index, target_lang=_lang(lang), force=force)
     except AlreadyColour as exc:

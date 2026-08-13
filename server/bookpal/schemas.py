@@ -894,6 +894,9 @@ class TranslateModeOut(BaseModel):
     # vanzelf vertalen mag goedkoop zijn, maar als jij zelf op een pagina drukt
     # is dat juist omdat die ene het waard is.
     button_mode: str = "image_fast"
+    # Met welk beeldmodel er ingekleurd wordt. Eigen stand, want inkleuren
+    # stelt andere eisen dan vertalen: er komt geen letter aan te pas.
+    colour_mode: str = "image_fast"
     # Zonder sleutel kan er niets; de client verbergt de keuze dan.
     configured: bool
     # Waar vertalingen bewaard worden, en of dat ook echt lukt. Een vertaling
@@ -909,6 +912,7 @@ class TranslateModeIn(BaseModel):
 
     mode: str | None = Field(default=None, max_length=20)
     button_mode: str | None = Field(default=None, max_length=20)
+    colour_mode: str | None = Field(default=None, max_length=20)
 
 
 class TranslatePageIn(BaseModel):

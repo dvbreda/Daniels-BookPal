@@ -271,6 +271,8 @@ const MODE_LABELS: Record<TranslateMode, { naam: string; uitleg: string }> = {
 };
 
 const MODE_ORDER: TranslateMode[] = ["text", "image_fast", "image_pro"];
+/** Inkleuren levert een afbeelding op, dus de tekststand kan daar niet. */
+const BEELDSTANDEN: TranslateMode[] = ["image_fast", "image_pro"];
 
 /**
  * De vertaalstand (M8).
@@ -283,8 +285,11 @@ function TranslateModePanel() {
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["translate-mode"], queryFn: api.translateMode });
   const change = useMutation({
-    mutationFn: (body: { mode?: TranslateMode; button_mode?: TranslateMode }) =>
-      api.setTranslateMode(body),
+    mutationFn: (body: {
+      mode?: TranslateMode;
+      button_mode?: TranslateMode;
+      colour_mode?: TranslateMode;
+    }) => api.setTranslateMode(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["translate-mode"] }),
   });
 
@@ -316,6 +321,18 @@ function TranslateModePanel() {
             gekozen={data.button_mode}
             kosten={data.costs}
             onChange={(button_mode) => change.mutate({ button_mode })}
+          />
+          <ModeChoice
+            titel="Inkleuren"
+            uitleg="Met welk beeldmodel een zwart-witpagina wordt ingekleurd. Een eigen
+              keuze, want inkleuren stelt andere eisen dan vertalen: er komt geen letter
+              aan te pas, en het lijnwerk houden we zelf vast. Gemeten over twee pagina's
+              lijnt het snelle model 0,87 uit tegen 0,89 voor het zware — voor de helft
+              van de prijs en de helft van de wachttijd."
+            standen={BEELDSTANDEN}
+            gekozen={data.colour_mode}
+            kosten={data.costs}
+            onChange={(colour_mode) => change.mutate({ colour_mode })}
           />
         </>
       )}
@@ -719,12 +736,15 @@ function ModeChoice({
   uitleg,
   gekozen,
   kosten,
+  standen = MODE_ORDER,
   onChange,
 }: {
   titel: string;
   uitleg: string;
   gekozen: TranslateMode;
   kosten: Record<string, number>;
+  /** Welke standen hier te kiezen zijn; niet overal passen ze alle drie. */
+  standen?: TranslateMode[];
   onChange: (mode: TranslateMode) => void;
 }) {
   return (
@@ -732,7 +752,7 @@ function ModeChoice({
       <p className="text-sm font-medium text-slate-200">{titel}</p>
       <p className="mt-1 text-xs text-slate-500">{uitleg}</p>
       <div className="mt-2 space-y-2">
-        {MODE_ORDER.map((mode) => (
+        {standen.map((mode) => (
           <label
             key={mode}
             className={`flex cursor-pointer gap-3 rounded p-3 ${

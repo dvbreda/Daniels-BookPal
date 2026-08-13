@@ -1159,3 +1159,95 @@ class TestAlreadyColour:
         response = client.post(f"/api/books/{boek.id}/pages/0/colour?force=true")
         assert response.status_code == 200
         assert client.get(f"/api/books/{boek.id}/pages/0/colour").status_code == 200
+
+
+class TestColourMode:
+    """Met welk beeldmodel er ingekleurd wordt, is een eigen keuze."""
+
+    def test_it_defaults_to_the_cheap_model(self, session: Session):
+        from bookpal.translate.preferences import get_colour_mode
+
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_it_can_be_set_to_the_heavy_one(self, session: Session):
+        from bookpal.translate.preferences import get_colour_mode, set_colour_mode
+
+        set_colour_mode(session, TranslateMode.IMAGE_PRO)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_PRO
+
+    def test_it_is_separate_from_the_button(self, session: Session):
+        """Anders zou een dure vertaalknop ook duur inkleuren afdwingen."""
+        from bookpal.translate.preferences import get_colour_mode, set_button_mode
+
+        set_button_mode(session, TranslateMode.IMAGE_PRO)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_the_text_mode_is_not_a_colour_mode(self, session: Session):
+        """Inkleuren levert een afbeelding op; de tekststand kan dat niet."""
+        from bookpal.translate.preferences import get_colour_mode, set_colour_mode
+
+        set_colour_mode(session, TranslateMode.TEXT)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_the_api_refuses_the_text_mode(self, client: TestClient):
+        response = client.put("/api/translate/mode", json={"colour_mode": "text"})
+        assert response.status_code == 400
+        assert "beeldstand" in response.json()["detail"]
+
+    def test_the_api_reports_and_stores_it(self, client: TestClient):
+        assert client.get("/api/translate/mode").json()["colour_mode"] == "image_fast"
+        response = client.put("/api/translate/mode", json={"colour_mode": "image_pro"})
+        assert response.json()["colour_mode"] == "image_pro"
+        assert client.get("/api/translate/mode").json()["colour_mode"] == "image_pro"
+
+    def test_colourising_uses_the_chosen_model(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """De stand hoort ook echt het model te kiezen, niet alleen te tonen."""
+        from bookpal.config import settings as app_config
+
+        monkeypatch.setattr(app_config, "gemini_api_key", "test-sleutel")
+        boek = _comic(session, pages=3)
+        pad = make_cbz(tmp_path / "grijs.cbz", pages=3)
+        from bookpal.models import File, LibraryRoot
+
+        root = LibraryRoot(name="R", path=str(tmp_path))
+        session.add(root)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek.file_id = bestand.id
+        session.commit()
+
+        gebruikt: list[str] = []
+        plaat = io.BytesIO()
+        Image.new("RGB", (40, 60), (40, 120, 40)).save(plaat, format="PNG")
+
+        def onthoud(self, image, *, media_type):
+            gebruikt.append(self.model)
+            return plaat.getvalue()
+
+        monkeypatch.setattr(
+            "bookpal.translate.imagepage.GeminiPageTranslator.colorise_page", onthoud
+        )
+
+        # force omdat de proefpagina's zelf kleur hebben; hier gaat het om het
+        # model dat gekozen wordt, niet om de vraag of het mag.
+        eerste = client.post(f"/api/books/{boek.id}/pages/0/colour?force=true")
+        assert eerste.status_code == 200, eerste.json()
+        assert gebruikt == [app_config.gemini_image_model_fast]
+
+        client.put("/api/translate/mode", json={"colour_mode": "image_pro"})
+        client.post(f"/api/books/{boek.id}/pages/1/colour?force=true")
+        assert gebruikt[-1] == app_config.gemini_image_model_pro
