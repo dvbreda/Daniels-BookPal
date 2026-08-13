@@ -62,35 +62,41 @@ Regels:
 Geef alleen de bewerkte pagina terug, op exact dezelfde afmeting als deze."""
 
 
+# Waarom de opdracht begint met wat er níét mag veranderen: een model dat
+# vrijelijk mag inkleuren, componeert de pagina opnieuw. Door de omtrekken,
+# paneelranden en ballonnen als anker te benoemen blijft de tekening staan.
+# Gemeten over twee pagina's legde dit de uitlijning van 0,840 op 0,886 en
+# 0,861 op 0,868 (overlap met het origineel, zonder enige correctie achteraf),
+# en leverde het meteen meer kleur op. Zie recolour.py voor wat er daarna
+# gebeurt: hiervan gebruiken we alleen de kleur.
 _COLOUR_PROMPT = """Dit is een zwart-witte pagina uit een stripverhaal.
 
-Kleur hem in met aquarel, zoals de kleurpagina's die mangaka zelf schilderen:
-transparante lagen waterverf onder het inktwerk, op papier.
+Schilder er aquarel in, en houd daarbij de tekening exact op zijn plek.
 
-Zo ziet dat eruit:
+Wat onaangetast blijft, pixel voor pixel:
+- De omtrekken van alle figuren, gezichten en voorwerpen.
+- De randen van elk paneel, en de vorm en plek van elke tekstballon.
+- Alle tekst, in dezelfde letters op dezelfde plek. Vertaal niets en herschrijf
+  niets.
+
+Wat je toevoegt — aquarel, zoals de kleurpagina's die mangaka zelf schilderen:
 - Doorschijnende wassingen, geen egale vlakken. Binnen één vlak mag de kleur
   verlopen van vol naar bijna niets, en het wit van het papier schijnt eronder
   door.
-- Zachte, iets onregelmatige randen. Een wassing die net buiten de lijn valt of
-  er net binnen stopt hoort erbij; dat is precies wat het penseel doet.
-- Waar twee kleuren elkaar raken mogen ze in elkaar lopen.
+- Zachte randen, en kleuren die in elkaar mogen lopen waar ze elkaar raken.
 - Kies de kleur die het onderwerp in het echt heeft. Bladeren zijn groen,
   bloemen en kleding mogen uitgesproken kleurrijk zijn, eten ziet er eetbaar
   uit. Verf het niet allemaal in bruin en grijs.
-- Aquarel, geen digitale vulling: de kleur is doorschijnend, ook als hij vol is.
-
-Regels:
-- Verander de tekening niet. Geen lijn erbij, geen lijn weg, geen paneel
-  verschoven, geen detail opnieuw getekend.
-- Laat alle tekst staan zoals hij is, in dezelfde letters. Vertaal niets en
-  herschrijf niets.
-- Het zwarte lijnwerk en de arcering blijven scherp en volledig zichtbaar: de
-  verf ligt eronder, nooit erover. Schilder de lijnen niet over.
+- De arcering mag opgaan in de wassing; de omtrekken zelf niet. Die blijven
+  scherp, met de verf eronder.
 - Tekstballonnen en de papierrand blijven wit. Papier is papier en inkt is inkt.
 - Houd het rustig genoeg om te blijven lezen. Een overdreven verzadigde pagina
   leest slechter dan het zwart-witte origineel.
 
-Geef alleen de ingekleurde pagina terug, op exact dezelfde afmeting als deze."""
+Verschuif, herschaal of herteken niets. Iemand legt jouw pagina straks precies
+over deze heen, en dan moet elke lijn samenvallen.
+
+Geef alleen de geschilderde pagina terug, op exact dezelfde afmeting als deze."""
 
 
 class GeminiPageTranslator:
