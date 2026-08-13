@@ -32,7 +32,9 @@ export function TranslationOverlay({
   if (!enabled || !data || data.full_page || data.bubbles.length === 0) return null;
 
   return (
-    <div className="pointer-events-none absolute inset-0">
+    // De containercontext staat hier en niet op het ouder-element: dit vlak
+    // ontleent zijn maat aan de pagina, dus containment kost hier niets.
+    <div className="pointer-events-none absolute inset-0 [container-type:inline-size]">
       {data.bubbles.map((bubble, index) => (
         <BubbleBox key={index} bubble={bubble} />
       ))}

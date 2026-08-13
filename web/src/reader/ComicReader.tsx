@@ -243,7 +243,7 @@ export function ComicReader({ book, onClose }: Props) {
 
   if (pageCount === 0) {
     return (
-      <div className="flex h-screen items-center justify-center bg-ink-900 text-slate-300">
+      <div className="flex h-viewport items-center justify-center bg-ink-900 text-slate-300">
         <div className="text-center">
           <p>Dit boek heeft geen leesbare pagina's.</p>
           <button className="mt-4 rounded bg-ink-700 px-4 py-2" onClick={() => onClose(0)}>
@@ -267,7 +267,7 @@ export function ComicReader({ book, onClose }: Props) {
         : "max-h-full max-w-full";
 
   return (
-    <div className="relative h-screen select-none overflow-hidden bg-ink-900">
+    <div className="relative h-viewport select-none overflow-hidden bg-ink-900">
       {viewMode === "vertical" ? (
         <VerticalReader
           book={book}
@@ -378,6 +378,9 @@ function VerticalReader({
 }: VerticalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const jumped = useRef(false);
+  // Waar je nu bent, buiten de render om: de observer schrijft hem en het
+  // herschikken na een draai leest hem.
+  const visible = useRef(initialPage);
   const [loaded, setLoaded] = useState<Set<number>>(() => new Set());
 
   // Naar de huidige pagina springen vóór de observer aan gaat. Zonder dit
@@ -410,16 +413,23 @@ function VerticalReader({
   }, [initialPage]);
 
   useEffect(() => {
-    // Pas observeren nadat de sprong gedaan is.
-    if (!jumped.current) return;
     const container = containerRef.current;
     if (!container) return;
+
+    // De observer wordt meteen aangemaakt en negeert meldingen zolang de
+    // sprong nog loopt. Eerder stond hier `if (!jumped.current) return` vóór
+    // het aanmaken — maar een ref laat een effect niet opnieuw draaien, dus de
+    // observer kwam er nooit en het paginanummer bleef staan waar je begon.
     const observer = new IntersectionObserver(
       (entries) => {
+        if (!jumped.current) return;
         for (const entry of entries) {
           if (entry.isIntersecting) {
             const index = Number((entry.target as HTMLElement).dataset.page);
-            if (!Number.isNaN(index)) onVisiblePage(index);
+            if (!Number.isNaN(index)) {
+              visible.current = index;
+              onVisiblePage(index);
+            }
           }
         }
       },
@@ -428,6 +438,34 @@ function VerticalReader({
     for (const child of container.querySelectorAll("[data-page]")) observer.observe(child);
     return () => observer.disconnect();
   }, [onVisiblePage, pageCount]);
+
+  // Draaien van staand naar liggend verandert de hoogte van elke pagina, en
+  // daarmee schuift alles onder je weg. De browser probeert je positie te
+  // bewaren maar rekent met de oude hoogtes, dus je landt tientallen pagina's
+  // verderop. Na een maatverandering zetten we je daarom terug op de pagina
+  // waar je was.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    let timer = 0;
+    const observer = new ResizeObserver(() => {
+      window.clearTimeout(timer);
+      // Even wachten tot het herschikken klaar is; tijdens het draaien komen
+      // er tientallen meldingen achter elkaar.
+      timer = window.setTimeout(() => {
+        const doel = container.querySelector<HTMLElement>(
+          `[data-page="${visible.current}"]`,
+        );
+        if (doel) doel.scrollIntoView({ block: "start" });
+      }, 200);
+    });
+    observer.observe(container);
+    return () => {
+      window.clearTimeout(timer);
+      observer.disconnect();
+    };
+  }, []);
 
   return (
     <div ref={containerRef} className="h-full overflow-y-auto">
@@ -544,16 +582,23 @@ function Chrome(props: ChromeProps) {
         </span>
       </div>
 
-      <div className="absolute inset-x-0 bottom-0 space-y-2 bg-ink-900/90 px-4 py-3 backdrop-blur">
+      <div className="pb-safe absolute inset-x-0 bottom-0 space-y-2 bg-ink-900/90 px-4 pt-3 backdrop-blur">
+        {/* De balk loopt altijd van links naar rechts, ook bij manga. Hij
+            spiegelen leek consequent met de leesrichting, maar een voortgangs-
+            balk is geen pagina: links is begin en rechts is eind, net als in
+            elke andere speler. Meespiegelen maakte het juist onvoorspelbaar.
+
+            Hoog genoeg om met een duim te raken: een tik op de balk springt
+            naar die pagina, en dat is op een telefoon de snelste manier om
+            terug te bladeren. */}
         <input
           type="range"
           min={0}
           max={Math.max(0, pageCount - 1)}
           value={currentPage}
           onChange={(event) => onSeek(Number(event.target.value))}
-          className="w-full accent-accent"
-          // Bij manga loopt de balk mee met de leesrichting.
-          style={{ direction: rightToLeft ? "rtl" : "ltr" }}
+          aria-label="Pagina kiezen"
+          className="h-6 w-full cursor-pointer accent-accent [touch-action:none]"
         />
         {/* Één regel die altijd zichtbaar is: wat je tijdens het lezen echt
             omzet. De rest zit achter "Weergave" — die balk was uitgegroeid tot
@@ -753,8 +798,13 @@ function TranslatablePage({
     // De overlay staat absoluut binnen dit vlak, dus het moet net zo groot zijn
     // als de afbeelding zelf — vandaar w-fit en relative. Bij rasterzoom
     // schaalt en verschuift ditzelfde vlak, zodat de vertaling meebeweegt.
+    //
+    // Géén container-type hier: dat legt inline-size-containment op, en dan mag
+    // de afbeelding de breedte niet meer bepalen. `w-fit` valt daardoor terug
+    // op nul en de pagina verdwijnt volledig. De containercontext hoort op de
+    // overlay zelf, die wél een vaste maat heeft.
     <div
-      className="relative w-fit overflow-hidden [container-type:inline-size]"
+      className="relative w-fit"
       style={
         grid
           ? {
@@ -818,6 +868,7 @@ function TranslateControl({
   });
 
   const [busy, setBusy] = useState<string | null>(null);
+  const [fout, setFout] = useState<string | null>(null);
 
   if (!status?.configured) return null;
 
@@ -833,12 +884,16 @@ function TranslateControl({
 
   async function translateThisPage() {
     setBusy("tekst");
+    setFout(null);
     try {
       await api.makePageTranslation(bookId, currentPage);
       setActive(true);
       refresh();
-    } catch {
-      /* zacht falen: de lezer toont gewoon het origineel */
+    } catch (exc) {
+      // Niet stil laten mislukken. Een rate limit of een lege sleutel zag je
+      // hiervoor niet: de knop ging terug naar rust en er gebeurde niets, wat
+      // niet te onderscheiden is van "deze pagina heeft geen tekst".
+      setFout(exc instanceof ApiError ? exc.message : "Vertalen mislukt.");
     } finally {
       setBusy(null);
     }
@@ -849,12 +904,13 @@ function TranslateControl({
   // centen per pagina, dus ze horen nooit vanzelf te lopen.
   async function translateFully(mode: TranslateMode) {
     setBusy(mode);
+    setFout(null);
     try {
       await api.translatePageFully(bookId, currentPage, { mode });
       setActive(true);
       refresh();
-    } catch {
-      /* zacht falen */
+    } catch (exc) {
+      setFout(exc instanceof ApiError ? exc.message : "Vertalen mislukt.");
     } finally {
       setBusy(null);
     }
@@ -898,9 +954,27 @@ function TranslateControl({
       >
         {status.queued > 0 ? `In wachtrij: ${status.queued}` : "Rest vertalen"}
       </Toggle>
-      <span className="tabular-nums text-slate-500">
-        {done}/{total}
+      {/* Hoever de wachtrij is, als balkje. Vertalen duurt tientallen seconden
+          per pagina; een teller alleen laat je raden of er iets gebeurt. */}
+      <span className="flex items-center gap-2">
+        {total > 0 && (
+          <span className="h-1.5 w-16 overflow-hidden rounded-full bg-ink-700" aria-hidden>
+            <span
+              className="block h-full rounded-full bg-accent transition-[width]"
+              style={{ width: `${Math.round((done / total) * 100)}%` }}
+            />
+          </span>
+        )}
+        <span className="tabular-nums text-slate-500">
+          {done}/{total}
+        </span>
       </span>
+
+      {(busy !== null || fout !== null) && (
+        <span className={`max-w-[16rem] truncate ${fout ? "text-danger" : "text-slate-400"}`}>
+          {fout ?? "Bezig met vertalen…"}
+        </span>
+      )}
     </div>
   );
 }

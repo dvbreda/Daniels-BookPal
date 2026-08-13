@@ -15,6 +15,7 @@ from bookpal.db import get_session
 from bookpal.models import (
     Book,
     Edition,
+    Progress,
     Series,
     Source,
     Subscription,
@@ -340,11 +341,48 @@ def update_subscription(
 
 @router.delete("/subscriptions/{subscription_id}", status_code=204)
 def unsubscribe(subscription_id: int, session: Session = Depends(get_session)) -> None:
-    """Stop met volgen. De al binnengehaalde hoofdstukken blijven staan."""
+    """Stop met volgen.
+
+    Wat je hebt binnengehaald blijft staan — dat is van jou. Wat alleen een
+    verwijzing naar de bron was verdwijnt: zonder abonnement kun je het niet
+    meer ophalen, dus het zou een hoofdstuk zijn dat je alleen maar kunt
+    aankijken. Blijft er daarna niets over, dan gaat ook de serie weg; anders
+    houd je een lege huls in je bibliotheek.
+
+    Alles waarin je gelezen hebt blijft óók staan, ook zonder bestand: dat is
+    een spoor van jou en geen restje van de bron.
+    """
     subscription = session.get(Subscription, subscription_id)
     if subscription is None:
         raise HTTPException(status_code=404, detail="abonnement niet gevonden")
+
+    series_id = subscription.series_id
     session.delete(subscription)
+    session.flush()
+
+    # Alleen opruimen als er geen ánder abonnement op deze serie meer is.
+    resterend = session.scalar(
+        select(func.count(Subscription.id)).where(Subscription.series_id == series_id)
+    )
+    if not resterend:
+        gelezen = set(
+            session.scalars(
+                select(Progress.book_id).join(Book, Book.id == Progress.book_id).where(
+                    Book.series_id == series_id
+                )
+            )
+        )
+        for book in session.scalars(select(Book).where(Book.series_id == series_id)):
+            if book.file_id is None and book.id not in gelezen:
+                session.delete(book)
+        session.flush()
+
+        over = session.scalar(select(func.count(Book.id)).where(Book.series_id == series_id))
+        if not over:
+            series = session.get(Series, series_id)
+            if series is not None:
+                session.delete(series)
+
     session.commit()
 
 

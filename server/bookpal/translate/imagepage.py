@@ -80,7 +80,13 @@ class GeminiPageTranslator:
         self._model = model
         # Ruimer dan de tekststand: dit duurt 10-30 seconden per pagina en
         # loopt nooit in een wachtrij die er honderden achter elkaar doet.
-        self._client = client or httpx.Client(base_url=API_BASE, timeout=300.0)
+        # De sleutel in een header en niet in de URL: httpx logt elk verzoek
+        # met volledige URL, en dan staat je sleutel in de containerlogs.
+        self._client = client or httpx.Client(
+            base_url=API_BASE,
+            timeout=300.0,
+            headers={"x-goog-api-key": api_key},
+        )
         self._limiter = RateLimiter(rate)
 
     @property
@@ -112,7 +118,6 @@ class GeminiPageTranslator:
         try:
             response = self._client.post(
                 f"/models/{self._model}:generateContent",
-                params={"key": self._api_key},
                 json=body,
             )
         except httpx.HTTPError as exc:

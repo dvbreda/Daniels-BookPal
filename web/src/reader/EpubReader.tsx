@@ -217,7 +217,7 @@ export function EpubReader({
 
   if (failed) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-ink-900 px-6 text-center text-slate-300">
+      <div className="flex h-viewport flex-col items-center justify-center gap-4 bg-ink-900 px-6 text-center text-slate-300">
         <p>Dit boek kon niet geopend worden.</p>
         <p className="text-sm text-slate-500">{failed}</p>
         <div className="flex gap-2">
@@ -237,7 +237,7 @@ export function EpubReader({
   }
 
   return (
-    <div className="relative h-screen w-screen overflow-hidden" style={{ background: THEMES[theme].bg }}>
+    <div className="relative h-viewport w-screen overflow-hidden" style={{ background: THEMES[theme].bg }}>
       <div ref={hostRef} className="h-full w-full" onClick={() => setShowChrome((v) => !v)} />
 
       {!ready && (
@@ -283,7 +283,7 @@ export function EpubReader({
             </span>
           </header>
 
-          <footer className="absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-3 bg-ink-900/90 px-4 py-2 text-sm text-slate-200">
+          <footer className="pb-safe absolute inset-x-0 bottom-0 flex flex-wrap items-center gap-3 bg-ink-900/90 px-4 pt-2 text-sm text-slate-200">
             <div className="flex items-center gap-1">
               <button
                 onClick={() => setFontSize(Math.max(60, fontSize - 10))}

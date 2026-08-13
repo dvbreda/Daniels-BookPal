@@ -44,14 +44,14 @@ export function ReaderPage() {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-ink-900 text-slate-400">
+      <div className="flex h-viewport items-center justify-center bg-ink-900 text-slate-400">
         Laden…
       </div>
     );
   }
   if (error || !data) {
     return (
-      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-ink-900 text-slate-300">
+      <div className="flex h-viewport flex-col items-center justify-center gap-4 bg-ink-900 text-slate-300">
         <p>Kon dit boek niet openen.</p>
         <button className="rounded bg-ink-700 px-4 py-2" onClick={() => navigate(-1)}>
           Terug

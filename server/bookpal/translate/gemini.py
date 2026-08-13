@@ -145,7 +145,13 @@ class GeminiBubbleTranslator(BubbleTranslator):
             raise TranslationError("geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)")
         self._api_key = api_key
         self._model = model
-        self._client = client or httpx.Client(base_url=API_BASE, timeout=180.0)
+        # De sleutel in een header en niet in de URL: httpx logt elk verzoek
+        # met volledige URL, en dan staat je sleutel in de containerlogs.
+        self._client = client or httpx.Client(
+            base_url=API_BASE,
+            timeout=180.0,
+            headers={"x-goog-api-key": api_key},
+        )
         self._limiter = RateLimiter(rate)
 
     @property
@@ -176,7 +182,6 @@ class GeminiBubbleTranslator(BubbleTranslator):
         try:
             response = self._client.post(
                 f"/models/{self._model}:generateContent",
-                params={"key": self._api_key},
                 json=body,
             )
         except httpx.HTTPError as exc:
