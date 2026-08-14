@@ -1,4 +1,8 @@
 import type {
+  BatchKind,
+  BatchPlan,
+  BatchStatus,
+  PageColourInfo,
   BookDetail,
   Collection,
   ContinueInfo,
@@ -7,23 +11,37 @@ import type {
   ImageProfile,
   ImportResult,
   IntakeImportResult,
+  IntakeFetch,
+  ChapterCount,
+  Home,
   IntakeScan,
+  KoboPlanItem,
+  KoboStatus,
+  KoboSyncResult,
+  IntakeUpload,
   GoodreadsStatus,
   GoodreadsSyncResult,
   LibraryRoot,
   MalAuthorize,
+  Edition,
+  MalImportProgress,
   MalListItem,
+  MergeCandidate,
   MergeSuggestion,
   NextChapter,
   PageTranslation,
   Paginated,
   Progress,
+  ReadState,
   PushReport,
   RunReport,
   ScanResult,
+  SidecarSyncResult,
   SearchHit,
   Series,
   SeriesDetail,
+  SeriesRenamed,
+  SyncCoversResult,
   SeriesQuery,
   Shelves,
   SourceRow,
@@ -51,9 +69,15 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  // Bij een upload moet de browser zelf de Content-Type zetten: multipart heeft
+  // een boundary die wij hier niet kennen, en een handmatige header maakt het
+  // verzoek onleesbaar voor de server.
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: isFormData
+      ? { ...init?.headers }
+      : { "Content-Type": "application/json", ...init?.headers },
   });
   if (!response.ok) {
     // De server geeft in `detail` een uitleg in gewone taal mee; die willen we
@@ -98,15 +122,46 @@ export const api = {
     request<ScanResult>(`/api/libraries/${id}/scan${queryString({ force })}`, {
       method: "POST",
     }),
+  writeSidecars: () =>
+    request<SidecarSyncResult>("/api/libraries/sidecars", { method: "POST" }),
   scanAll: () => request<ScanResult[]>("/api/libraries/scan", { method: "POST" }),
 
   series: (query: SeriesQuery = {}) =>
     request<Paginated<Series>>(`/api/series${queryString({ ...query })}`),
-  seriesDetail: (id: number) => request<SeriesDetail>(`/api/series/${id}`),
+  seriesDetail: (id: number, allEditions = false) =>
+    request<SeriesDetail>(`/api/series/${id}${queryString({ all_editions: allEditions || undefined })}`),
+  orderEditions: (seriesId: number, editionIds: number[]) =>
+    request<Edition[]>(`/api/series/${seriesId}/editions/order`, {
+      method: "POST",
+      body: JSON.stringify({ edition_ids: editionIds }),
+    }),
+  renameEdition: (seriesId: number, editionId: number, body: { name?: string; note?: string }) =>
+    request<Edition>(`/api/series/${seriesId}/editions/${editionId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  bindSlot: (seriesId: number, bookIds: number[]) =>
+    request<SeriesDetail>(`/api/series/${seriesId}/slots`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
+  unbindSlot: (seriesId: number, bookIds: number[]) =>
+    request<SeriesDetail>(`/api/series/${seriesId}/slots/unbind`, {
+      method: "POST",
+      body: JSON.stringify({ book_ids: bookIds }),
+    }),
   importSeries: (id: number, body: { root_id: number; download_missing?: boolean }) =>
     request<ImportResult>(`/api/series/${id}/import`, {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  similarSeries: (id: number) => request<MergeCandidate[]>(`/api/series/${id}/similar`),
+  syncCovers: (id: number) =>
+    request<SyncCoversResult>(`/api/series/${id}/covers`, { method: "POST" }),
+  renameSeries: (id: number, title: string) =>
+    request<SeriesRenamed>(`/api/series/${id}/title`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
     }),
   setOrigin: (id: number, body: { origin_region: string; origin_country?: string | null }) =>
     request<Series>(`/api/series/${id}/origin`, {
@@ -170,11 +225,17 @@ export const api = {
 
   sourceTypes: () => request<string[]>("/api/sources/types"),
   sources: () => request<SourceRow[]>("/api/sources"),
-  addSource: (body: { type: string; name: string }) =>
+  addSource: (body: { type: string; name: string; config?: Record<string, string> }) =>
     request<SourceRow>("/api/sources", { method: "POST", body: JSON.stringify(body) }),
   deleteSource: (id: number) => request<void>(`/api/sources/${id}`, { method: "DELETE" }),
-  searchSource: (id: number, q: string, limit = 20) =>
-    request<SearchHit[]>(`/api/sources/${id}/search${queryString({ q, limit })}`),
+  chapterCount: (sourceId: number, ref: string, language: string) =>
+    request<ChapterCount>(
+      `/api/sources/${sourceId}/chapter-count${queryString({ ref, language })}`,
+    ),
+  syncTitles: (id: number) =>
+    request<SyncCoversResult>(`/api/series/${id}/titles`, { method: "POST" }),
+  searchSource: (id: number, q: string, language?: string, limit = 20) =>
+    request<SearchHit[]>(`/api/sources/${id}/search${queryString({ q, limit, language })}`),
   subscribe: (
     sourceId: number,
     body: {
@@ -190,8 +251,10 @@ export const api = {
       body: JSON.stringify(body),
     }),
   subscriptions: () => request<SubscriptionRow[]>("/api/sources/subscriptions/all"),
-  subscriptionForSeries: (seriesId: number) =>
-    request<SubscriptionRow>(`/api/sources/subscriptions/by-series/${seriesId}`),
+  // Een lijst: een serie kan meerdere abonnementen hebben (een vertaling naast
+  // het origineel), en de vertaalgroep kies je per abonnement.
+  subscriptionsForSeries: (seriesId: number) =>
+    request<SubscriptionRow[]>(`/api/sources/subscriptions/by-series/${seriesId}`),
   updateSubscription: (
     id: number,
     body: {
@@ -234,11 +297,36 @@ export const api = {
     }),
   runTracker: (id: number) => request<PushReport>(`/api/trackers/${id}/run`, { method: "POST" }),
   goodreadsExportUrl: () => "/api/trackers/goodreads/export.csv",
+  home: () => request<Home>("/api/home"),
+  koboStatus: () => request<KoboStatus>("/api/kobo/status"),
+  koboSettings: (body: Partial<Omit<KoboStatus, "connected" | "writable" | "error">>) =>
+    request<KoboStatus>("/api/kobo/settings", { method: "PUT", body: JSON.stringify(body) }),
+  koboPlan: () => request<KoboPlanItem[]>("/api/kobo/plan"),
+  koboSync: () => request<KoboSyncResult>("/api/kobo/sync", { method: "POST" }),
   intakeScan: () => request<IntakeScan>("/api/intake"),
   intakeImport: (body: { paths: string[]; root_id: number; folder?: string | null }) =>
     request<IntakeImportResult>("/api/intake/import", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+  intakeUpload: (file: File) => {
+    // Bewust FormData en geen JSON: een boek van een paar honderd MB als
+    // base64 door een JSON-body duwen kost geheugen en tijd die nergens toe
+    // dienen. De browser zet zelf de juiste Content-Type met boundary.
+    const body = new FormData();
+    body.append("file", file);
+    return request<IntakeUpload>("/api/intake/upload", { method: "POST", body });
+  },
+  intakeFetch: (url: string, folder?: string) =>
+    request<IntakeFetch>("/api/intake/fetch", {
+      method: "POST",
+      body: JSON.stringify({ url, folder: folder || null }),
+    }),
+  intakeFetchStatus: () => request<IntakeFetch>("/api/intake/fetch"),
+  setReadState: (bookId: number, finished: boolean) =>
+    request<ReadState>(`/api/books/${bookId}/read-state`, {
+      method: "POST",
+      body: JSON.stringify({ finished }),
     }),
   mergeSuggestions: () => request<MergeSuggestion[]>("/api/series/merge/suggestions"),
   mergeSeries: (keepId: number, absorbId: number) =>
@@ -250,6 +338,11 @@ export const api = {
     request<MalListItem>(`/api/trackers/${accountId}/mal/link`, {
       method: "POST",
       body: JSON.stringify({ series_id: seriesId, mal_id: malId }),
+    }),
+  malImportProgress: (accountId: number, seriesId?: number) =>
+    request<MalImportProgress>(`/api/trackers/${accountId}/mal/import-progress`, {
+      method: "POST",
+      body: JSON.stringify({ series_id: seriesId ?? null }),
     }),
   malList: (accountId: number, status?: string) =>
     request<MalListItem[]>(`/api/trackers/${accountId}/mal/list${queryString({ status })}`),
@@ -272,9 +365,11 @@ export const api = {
     request<PageTranslation>(
       `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
     ),
-  makePageTranslation: (bookId: number, index: number, lang?: string) =>
+  // force gooit weg wat er ligt en vertaalt opnieuw — voor als de opdracht
+  // beter is geworden of het antwoord tegenviel.
+  makePageTranslation: (bookId: number, index: number, lang?: string, force?: boolean) =>
     request<PageTranslation>(
-      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang })}`,
+      `/api/books/${bookId}/pages/${index}/translation${queryString({ lang, force })}`,
       { method: "POST" },
     ),
   translateBook: (bookId: number, body: { lang?: string; from_page?: number } = {}) =>
@@ -287,11 +382,39 @@ export const api = {
       `/api/books/${bookId}/translation-status${queryString({ lang })}`,
     ),
   translateMode: () => request<TranslateModeInfo>("/api/translate/mode"),
-  setTranslateMode: (mode: TranslateMode) =>
+  // Een heel hoofdstuk in één keer, via de batch van Gemini: minuten werk in
+  // plaats van seconden, voor de helft van de prijs. Eerst het plan opvragen
+  // (hoeveel pagina's, wat kost het), dan pas starten.
+  batchPlan: (bookId: number, kind: BatchKind, fromPage = 0) =>
+    request<BatchPlan>(
+      `/api/books/${bookId}/batch/plan${queryString({ kind, from_page: fromPage })}`,
+    ),
+  startBatch: (bookId: number, kind: BatchKind, fromPage = 0) =>
+    request<BatchStatus>(`/api/books/${bookId}/batch`, {
+      method: "POST",
+      body: JSON.stringify({ kind, from_page: fromPage }),
+    }),
+  batchStatus: (bookId: number) => request<BatchStatus | null>(`/api/books/${bookId}/batch`),
+  // Twee losse standen: wat er vanzelf gebeurt en wat de knop in de lezer doet.
+  // Wat je niet meestuurt blijft staan.
+  setTranslateMode: (body: {
+    mode?: TranslateMode;
+    button_mode?: TranslateMode;
+    colour_mode?: TranslateMode;
+  }) =>
     request<TranslateModeInfo>("/api/translate/mode", {
       method: "PUT",
-      body: JSON.stringify({ mode }),
+      body: JSON.stringify(body),
     }),
+  pageColourInfo: (bookId: number, pageIndex: number, lang?: string) =>
+    request<PageColourInfo>(
+      `/api/books/${bookId}/pages/${pageIndex}/colour/info${queryString({ lang })}`,
+    ),
+  colourisePage: (bookId: number, pageIndex: number, lang?: string, force?: boolean) =>
+    request<{ book_id: number; page_index: number; available: boolean }>(
+      `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang, force })}`,
+      { method: "POST" },
+    ),
   translatePageFully: (
     bookId: number,
     index: number,
@@ -305,6 +428,13 @@ export const api = {
 
 /** URL's naar beeld. Geen fetch: de browser laadt en cachet deze zelf. */
 export const imageUrl = {
+  // Met taal krijg je de ingekleurde vertáling als die er is; zonder taal
+  // alleen het ingekleurde origineel. Met de vertaling uit hoor je immers geen
+  // Nederlandse tekst te zien.
+  // v telt op zodra je een pagina opnieuw laat maken. Zonder dat blijft de
+  // browser de vorige versie tonen: dezelfde URL, dus geen nieuw verzoek.
+  colour: (bookId: number, pageIndex: number, lang?: string, v?: number) =>
+    `/api/books/${bookId}/pages/${pageIndex}/colour${queryString({ lang, v: v || undefined })}`,
   cover: (bookId: number, profile = "cover") =>
     `/api/books/${bookId}/cover${queryString({ profile })}`,
   /** De officiële omslag van een bron — alleen zinvol als has_cover_url. */
@@ -325,6 +455,6 @@ export const imageUrl = {
     })}`,
   file: (bookId: number) => `/api/books/${bookId}/file`,
   /** De hele pagina hertekend mét vertaling (beeldstanden, M8). */
-  fullTranslation: (bookId: number, index: number, lang?: string) =>
-    `/api/books/${bookId}/pages/${index}/full${queryString({ lang })}`,
+  fullTranslation: (bookId: number, index: number, lang?: string, v?: number) =>
+    `/api/books/${bookId}/pages/${index}/full${queryString({ lang, v: v || undefined })}`,
 };

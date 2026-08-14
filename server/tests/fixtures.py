@@ -22,9 +22,7 @@ from PIL import Image
 _COLORS = [(220, 60, 60), (60, 160, 220), (250, 210, 80), (120, 200, 120), (180, 120, 220)]
 
 
-def page_png(
-    index: int, size: tuple[int, int] = (400, 600), *, border: int = 0
-) -> bytes:
+def page_png(index: int, size: tuple[int, int] = (400, 600), *, border: int = 0) -> bytes:
     """Een effen pagina, of met ``border`` een witrand eromheen.
 
     Die rand is er voor het bijsnijden en het contrast: op een effen vlak valt

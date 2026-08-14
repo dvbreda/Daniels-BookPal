@@ -3,11 +3,23 @@ import { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 
 import { ApiError, api, imageUrl } from "../api/client";
-import type { Book, OriginRegion, SeriesDetail } from "../api/types";
+import type { Book, MergeCandidate, OriginRegion, SeriesDetail } from "../api/types";
 import { CoverPicker } from "../components/CoverPicker";
+import { EditionsPanel } from "../components/EditionsPanel";
 import { SourceBadge } from "../components/SourceBadge";
 import { TranslationPicker } from "../components/TranslationPicker";
 import { useStoredState } from "../lib/useStoredState";
+
+const TAALNAMEN: Record<string, string> = {
+  en: "Engels",
+  ja: "Japans",
+  nl: "Nederlands",
+  de: "Duits",
+  fr: "Frans",
+  es: "Spaans",
+  ko: "Koreaans",
+  zh: "Chinees",
+};
 
 const REGIONS: [OriginRegion, string][] = [
   ["europe", "Europa"],
@@ -250,6 +262,9 @@ function SeriesSettings({
             </div>
           </section>
 
+          <SimilarPanel seriesId={seriesId} />
+          <RenamePanel seriesId={seriesId} title={series.title} />
+          <EditionsPanel seriesId={seriesId} editions={series.editions} />
           <CoverPicker series={series} />
           <TranslationPicker seriesId={seriesId} books={series.books} />
           {series.from_source && <ImportPanel series={series} seriesId={seriesId} />}
@@ -261,6 +276,7 @@ function SeriesSettings({
 
 function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   const queryClient = useQueryClient();
+  const [toonVersies, setVersies] = useState(false);
   const percent = book.progress?.percent ?? 0;
   // Alles leest nu in de app: strips en pdf als beeld van de server, epub met
   // foliate-js in de browser (M6).
@@ -272,6 +288,22 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
       void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
     },
   });
+
+  const leesstatus = useMutation({
+    mutationFn: (finished: boolean) => api.setReadState(book.id, finished),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["continue", seriesId] });
+    },
+  });
+
+  const uit = book.progress?.finished ?? false;
+
+  const kenmerken = [
+    book.edition_language ? (TAALNAMEN[book.edition_language] ?? book.edition_language) : null,
+    book.edition_note,
+    book.alternatives.length > 0 ? book.edition_name : null,
+  ].filter(Boolean) as string[];
 
   const inner = (
     <>
@@ -315,6 +347,14 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             {book.source_group_name}
           </p>
         )}
+        {/* Waar dit deel vandaan komt: taal en kleur staan er altijd bij als
+            ze bekend zijn, de naam van de uitgave alleen als er iets te kiezen
+            viel — anders is dat ruis onder elk hoofdstuk. */}
+        {kenmerken.length > 0 && (
+          <p className="truncate text-xs text-slate-600" title={kenmerken.join(" · ")}>
+            {kenmerken.join(" · ")}
+          </p>
+        )}
       </div>
     </>
   );
@@ -322,12 +362,67 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
   const className =
     "block overflow-hidden rounded-lg bg-ink-800 transition hover:ring-2 hover:ring-accent";
 
+  // Zelf de leesstatus zetten. De automatiek is soms te gretig — een kort
+  // hoofdstuk staat na één blik op 100% — en dan wil je een weg terug.
+  const statusknop = (
+    <button
+      onClick={() => leesstatus.mutate(!uit)}
+      disabled={leesstatus.isPending}
+      title={uit ? "Markeer als ongelezen" : "Markeer als gelezen"}
+      aria-label={uit ? "Markeer als ongelezen" : "Markeer als gelezen"}
+      className={`absolute right-1 top-1 rounded px-1.5 py-0.5 text-xs disabled:opacity-50 ${
+        uit ? "bg-accent text-ink-900" : "bg-ink-900/70 text-slate-400 hover:text-slate-100"
+      }`}
+    >
+      ✓
+    </button>
+  );
+
+  // Andere versies van precies dit deel. Buiten de kaartlink gehouden: een link
+  // in een link is geen geldige HTML, en een klik zou naar de verkeerde versie
+  // gaan.
+  const versies = book.alternatives.length > 0 && (
+    <div className="px-2 pb-2">
+      <button
+        onClick={() => setVersies(!toonVersies)}
+        aria-expanded={toonVersies}
+        className="w-full rounded bg-ink-700 px-2 py-1 text-xs text-slate-400 hover:text-slate-200"
+      >
+        {book.alternatives.length + 1} versies
+      </button>
+      {toonVersies && (
+        <ul className="mt-1 space-y-1">
+          {book.alternatives.map((andere) => (
+            <li key={andere.id}>
+              {andere.has_file ? (
+                <Link
+                  to={`/lezen/${andere.id}`}
+                  className="block truncate rounded px-2 py-1 text-xs text-slate-300 hover:bg-ink-700"
+                >
+                  {andere.edition_name ?? andere.title}
+                </Link>
+              ) : (
+                <span
+                  className="block truncate px-2 py-1 text-xs text-slate-600"
+                  title="Nog niet opgehaald"
+                >
+                  {andere.edition_name ?? andere.title}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+
   // Een hoofdstuk van een bron dat nog niet is opgehaald heeft niets om naartoe
   // te linken; daar hoort een knop, geen dode link.
   if (!book.has_file) {
     return (
-      <div className={className}>
+      <div className={`relative ${className}`}>
         {inner}
+        {statusknop}
         <div className="px-2 pb-2">
           <button
             onClick={() => download.mutate()}
@@ -342,14 +437,19 @@ function BookCard({ book, seriesId }: { book: Book; seriesId: number }) {
             </p>
           )}
         </div>
+        {versies}
       </div>
     );
   }
 
   return (
-    <Link to={target} className={className}>
-      {inner}
-    </Link>
+    <div className={`relative ${className}`}>
+      <Link to={target} className="block">
+        {inner}
+      </Link>
+      {statusknop}
+      {versies}
+    </div>
   );
 }
 
@@ -372,6 +472,14 @@ function ContinueBar({ seriesId }: { seriesId: number }) {
     retry: (_count, error) => !(error instanceof ApiError && error.status === 404),
   });
 
+  const ophalen = useMutation({
+    mutationFn: (bookId: number) => api.downloadChapter(bookId),
+    onSuccess: (_result, bookId) => {
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      navigate(`/lezen/${bookId}`);
+    },
+  });
+
   const markRead = useMutation({
     mutationFn: () => api.markReadBefore(seriesId, data!.book_id),
     onSuccess: () => {
@@ -382,20 +490,36 @@ function ContinueBar({ seriesId }: { seriesId: number }) {
 
   if (!data) return null;
 
-  const label = data.resuming ? "Lees verder" : "Beginnen";
+  // Nog niet op de NAS: dan hoort de knop hem eerst op te halen en daarna te
+  // openen. Bij een serie die je online volgt is dat de normale gang van zaken.
+  const label = !data.has_file
+    ? ophalen.isPending
+      ? "Ophalen…"
+      : "Ophalen en lezen"
+    : data.resuming
+      ? "Lees verder"
+      : "Beginnen";
   const waar = [data.number ? `#${data.number}` : null, data.title].filter(Boolean).join(" ");
 
   return (
     <section className="mt-6 flex flex-wrap items-center gap-3 rounded border border-ink-600 p-4">
       <button
-        onClick={() => navigate(`/lezen/${data.book_id}`)}
-        className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900"
+        onClick={() =>
+          data.has_file ? navigate(`/lezen/${data.book_id}`) : ophalen.mutate(data.book_id)
+        }
+        disabled={ophalen.isPending}
+        className="rounded bg-accent px-4 py-2 text-sm font-medium text-ink-900 disabled:opacity-50"
       >
         {label}
       </button>
       <span className="min-w-0 flex-1 truncate text-sm text-slate-400">
         {waar}
         {data.resuming && data.page > 0 ? ` · pagina ${data.page + 1}` : ""}
+        {ophalen.isError && (
+          <span className="ml-2 text-danger">
+            {ophalen.error instanceof ApiError ? ophalen.error.message : "Ophalen mislukt."}
+          </span>
+        )}
       </span>
       {data.unread_before > 0 && (
         <button
@@ -477,6 +601,202 @@ function ImportPanel({ series, seriesId }: { series: SeriesDetail; seriesId: num
       </div>
 
       {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
+    </section>
+  );
+}
+
+
+/**
+ * De serie hernoemen.
+ *
+ * Nodig zodra een serie meerdere uitgaven heeft: hij houdt de titel van de
+ * uitgave waar hij mee begon, en "Dragon Ball Super (Official Colored)" klopt
+ * niet meer als de zwart-witte er ook in zit.
+ */
+function RenamePanel({ seriesId, title }: { seriesId: number; title: string }) {
+  const queryClient = useQueryClient();
+  const [naam, setNaam] = useState(title);
+  // Een serie die na het hernoemen dezelfde naam blijkt te hebben. Vragen en
+  // niet doen: gelijknamig is niet altijd hetzelfde, en samenvoegen laat zich
+  // niet met één druk terugdraaien.
+  const [naamgenoot, setNaamgenoot] = useState<MergeCandidate | null>(null);
+
+  const ververs = () => {
+    void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+    void queryClient.invalidateQueries({ queryKey: ["series"] });
+  };
+
+  // Was de naam bezet? Dan is hij niet doorgevoerd en is samenvoegen de enige
+  // weg vooruit: twee series met dezelfde naam in één map bestaan niet.
+  const [bezet, setBezet] = useState(false);
+
+  const rename = useMutation({
+    mutationFn: () => api.renameSeries(seriesId, naam.trim()),
+    onSuccess: (result) => {
+      setNaamgenoot(result.merge_candidate);
+      setBezet(!result.renamed);
+      ververs();
+    },
+  });
+
+  const samenvoegen = useMutation({
+    mutationFn: (absorbId: number) => api.mergeSeries(seriesId, absorbId),
+    onSuccess: () => {
+      setNaamgenoot(null);
+      void queryClient.invalidateQueries({ queryKey: ["similar-series", seriesId] });
+      // De naam die zojuist bezet was, is nu vrij: alsnog doorvoeren.
+      if (bezet) {
+        setBezet(false);
+        rename.mutate();
+      } else {
+        ververs();
+      }
+    },
+  });
+
+  return (
+    <section className="mt-3 rounded border border-ink-600 p-4">
+      <h2 className="text-sm font-medium text-slate-200">Naam</h2>
+      <form
+        className="mt-2 flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (naam.trim() && naam.trim() !== title) rename.mutate();
+        }}
+      >
+        <input
+          value={naam}
+          onChange={(event) => setNaam(event.target.value)}
+          className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100"
+        />
+        <button
+          type="submit"
+          disabled={rename.isPending || !naam.trim() || naam.trim() === title}
+          className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          Opslaan
+        </button>
+      </form>
+      {rename.isError && (
+        <p className="mt-1 text-xs text-danger">
+          {rename.error instanceof ApiError ? rename.error.message : "Hernoemen mislukt."}
+        </p>
+      )}
+
+      {naamgenoot && (
+        <div className="mt-3 rounded bg-ink-800 p-3">
+          <p className="text-sm text-slate-200">
+            «{naamgenoot.title}» bestaat al ({naamgenoot.books}{" "}
+            {naamgenoot.books === 1 ? "deel" : "delen"}). Samenvoegen?
+          </p>
+          {bezet && (
+            <p className="mt-1 text-xs text-warning">
+              De naam is nog niet doorgevoerd: twee series met dezelfde naam in één map
+              bestaan niet. Na het samenvoegen zet ik hem alsnog om.
+            </p>
+          )}
+          <p className="mt-1 text-xs text-slate-500">
+            De delen en abonnementen verhuizen hierheen en worden uitgaven van deze serie. Er
+            gaat niets van schijf.
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              onClick={() => samenvoegen.mutate(naamgenoot.id)}
+              disabled={samenvoegen.isPending}
+              className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+            >
+              {samenvoegen.isPending ? "Bezig…" : "Samenvoegen"}
+            </button>
+            <button
+              onClick={() => {
+                setNaamgenoot(null);
+                setBezet(false);
+              }}
+              className="rounded bg-ink-700 px-3 py-2 text-sm text-slate-300"
+            >
+              Apart laten
+            </button>
+          </div>
+          {samenvoegen.isError && (
+            <p className="mt-2 text-xs text-danger">
+              {samenvoegen.error instanceof ApiError
+                ? samenvoegen.error.message
+                : "Samenvoegen mislukt."}
+            </p>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+
+/**
+ * Series die op deze lijken, met de vraag of ze samen mogen.
+ *
+ * Een dubbele serie ontstaat vanzelf: door een scan die een map net anders
+ * benoemt, of door een bron die "One Piece (Official Colored)" heet waar jij
+ * "One Piece" hebt staan. Dat wil je gemeld krijgen in plaats van zelf moeten
+ * opmerken — vandaar hier en niet alleen op het moment dat je hernoemt.
+ */
+function SimilarPanel({ seriesId }: { seriesId: number }) {
+  const queryClient = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["similar-series", seriesId],
+    queryFn: () => api.similarSeries(seriesId),
+  });
+
+  const samenvoegen = useMutation({
+    mutationFn: (absorbId: number) => api.mergeSeries(seriesId, absorbId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["similar-series", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series-detail", seriesId] });
+      void queryClient.invalidateQueries({ queryKey: ["series"] });
+    },
+  });
+
+  if (!data || data.length === 0) return null;
+
+  return (
+    <section className="mt-3 rounded border border-ink-600 p-4">
+      <h2 className="text-sm font-medium text-slate-200">Lijkt hierop</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Samenvoegen maakt er uitgaven van één serie van: de delen en abonnementen verhuizen
+        hierheen, er gaat niets van schijf. Dezelfde reeks met een editie erachter hoort
+        meestal bij elkaar; twee delen van een lange reeks niet.
+      </p>
+      <ul className="mt-3 space-y-1">
+        {data.map((kandidaat) => (
+          <li
+            key={kandidaat.id}
+            className="flex flex-wrap items-center gap-2 rounded bg-ink-800 px-3 py-2 text-sm"
+          >
+            <Link
+              to={`/serie/${kandidaat.id}`}
+              className="min-w-0 flex-1 truncate text-slate-100 hover:text-accent"
+            >
+              {kandidaat.title}
+            </Link>
+            <span className="tabular-nums text-xs text-slate-500">
+              {kandidaat.books} {kandidaat.books === 1 ? "deel" : "delen"}
+            </span>
+            <button
+              onClick={() => samenvoegen.mutate(kandidaat.id)}
+              disabled={samenvoegen.isPending}
+              className="rounded bg-accent px-2 py-1 text-xs text-ink-900 disabled:opacity-50"
+            >
+              Samenvoegen
+            </button>
+          </li>
+        ))}
+      </ul>
+      {samenvoegen.isError && (
+        <p className="mt-2 text-xs text-danger">
+          {samenvoegen.error instanceof ApiError
+            ? samenvoegen.error.message
+            : "Samenvoegen mislukt."}
+        </p>
+      )}
     </section>
   );
 }

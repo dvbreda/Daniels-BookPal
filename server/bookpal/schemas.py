@@ -36,6 +36,10 @@ class LibraryRootOut(BaseModel):
     last_scan_at: datetime | None
     series_count: int = 0
     book_count: int = 0
+    # Kan BookPal hier zelf iets neerzetten? Zo niet, dan staat hier waarom —
+    # in gewone taal, want de oplossing verschilt per oorzaak.
+    writable: bool = True
+    write_problem: str | None = None
 
 
 class ProgressOut(BaseModel):
@@ -54,6 +58,20 @@ class ProgressIn(BaseModel):
     percent: float = Field(ge=0.0, le=100.0)
     finished: bool = False
     device: str | None = Field(default=None, max_length=100)
+
+
+class BookAlternativeOut(BaseModel):
+    """Hetzelfde hoofdstuk uit een andere uitgave."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    title: str
+    edition_id: int | None = None
+    edition_name: str | None = None
+    edition_language: str | None = None
+    edition_note: str | None = None
+    has_file: bool = False
 
 
 class BookOut(BaseModel):
@@ -81,6 +99,17 @@ class BookOut(BaseModel):
     extension: str | None
     added_at: datetime
     progress: ProgressOut | None = None
+    # Uit welke uitgave dit deel komt, en wat er verder voor deze aflevering
+    # klaarligt. Alleen gevuld in de serie-detailweergave, want daar worden de
+    # uitgaven samengevouwen tot één leeslijst.
+    edition_id: int | None = None
+    edition_name: str | None = None
+    # Waarin deze uitgave zich onderscheidt: de taal van het abonnement en een
+    # label als "kleur". Per hoofdstuk zichtbaar, want dat is precies wat je
+    # wilt weten voordat je hem opent.
+    edition_language: str | None = None
+    edition_note: str | None = None
+    alternatives: list[BookAlternativeOut] = Field(default_factory=list)
 
 
 class SeriesOut(BaseModel):
@@ -112,8 +141,188 @@ class SeriesOut(BaseModel):
     cover_page_index: int | None = None
 
 
+class EditionOut(BaseModel):
+    """Eén uitgave binnen een serie, in voorkeursvolgorde."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    series_id: int
+    name: str
+    rank: int
+    note: str | None = None
+    # De taal van het abonnement waar deze uitgave bij hoort; leeg voor je
+    # eigen bestanden, want daar zegt niets wat de taal is.
+    language: str | None = None
+    subscription_id: int | None = None
+    folder_path: str | None = None
+    # Hoeveel delen deze uitgave heeft, en hoeveel daarvan je te zien krijgt.
+    # Het verschil is precies wat een lager gerangschikte uitgave aanvult.
+    book_count: int = 0
+    chosen_count: int = 0
+
+
+class MergeCandidateOut(BaseModel):
+    """Een serie die na het hernoemen dezelfde naam blijkt te hebben."""
+
+    id: int
+    title: str
+    books: int
+
+
+class SidecarSyncOut(BaseModel):
+    """Hoeveel metadata-bestandjes er zijn weggeschreven."""
+
+    written: int = 0
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class HomeItemOut(BaseModel):
+    """Eén tegel op de startpagina: genoeg om te tonen en te openen."""
+
+    book_id: int
+    series_id: int
+    series_title: str
+    title: str
+    number: str | None = None
+    volume: str | None = None
+    kind: BookKind
+    has_file: bool = True
+    extension: str | None = None
+    page_count: int | None = None
+    percent: float = 0.0
+    finished: bool = False
+    # De pagina waar je gebleven was; de lezer opent hier.
+    page: int = 0
+    updated_at: datetime | None = None
+    added_at: datetime
+
+
+class HomeRailOut(BaseModel):
+    """Eén rij op de startpagina."""
+
+    key: str
+    title: str
+    items: list[HomeItemOut] = Field(default_factory=list)
+
+
+class HomeOut(BaseModel):
+    # Lege rails komen niet mee: een kop zonder inhoud is ruis.
+    rails: list[HomeRailOut] = Field(default_factory=list)
+
+
+class KoboStatusOut(BaseModel):
+    """Wat er van de Kobo-koppeling aanstaat, en of het apparaat er is."""
+
+    mount: str | None = None
+    connected: bool = False
+    writable: bool = False
+    error: str | None = None
+    folder: str = "BookPal"
+    ahead: int = 3
+    series_ids: list[int] = Field(default_factory=list)
+    export_books: bool = True
+    write_shelves: bool = True
+    read_progress: bool = True
+    dry_run: bool = True
+
+
+class KoboSettingsIn(BaseModel):
+    """Alleen wat je meestuurt wordt aangepast."""
+
+    mount: str | None = None
+    folder: str | None = None
+    ahead: int | None = Field(default=None, ge=1, le=50)
+    series_ids: list[int] | None = None
+    export_books: bool | None = None
+    write_shelves: bool | None = None
+    read_progress: bool | None = None
+    dry_run: bool | None = None
+
+
+class KoboPlanOut(BaseModel):
+    book_id: int
+    series_title: str
+    title: str
+    path: str
+
+
+class KoboSyncOut(BaseModel):
+    dry_run: bool = True
+    planned: int = 0
+    copied: int = 0
+    skipped: int = 0
+    removed: int = 0
+    shelves_created: list[str] = Field(default_factory=list)
+    shelf_entries: int = 0
+    not_imported: int = 0
+    progress_updated: int = 0
+    # De naam van de kopie die vóór het schrijven is gemaakt.
+    backup: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list)
+
+
+class SyncCoversOut(BaseModel):
+    """Hoeveel omslagen er zijn bijgewerkt, en waar het misging."""
+
+    updated: int = 0
+    editions: list[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
+
+
+class SeriesRenameIn(BaseModel):
+    """De naam van de serie zoals jij hem wilt zien.
+
+    Nodig zodra een serie meerdere uitgaven heeft: hij houdt de titel van de
+    uitgave waar hij mee begon, en "Dragon Ball Super (Official Colored)" klopt
+    niet meer als de zwart-witte uitgave er ook in zit.
+    """
+
+    title: str = Field(min_length=1, max_length=500)
+
+
+class SeriesRenameOut(SeriesOut):
+    """De serie na het hernoemen, plus wat je er waarschijnlijk mee wilde.
+
+    Hernoemen naar een naam die al bestaat betekent bijna altijd dat het
+    hetzelfde ding is. Dat is een vraag en geen automatisme: gelijknamig is niet
+    hetzelfde, en samenvoegen laat zich niet met één druk terugdraaien.
+
+    Is die naam in dezelfde map al bezet, dan kán de serie niet hernoemd worden
+    — twee mappen met dezelfde naam bestaan niet. Dan blijft ``renamed`` op
+    false en is samenvoegen de enige weg vooruit.
+    """
+
+    renamed: bool = True
+    merge_candidate: MergeCandidateOut | None = None
+
+
+class EditionPatch(BaseModel):
+    name: str | None = None
+    note: str | None = None
+
+
+class EditionOrderIn(BaseModel):
+    """De uitgaven in de volgorde die je wilt lezen, eerste keus vooraan."""
+
+    edition_ids: list[int]
+
+
+class BookSlotIn(BaseModel):
+    """Welke boeken dezelfde uitgave van hetzelfde ding zijn.
+
+    Voor titels zonder deelnummer — drie drukken van één boek horen bij elkaar,
+    maar dat is aan de titel niet te zien.
+    """
+
+    book_ids: list[int]
+
+
 class SeriesDetailOut(SeriesOut):
     books: list[BookOut] = Field(default_factory=list)
+    editions: list[EditionOut] = Field(default_factory=list)
 
 
 class OriginPatch(BaseModel):
@@ -153,6 +362,10 @@ class ContinueOut(BaseModel):
     # Ga je verder in iets dat je al begonnen was, of begin je aan een nieuw
     # hoofdstuk? Bepaalt of de knop "Lees verder" of "Beginnen" heet.
     resuming: bool
+    # Staat dit hoofdstuk al op de NAS? Zo niet, dan hoort de knop het eerst op
+    # te halen. Bij een serie die je vooral online volgt is dat de normale
+    # situatie: je bent bij 124 en 125 moet nog binnenkomen.
+    has_file: bool = True
     # Hoeveel hoofdstukken hiervóór nog niet uitgelezen zijn — dat is precies
     # wat de knop "markeer vorige als gelezen" zou opruimen.
     unread_before: int
@@ -328,12 +541,19 @@ class SourceOut(BaseModel):
     type: str
     name: str
     enabled: bool
+    # Wat een zelf toegevoegde bron nodig heeft, bv. het adres van een
+    # OPDS-catalogus. Een wachtwoord gaat er niet uit; zie SourceIn.
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SourceIn(BaseModel):
     type: str = Field(max_length=50)
     name: str = Field(max_length=100)
     enabled: bool = True
+    # Vrij veld per bronsoort. Bij OPDS: {"url": "...", "username": ...,
+    # "password": ...}. Bewust geen apart model per soort — dan zou elke nieuwe
+    # bron een schemawijziging vragen.
+    config: dict[str, Any] = Field(default_factory=dict)
 
 
 class SearchResultOut(BaseModel):
@@ -346,11 +566,29 @@ class SearchResultOut(BaseModel):
     status: str | None = None
     original_language: str | None = None
     tracker_ids: dict[str, str] = Field(default_factory=dict)
-    # Volg je deze al? Dan hoeft de UI geen tweede aanroep te doen.
+    # Volg je precies deze reeks al bij deze bron? Dan hoeft de UI geen tweede
+    # aanroep te doen.
     subscribed_series_id: int | None = None
+    # Heb je hier al een serie van onder (bijna) dezelfde titel? Dan voeg je
+    # hiermee een bron toe aan wat je al hebt in plaats van een tweede serie te
+    # maken — en dat hoor je te zien vóórdat je op volgen drukt.
+    existing_series_id: int | None = None
+    existing_series_title: str | None = None
     # Rechtstreeks te tonen als miniatuur in een zoekresultaat; pas bij
     # koppelen (POST .../cover) gaat hij door de eigen cache en beeldpipeline.
     cover_url: str | None = None
+    # De pagina bij de bron, om te kunnen controleren wat dit is.
+    url: str | None = None
+    # In welke talen er vertalingen bestaan.
+    languages: list[str] = Field(default_factory=list)
+
+
+class ChapterCountOut(BaseModel):
+    """Hoeveel hoofdstukken een reeks bij de bron heeft, in één taal."""
+
+    ref: str
+    language: str
+    count: int
 
 
 class SubscribeIn(BaseModel):
@@ -378,10 +616,17 @@ class SubscriptionOut(BaseModel):
     policy: SubscriptionPolicy
     readahead_n: int
     ttl_days: int
+    # In welke taal je deze reeks volgt; meerdere talen naast elkaar worden
+    # uitgaven van één serie.
+    language: str = "en"
     last_checked_at: datetime | None
     preferred_group_id: str | None = None
     available_groups: list[GroupOut] = Field(default_factory=list)
     series_title: str = ""
+    # Hoe de bron deze reeks noemt. Bij een serie met meerdere abonnementen is
+    # dít het onderscheid — "Dragon Ball Super (Coloured Edition)" naast
+    # "Dragon Ball Super" — want jouw serietitel is voor beide dezelfde.
+    source_title: str = ""
     chapters_total: int = 0
     chapters_local: int = 0
 
@@ -521,6 +766,63 @@ class MalLinkIn(BaseModel):
     mal_id: str = Field(max_length=20)
 
 
+class IntakeFetchIn(BaseModel):
+    """Een deellink ophalen: een Dropbox-map, een los bestand."""
+
+    url: str
+    # Waar het terechtkomt. Leeg = de eerste intake-map, zodat je er daarna
+    # zelf een bibliotheekmap voor kiest.
+    folder: str | None = None
+
+
+class IntakeFetchOut(BaseModel):
+    """De stand van het ophalen: bezig, klaar, mislukt of niets."""
+
+    state: str = "niets"
+    url: str = ""
+    folder: str | None = None
+    bytes_done: int = 0
+    # Wat de server zei dat er zou komen; bij een gedeelde map weet hij dat
+    # vaak zelf niet, en dan is het aantal bytes het enige teken van leven.
+    bytes_total: int | None = None
+    saved: list[str] = Field(default_factory=list)
+    skipped: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
+class IntakeUploadOut(BaseModel):
+    path: str
+    name: str
+    size: int
+
+
+class ReadStateIn(BaseModel):
+    """Zelf bepalen of iets gelezen is."""
+
+    finished: bool
+
+
+class ReadStateOut(BaseModel):
+    book_id: int
+    finished: bool
+    # Hoeveel uitgaven van deze aflevering het betrof.
+    affected: int = 1
+
+
+class MalImportProgressIn(BaseModel):
+    """Leesstatus van MyAnimeList overnemen.
+
+    Zonder ``series_id`` gaat het over alles wat gekoppeld is.
+    """
+
+    series_id: int | None = None
+
+
+class MalImportProgressOut(BaseModel):
+    marked: int
+    series: list[str] = Field(default_factory=list)
+
+
 class MalAuthorizeOut(BaseModel):
     url: str
     # Dit adres moet in je MAL-app-registratie staan; de client toont het.
@@ -544,6 +846,10 @@ class PushReportOut(BaseModel):
     pushed: int
     results: list[PushResultOut] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
+    # Niets te doen — bij een proefronde bijvoorbeeld.
+    skipped: list[str] = Field(default_factory=list)
+    # Andersom: de tracker stond verder en die stand is hier overgenomen.
+    pulled: list[str] = Field(default_factory=list)
 
 
 class BubbleOut(BaseModel):
@@ -574,8 +880,23 @@ class PageTranslationOut(BaseModel):
     full_page: bool = False
 
 
+class PageColourOut(BaseModel):
+    """Of er voor deze pagina een ingekleurde versie klaarstaat."""
+
+    book_id: int
+    page_index: int
+    available: bool = False
+
+
 class TranslateModeOut(BaseModel):
     mode: str
+    # Wat de knop in de lezer doet. Losgekoppeld van de automatische stand:
+    # vanzelf vertalen mag goedkoop zijn, maar als jij zelf op een pagina drukt
+    # is dat juist omdat die ene het waard is.
+    button_mode: str = "image_fast"
+    # Met welk beeldmodel er ingekleurd wordt. Eigen stand, want inkleuren
+    # stelt andere eisen dan vertalen: er komt geen letter aan te pas.
+    colour_mode: str = "image_fast"
     # Zonder sleutel kan er niets; de client verbergt de keuze dan.
     configured: bool
     # Waar vertalingen bewaard worden, en of dat ook echt lukt. Een vertaling
@@ -587,7 +908,53 @@ class TranslateModeOut(BaseModel):
 
 
 class TranslateModeIn(BaseModel):
-    mode: str = Field(max_length=20)
+    """Beide standen zijn los te zetten; wat je niet meestuurt blijft staan."""
+
+    mode: str | None = Field(default=None, max_length=20)
+    button_mode: str | None = Field(default=None, max_length=20)
+    colour_mode: str | None = Field(default=None, max_length=20)
+
+
+class PageColourInfoOut(BaseModel):
+    """Wat er qua kleur voor deze pagina is, voor het merkje in de lezer."""
+
+    available: bool
+    # Van de tekenaar zelf: dan valt er niets in te kleuren en hoort het merkje
+    # dat te zeggen in plaats van een knop aan te bieden die niets toevoegt.
+    native: bool
+    # Zit de vertaling in dit beeld gebakken? Dan is dít de versie die je wilt
+    # zien als kleur en vertaling allebei aanstaan — anders wint de hertekende
+    # pagina en zie je de kleur nooit.
+    translated: bool = False
+
+
+class BatchPlanOut(BaseModel):
+    """Wat een klus voor dit hoofdstuk gaat inhouden, vóór je hem start.
+
+    Met de prijs erbij, want dit is de enige knop in de app die in één druk
+    een heel hoofdstuk kost. Zonder bedrag is dat een gok.
+    """
+
+    kind: str
+    mode: str
+    pages: int
+    price_per_page: float
+    total: float
+    # Batchwerk kost bij Google de helft van een gewone aanroep; dat staat hier
+    # zodat de lezer het verschil kan laten zien in plaats van te suggereren
+    # dat dit het normale tarief is.
+    batch_factor: float
+
+
+class BatchStatusOut(BaseModel):
+    kind: str
+    book_id: int
+    mode: str
+    state: str
+    done: int
+    total: int
+    failed: int
+    error: str | None = None
 
 
 class TranslatePageIn(BaseModel):
@@ -608,6 +975,13 @@ class TranslationStatusOut(BaseModel):
     page_count: int | None
     translated: int
     queued: int
+
+
+class BatchStartIn(BaseModel):
+    """Welke soort klus, en vanaf welke pagina."""
+
+    kind: str = Field(max_length=20)
+    from_page: int = Field(default=0, ge=0)
 
 
 class TranslateBookIn(BaseModel):

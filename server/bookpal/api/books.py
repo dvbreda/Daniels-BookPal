@@ -18,12 +18,15 @@ from bookpal.images import (
     source_id_for,
 )
 from bookpal.images.adjust import Adjustments
-from bookpal.models import Book, BookKind, File, Series
+from bookpal.library import editions
+from bookpal.models import Book, BookKind, Edition, File, Progress, Series, utcnow
 from bookpal.schemas import (
     BookDetailOut,
     BookOut,
     NextChapterOut,
     Paginated,
+    ReadStateIn,
+    ReadStateOut,
     TocEntryOut,
 )
 from bookpal.translate import service as translation_service
@@ -229,7 +232,11 @@ def get_cover(
     # De omslag van dít deel bij de bron wint van "pagina 1": bij scanlations
     # staat daar vaak een credits-pagina van de vertaalgroep. Een handmatig
     # gekozen paginanummer gaat hier weer boven, want dat is een echte keuze.
-    if book.cover_url and (book.series is None or book.series.cover_page_index is None):
+    gekozen_pagina = book.cover_page_index
+    if gekozen_pagina is None and book.series is not None:
+        gekozen_pagina = book.series.cover_page_index
+
+    if book.cover_url and gekozen_pagina is None:
         try:
             remote = render_remote_cover(
                 book.cover_url, profile, source_id=f"book-cover:{book.id}:{book.cover_url}"
@@ -251,7 +258,7 @@ def get_cover(
     # Een handmatig gekozen omslagpagina geldt voor de hele serie, niet alleen
     # voor het eerste deel: bij scanlations zit de reclame op pagina 1 van elk
     # hoofdstuk, dus juist de deel-kaartjes hebben die keuze nodig.
-    page_index = book.series.cover_page_index if book.series is not None else None
+    page_index = gekozen_pagina
     if page_index is not None:
         try:
             chosen = render_page(source, page_index, profile, source_id=source_id_for(path))
@@ -306,3 +313,57 @@ def get_file(book_id: int, session: Session = Depends(get_session)) -> FileRespo
         filename=path.name,
         media_type=FILE_MEDIA_TYPES.get(path.suffix.lower()),
     )
+
+
+@router.post("/{book_id}/read-state", response_model=ReadStateOut)
+def set_read_state(
+    book_id: int, payload: ReadStateIn, session: Session = Depends(get_session)
+) -> ReadStateOut:
+    """Zelf zeggen of je dit gelezen hebt.
+
+    Nodig omdat de automatiek soms te gretig is: een kort hoofdstuk staat na één
+    blik op 100%, en "markeer eerdere als gelezen" pakt weleens één deel te
+    veel. Zonder weg terug blijft dat staan.
+
+    Het geldt voor de aflevering en niet voor het bestand: heb je hoofdstuk 5 in
+    de gekleurde uitgave gelezen en zet je hem hier op ongelezen, dan verdwijnt
+    ook het vinkje op de zwart-witte. Anders zou hij bij het wisselen van
+    voorkeur weer opduiken.
+    """
+    book = deps.get_book(session, book_id)
+    user = current_user(session)
+
+    boeken = list(session.scalars(select(Book).where(Book.series_id == book.series_id)))
+    uitgaven = list(session.scalars(select(Edition).where(Edition.series_id == book.series_id)))
+    familie = [book]
+    for slot in editions.slots(boeken, uitgaven):
+        if any(item.id == book.id for item in slot.books):
+            familie = slot.books
+            break
+
+    rijen = {
+        row.book_id: row
+        for row in session.scalars(
+            select(Progress).where(
+                Progress.user_id == user.id,
+                Progress.book_id.in_([item.id for item in familie]),
+            )
+        )
+    }
+
+    if payload.finished:
+        row = rijen.get(book.id)
+        if row is None:
+            row = Progress(user_id=user.id, book_id=book.id)
+            session.add(row)
+        row.position = {"page": max(0, (book.page_count or 1) - 1)}
+        row.percent = 100.0
+        row.finished = True
+        row.device = "web"
+        row.updated_at = utcnow()
+    else:
+        for row in rijen.values():
+            session.delete(row)
+
+    session.commit()
+    return ReadStateOut(book_id=book.id, finished=payload.finished, affected=len(familie))

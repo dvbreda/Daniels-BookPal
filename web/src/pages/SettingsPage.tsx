@@ -1,12 +1,29 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useSearchParams } from "react-router-dom";
 
 import { ApiError, api } from "../api/client";
 import type { ScanResult, TranslateMode } from "../api/types";
+import { KoboPanel } from "../components/KoboPanel";
+import { CollectionsPage } from "./CollectionsPage";
+import { SourcesPage } from "./SourcesPage";
+import { TabsPage } from "./TabsPage";
+import { TrackersPage } from "./TrackersPage";
+
+/** De panelen van de instellingen, in de volgorde waarin je ze nodig hebt. */
+const PANELEN: [PaneelNaam, string][] = [
+  ["algemeen", "Algemeen"],
+  ["tabs", "Tabs"],
+  ["collecties", "Collecties"],
+  ["bronnen", "Bronnen"],
+  ["trackers", "Trackers"],
+];
+
+type PaneelNaam = "algemeen" | "tabs" | "collecties" | "bronnen" | "trackers";
 
 export function SettingsPage() {
   const queryClient = useQueryClient();
+  const [params, setParams] = useSearchParams();
   const [name, setName] = useState("");
   const [path, setPath] = useState("");
   const [region, setRegion] = useState("");
@@ -56,6 +73,13 @@ export function SettingsPage() {
     onSuccess: refresh,
   });
 
+  // Welk paneel je ziet, in de URL zodat je er rechtstreeks naartoe kunt
+  // linken en de terugknop werkt zoals je verwacht.
+  const paneel = (params.get("paneel") ?? "algemeen") as PaneelNaam;
+  const kies = (naam: PaneelNaam) => {
+    setParams(naam === "algemeen" ? {} : { paneel: naam });
+  };
+
   return (
     <div className="mx-auto max-w-3xl px-4 py-6">
       <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
@@ -63,13 +87,43 @@ export function SettingsPage() {
       </Link>
       <h1 className="mt-4 text-2xl font-semibold text-slate-100">Instellingen</h1>
 
+      {/* Tabs, collecties, bronnen en trackers waren losse pagina's met een
+          klein linkje boven de bibliotheek. Het zijn alle vier instellingen —
+          dingen die je één keer inricht — dus ze horen hier, en niet in de weg
+          te staan op de pagina waar je komt om te lezen. */}
+      <nav className="mt-4 flex flex-wrap gap-2">
+        {PANELEN.map(([naam, label]) => (
+          <button
+            key={naam}
+            onClick={() => kies(naam)}
+            aria-current={paneel === naam ? "page" : undefined}
+            className={`rounded-full px-3 py-1.5 text-sm ${
+              paneel === naam ? "bg-accent text-ink-900" : "bg-ink-700 text-slate-300"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {paneel === "tabs" && <TabsPage embedded />}
+      {paneel === "collecties" && <CollectionsPage embedded />}
+      {paneel === "bronnen" && <SourcesPage embedded />}
+      {paneel === "trackers" && <TrackersPage embedded />}
+
+      {paneel !== "algemeen" ? null : (
+        <>
       {health && (
         <p className="mt-2 text-sm text-slate-400">
           {health.series} series · {health.books} boeken · {health.cache_mb} MB beeldcache
         </p>
       )}
 
+      <SidecarPanel />
+
       <IntakePanel />
+
+      <KoboPanel />
 
       <MergePanel />
 
@@ -92,6 +146,14 @@ export function SettingsPage() {
                   {root.last_scan_at &&
                     ` · laatst gescand ${new Date(root.last_scan_at).toLocaleString("nl-NL")}`}
                 </p>
+                {/* Dat je hier niets kunt neerzetten hoor je te zien vóórdat je
+                    iets probeert te importeren, niet daarna. Lezen en scannen
+                    werkt gewoon; alleen erin schrijven niet. */}
+                {root.writable === false && (
+                  <p className="mt-1 text-xs text-warning">
+                    Alleen lezen: {root.write_problem}
+                  </p>
+                )}
               </div>
               <button
                 onClick={() => scan.mutate(root.id)}
@@ -178,6 +240,8 @@ export function SettingsPage() {
           </div>
         )}
       </section>
+        </>
+      )}
     </div>
   );
 }
@@ -207,6 +271,8 @@ const MODE_LABELS: Record<TranslateMode, { naam: string; uitleg: string }> = {
 };
 
 const MODE_ORDER: TranslateMode[] = ["text", "image_fast", "image_pro"];
+/** Inkleuren levert een afbeelding op, dus de tekststand kan daar niet. */
+const BEELDSTANDEN: TranslateMode[] = ["image_fast", "image_pro"];
 
 /**
  * De vertaalstand (M8).
@@ -219,7 +285,11 @@ function TranslateModePanel() {
   const queryClient = useQueryClient();
   const { data } = useQuery({ queryKey: ["translate-mode"], queryFn: api.translateMode });
   const change = useMutation({
-    mutationFn: (mode: TranslateMode) => api.setTranslateMode(mode),
+    mutationFn: (body: {
+      mode?: TranslateMode;
+      button_mode?: TranslateMode;
+      colour_mode?: TranslateMode;
+    }) => api.setTranslateMode(body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["translate-mode"] }),
   });
 
@@ -235,40 +305,35 @@ function TranslateModePanel() {
         </p>
       ) : (
         <>
-          <p className="mt-1 text-xs text-slate-500">
-            Geldt voor de vertaalknop en de wachtrij die vooruitleest. Los daarvan kun je in
-            de lezer altijd één pagina met een duurder model doen — dat wordt bewaard, dus
-            een tweede keer kost niets.
-          </p>
-          <div className="mt-3 space-y-2">
-            {MODE_ORDER.map((mode) => (
-              <label
-                key={mode}
-                className={`flex cursor-pointer gap-3 rounded p-3 ${
-                  data.mode === mode ? "bg-ink-700" : "bg-ink-800"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name="vertaalstand"
-                  className="mt-1"
-                  checked={data.mode === mode}
-                  onChange={() => change.mutate(mode)}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-baseline gap-2">
-                    <span className="text-slate-100">{MODE_LABELS[mode].naam}</span>
-                    <span className="tabular-nums text-xs text-slate-500">
-                      ± ${(data.costs[mode] ?? 0).toFixed(3)} per pagina
-                    </span>
-                  </span>
-                  <span className="mt-1 block text-xs text-slate-500">
-                    {MODE_LABELS[mode].uitleg}
-                  </span>
-                </span>
-              </label>
-            ))}
-          </div>
+          <ModeChoice
+            titel="Vanzelf"
+            uitleg="Wat de wachtrij doet die vooruitleest terwijl je leest. Dit loopt zonder
+              dat je erom vraagt, dus hier hoort de goedkope stand te staan."
+            gekozen={data.mode}
+            kosten={data.costs}
+            onChange={(mode) => change.mutate({ mode })}
+          />
+          <ModeChoice
+            titel="De knop in de lezer"
+            uitleg="Wat er gebeurt als jij zelf op een pagina drukt. Dat doe je juist omdat
+              díé pagina het waard is, dus hier mag iets duurders staan. Het resultaat
+              wordt bewaard, dus een tweede keer kost niets."
+            gekozen={data.button_mode}
+            kosten={data.costs}
+            onChange={(button_mode) => change.mutate({ button_mode })}
+          />
+          <ModeChoice
+            titel="Inkleuren"
+            uitleg="Met welk beeldmodel een zwart-witpagina wordt ingekleurd. Een eigen
+              keuze, want inkleuren stelt andere eisen dan vertalen: er komt geen letter
+              aan te pas, en het lijnwerk houden we zelf vast. Gemeten over twee pagina's
+              lijnt het snelle model 0,87 uit tegen 0,89 voor het zware — voor de helft
+              van de prijs en de helft van de wachttijd."
+            standen={BEELDSTANDEN}
+            gekozen={data.colour_mode}
+            kosten={data.costs}
+            onChange={(colour_mode) => change.mutate({ colour_mode })}
+          />
         </>
       )}
     </section>
@@ -393,6 +458,8 @@ function IntakePanel() {
         </p>
       )}
 
+      <AddToIntake />
+
       {data.files.length === 0 ? (
         <p className="mt-3 text-sm text-slate-500">Niets klaarstaan.</p>
       ) : (
@@ -463,4 +530,259 @@ function IntakePanel() {
       {result && <p className="mt-2 text-xs text-slate-400">{result}</p>}
     </section>
   );
+}
+
+
+/**
+ * Iets de intake-map in krijgen dat er nog niet staat.
+ *
+ * Twee wegen naartoe, omdat het bestand op twee plekken kan liggen. Op je
+ * telefoon of laptop: kiezen en uploaden. In de cloud: de deellink plakken,
+ * dan haalt de NAS hem zelf op — dat scheelt hem eerst naar je telefoon
+ * downloaden. Een gedeelde Dropbox-map komt binnen als zip en wordt uitgepakt.
+ *
+ * Beide landen in je intake-map en niet meteen in je bibliotheek: zo zie je
+ * eerst wat er binnenkwam en bepaal je daarna waar het hoort.
+ */
+function AddToIntake() {
+  const queryClient = useQueryClient();
+  const [url, setUrl] = useState("");
+  const [map, setMap] = useState("");
+  const [melding, setMelding] = useState<string | null>(null);
+
+  const klaar = () => {
+    void queryClient.invalidateQueries({ queryKey: ["intake"] });
+  };
+
+  // Zolang er iets binnenkomt elke seconde kijken hoe ver het is. Een gedeelde
+  // map is zomaar een gigabyte; zonder teken van leven is dat niet te
+  // onderscheiden van "er gebeurt niets".
+  const { data: stand } = useQuery({
+    queryKey: ["intake-fetch"],
+    queryFn: api.intakeFetchStatus,
+    refetchInterval: (query) => (query.state.data?.state === "bezig" ? 1000 : false),
+  });
+
+  const bezig = stand?.state === "bezig";
+
+  useEffect(() => {
+    if (stand?.state === "klaar") {
+      setMelding(
+        stand.saved.length === 0
+          ? `Niets nieuws (${stand.skipped} stond er al).`
+          : `${stand.saved.length} bestand(en) opgehaald.`,
+      );
+      klaar();
+    }
+    if (stand?.state === "mislukt") setMelding(stand.errors[0] ?? "Ophalen mislukt.");
+    // klaar() is stabiel genoeg; alleen op een statuswissel reageren.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stand?.state]);
+
+  const upload = useMutation({
+    mutationFn: (file: File) => api.intakeUpload(file),
+    onSuccess: (result) => {
+      setMelding(`${result.name} staat klaar.`);
+      klaar();
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Uploaden mislukt."),
+  });
+
+  const ophalen = useMutation({
+    mutationFn: () => api.intakeFetch(url.trim(), map.trim() || undefined),
+    onSuccess: () => {
+      setUrl("");
+      setMelding(null);
+      void queryClient.invalidateQueries({ queryKey: ["intake-fetch"] });
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Ophalen mislukt."),
+  });
+
+  return (
+    <div className="mt-3 rounded bg-ink-800 p-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <label className="cursor-pointer rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 hover:bg-ink-600">
+          {upload.isPending ? "Uploaden…" : "Bestand kiezen"}
+          <input
+            type="file"
+            className="hidden"
+            disabled={upload.isPending}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) upload.mutate(file);
+              // Legen, anders vuurt hetzelfde bestand een tweede keer niet.
+              event.target.value = "";
+            }}
+          />
+        </label>
+        <span className="text-xs text-slate-500">
+          Vanaf je telefoon of laptop, rechtstreeks naar de NAS.
+        </span>
+      </div>
+
+      <form
+        className="mt-3 flex flex-wrap gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (url.trim() && !bezig) ophalen.mutate();
+        }}
+      >
+        <input
+          value={url}
+          onChange={(event) => setUrl(event.target.value)}
+          placeholder="Dropbox-deellink of directe https-link"
+          className="min-w-0 flex-1 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+        />
+        <input
+          value={map}
+          onChange={(event) => setMap(event.target.value)}
+          placeholder="Submap (optioneel)"
+          className="w-44 rounded bg-ink-700 px-3 py-2 text-sm text-slate-100 placeholder:text-slate-500"
+        />
+        <button
+          type="submit"
+          disabled={bezig || !url.trim()}
+          className="rounded bg-accent px-3 py-2 text-sm text-ink-900 disabled:opacity-50"
+        >
+          {bezig ? "Bezig…" : "Ophalen"}
+        </button>
+      </form>
+      <p className="mt-1 text-xs text-slate-500">
+        Een gedeelde map wordt uitgepakt; alleen leesbare bestanden komen eruit.
+      </p>
+
+      {bezig && stand && (
+        <div className="mt-2">
+          <div className="h-1.5 overflow-hidden rounded-full bg-ink-700">
+            <div
+              className={`h-full rounded-full bg-accent ${
+                stand.bytes_total ? "transition-[width]" : "animate-pulse w-1/3"
+              }`}
+              style={
+                stand.bytes_total
+                  ? { width: `${Math.round((stand.bytes_done / stand.bytes_total) * 100)}%` }
+                  : undefined
+              }
+            />
+          </div>
+          <p className="mt-1 text-xs text-slate-400">
+            {formatMB(stand.bytes_done)}
+            {stand.bytes_total ? ` van ${formatMB(stand.bytes_total)}` : " binnen"}
+            {stand.folder ? ` → ${stand.folder}` : ""}
+          </p>
+        </div>
+      )}
+
+      {melding && <p className="mt-2 text-xs text-slate-300">{melding}</p>}
+    </div>
+  );
+}
+
+
+/**
+ * Metadata naast je bestanden.
+ *
+ * Wat BookPal over een boek weet staat in de database, en die is weg zodra je
+ * opnieuw begint. Een sidecar zet het náást het bestand: verhuis je map, dan
+ * verhuist wat je erover wist mee, en een verse installatie vindt het bij de
+ * eerste scan terug.
+ */
+function SidecarPanel() {
+  const [melding, setMelding] = useState<string | null>(null);
+
+  const schrijven = useMutation({
+    mutationFn: () => api.writeSidecars(),
+    onSuccess: (result) => {
+      setMelding(
+        `${result.written} geschreven, ${result.skipped} stond al goed.` +
+          (result.errors.length ? ` Fouten: ${result.errors.slice(0, 3).join("; ")}` : ""),
+      );
+    },
+    onError: (error: unknown) =>
+      setMelding(error instanceof ApiError ? error.message : "Schrijven mislukt."),
+  });
+
+  return (
+    <section className="mt-6 rounded border border-ink-600 p-4">
+      <h2 className="font-medium text-slate-200">Metadata naast je bestanden</h2>
+      <p className="mt-1 text-xs text-slate-500">
+        Eén <code>.bookpal.json</code> per boek, met de titel (ook in meerdere talen), het
+        deelnummer en welke pagina de omslag is. Te openen in een teksteditor. Nieuwe
+        bestanden krijgen er bij de scan vanzelf een; deze knop is voor wat er al stond.
+      </p>
+      <button
+        onClick={() => schrijven.mutate()}
+        disabled={schrijven.isPending}
+        className="mt-3 rounded bg-ink-700 px-3 py-2 text-sm text-slate-200 disabled:opacity-50"
+      >
+        {schrijven.isPending ? "Schrijven…" : "Nu voor alles schrijven"}
+      </button>
+      {melding && <p className="mt-2 text-xs text-slate-400">{melding}</p>}
+    </section>
+  );
+}
+
+
+/**
+ * Eén rij keuzes voor een vertaalstand.
+ *
+ * Twee keer dezelfde vorm, want het zijn twee losse instellingen die dezelfde
+ * standen delen: wat er vanzelf gebeurt, en wat er gebeurt als jij erom vraagt.
+ */
+function ModeChoice({
+  titel,
+  uitleg,
+  gekozen,
+  kosten,
+  standen = MODE_ORDER,
+  onChange,
+}: {
+  titel: string;
+  uitleg: string;
+  gekozen: TranslateMode;
+  kosten: Record<string, number>;
+  /** Welke standen hier te kiezen zijn; niet overal passen ze alle drie. */
+  standen?: TranslateMode[];
+  onChange: (mode: TranslateMode) => void;
+}) {
+  return (
+    <div className="mt-4">
+      <p className="text-sm font-medium text-slate-200">{titel}</p>
+      <p className="mt-1 text-xs text-slate-500">{uitleg}</p>
+      <div className="mt-2 space-y-2">
+        {standen.map((mode) => (
+          <label
+            key={mode}
+            className={`flex cursor-pointer gap-3 rounded p-3 ${
+              gekozen === mode ? "bg-ink-700" : "bg-ink-800"
+            }`}
+          >
+            <input
+              type="radio"
+              name={`vertaalstand-${titel}`}
+              className="mt-1"
+              checked={gekozen === mode}
+              onChange={() => onChange(mode)}
+            />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-baseline gap-2">
+                <span className="text-slate-100">{MODE_LABELS[mode].naam}</span>
+                <span className="tabular-nums text-xs text-slate-500">
+                  ± ${(kosten[mode] ?? 0).toFixed(3)} per pagina
+                </span>
+              </span>
+              <span className="mt-1 block text-xs text-slate-500">{MODE_LABELS[mode].uitleg}</span>
+            </span>
+          </label>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Bytes als iets leesbaars; een teller in bytes zegt niets tijdens het wachten. */
+function formatMB(bytes: number): string {
+  return `${(bytes / 1_000_000).toFixed(1)} MB`;
 }

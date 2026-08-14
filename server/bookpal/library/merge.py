@@ -19,7 +19,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from bookpal.metadata.titles import normalise as normalise_title
-from bookpal.models import Book, Series, Subscription
+from bookpal.models import Book, Edition, Series, Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -41,20 +41,55 @@ def merge(session: Session, keep: Series, absorb: Series) -> Series:
     for book in books:
         book.series_id = keep.id
 
-    # Abonnementen verhuizen mee, zodat nieuwe hoofdstukken binnen blijven
-    # komen. Heeft de blijver er al een, dan houdt die de zijne: twee
-    # abonnementen op één serie zou dubbel downloaden.
-    keep_subscription = session.scalar(
+    # Abonnementen verhuizen allemaal mee. Ze blijven naast elkaar bestaan,
+    # want dat is juist de bedoeling: de gekleurde uitgave loopt achter op de
+    # zwart-witte, en die twee samen maken pas een complete serie. Welke van de
+    # twee je te zien krijgt bepaalt de volgorde van de uitgaven, niet welk
+    # abonnement de merge heeft overleefd.
+    # Ook die van de blijver: zodra er twee naast elkaar staan is "de reeks van
+    # de serie" niet meer eenduidig, dus leggen we hier voor allebei vast welke
+    # het is.
+    for subscription in session.scalars(
         select(Subscription).where(Subscription.series_id == keep.id)
-    )
+    ):
+        subscription.source_ref = subscription.source_ref or keep.source_ref
+
     for subscription in session.scalars(
         select(Subscription).where(Subscription.series_id == absorb.id)
     ):
-        if keep_subscription is None:
-            subscription.series_id = keep.id
-            keep_subscription = subscription
-        else:
-            session.delete(subscription)
+        # De bron-reeks vastleggen vóórdat ``absorb`` verdwijnt: daarna is niet
+        # meer te achterhalen welke reeks dit abonnement volgde, en zou het bij
+        # de volgende ronde de hoofdstukken van de blijver gaan ophalen.
+        subscription.source_ref = subscription.source_ref or absorb.source_ref
+        subscription.series_id = keep.id
+
+    # De uitgaven schuiven achter die van de blijver aan: wat je al las blijft
+    # eerste keus, het nieuwe vult aan.
+    volgende = (
+        max(
+            (
+                edition.rank
+                for edition in session.scalars(select(Edition).where(Edition.series_id == keep.id))
+            ),
+            default=-1,
+        )
+        + 1
+    )
+    bezet = {
+        edition.name
+        for edition in session.scalars(select(Edition).where(Edition.series_id == keep.id))
+    }
+    for edition in session.scalars(
+        select(Edition).where(Edition.series_id == absorb.id).order_by(Edition.rank)
+    ):
+        edition.series_id = keep.id
+        edition.rank = volgende
+        # Twee keer "Eigen bestanden" onder elkaar zegt niets. Pas hier wordt
+        # de naam dubbelzinnig, dus pas hier hoort hij te veranderen.
+        if edition.name in bezet:
+            edition.name = f"{edition.name} — {absorb.title}"
+        bezet.add(edition.name)
+        volgende += 1
 
     _merge_fields(keep, absorb)
 
@@ -114,3 +149,41 @@ def _normalise(title: str) -> str:
     # Gedeeld met het koppelen aan MyAnimeList: daar heet dezelfde reeks
     # "Shinya Shokudou" waar je map "Shinya Shokudo" zegt.
     return normalise_title(title)
+
+
+# Korter dan dit is te weinig om iets op te baseren: "Ai" zit in van alles.
+_MINIMUM_OVERLAP = 6
+
+
+def similar(session: Session, series: Series) -> list[Series]:
+    """Series die op deze lijken, meest waarschijnlijke eerst.
+
+    Twee soorten treffer. Gelijk na normaliseren is de sterkste — "Shinya
+    Shokudou" naast "Shinya Shokudo". Daarnaast de titel die met de andere
+    begint: "One Piece" en "One Piece (Official Colored)" zijn dezelfde reeks
+    met een editie erachter geplakt, en dat is precies het geval waarin je ze
+    als uitgaven naast elkaar wilt.
+
+    Een voorstel en geen automatisme: "Dragon Ball" en "Dragon Ball Super"
+    voldoen ook aan die regel en zijn wél verschillende reeksen.
+    """
+    mij = _normalise(series.title)
+    if not mij:
+        return []
+
+    gelijk: list[Series] = []
+    begint_met: list[Series] = []
+    for andere in session.scalars(select(Series).where(Series.id != series.id)):
+        hun = _normalise(andere.title)
+        if not hun:
+            continue
+        if hun == mij:
+            gelijk.append(andere)
+        elif (
+            len(mij) >= _MINIMUM_OVERLAP
+            and len(hun) >= _MINIMUM_OVERLAP
+            and (hun.startswith(mij) or mij.startswith(hun))
+        ):
+            begint_met.append(andere)
+
+    return gelijk + begint_met

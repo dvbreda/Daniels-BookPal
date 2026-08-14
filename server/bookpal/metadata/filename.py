@@ -109,9 +109,14 @@ def parse_filename(stem: str) -> ParsedName:
 
 
 def sort_title(title: str) -> str:
-    """Lidwoorden vooraan negeren bij het sorteren, zoals elke bibliotheek doet."""
+    """Lidwoorden vooraan negeren bij het sorteren, zoals elke bibliotheek doet.
+
+    Kleine letters, en dat is niet cosmetisch: SQLite sorteert standaard op
+    tekencode, dus "Claire" komt vóór "crayon". Een lijst die deels met en deels
+    zonder hoofdletters is opgeslagen valt daardoor in tweeën.
+    """
     lowered = title.strip()
     for article in ("de ", "het ", "een ", "the ", "a ", "an ", "l'", "le ", "la ", "les "):
         if lowered.lower().startswith(article):
-            return lowered[len(article) :].strip() or lowered
-    return lowered
+            return (lowered[len(article) :].strip() or lowered).lower()
+    return lowered.lower()

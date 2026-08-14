@@ -94,8 +94,6 @@ def tab_series(
         counter = counter.where(Series.title.ilike(f"%{search}%"))
 
     total = int(session.scalar(counter) or 0)
-    rows = session.scalars(
-        statement.order_by(Series.sort_title).offset(offset).limit(limit)
-    ).all()
+    rows = session.scalars(statement.order_by(Series.sort_title).offset(offset).limit(limit)).all()
     items = deps.series_out_list(session, list(rows))
     return Paginated(items=items, total=total, offset=offset, limit=limit)

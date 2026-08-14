@@ -15,16 +15,23 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from bookpal.config import settings
+from bookpal.formats import FORMAT_KINDS, detect_format, open_book
+from bookpal.formats.base import UnsupportedOperation
+from bookpal.library import editions
+from bookpal.metadata.filename import sort_title
 from bookpal.metadata.origin import Origin, from_online, resolve
+from bookpal.metadata.titles import normalise
 from bookpal.models import (
     Book,
     BookKind,
+    Edition,
     File,
     LibraryRoot,
+    OriginRegion,
     Progress,
     Series,
     Source,
@@ -48,7 +55,7 @@ def safe_name(text: str, *, fallback: str = "zonder-titel", limit: int = 120) ->
     """Een titel als mapnaam, zonder tekens die een bestandssysteem breken."""
     cleaned = _UNSAFE.sub("", text).strip().rstrip(".")
     cleaned = re.sub(r"\s+", " ", cleaned)
-    return (cleaned[:limit].strip() or fallback)
+    return cleaned[:limit].strip() or fallback
 
 
 def download_root(session: Session) -> LibraryRoot:
@@ -67,15 +74,40 @@ def download_root(session: Session) -> LibraryRoot:
     return root
 
 
+def find_existing(session: Session, result: SearchResult) -> Series | None:
+    """De serie die je hier al van hebt, ook als hij net anders heet.
+
+    "Shinya Shokudou" bij de bron en "Shinya Shokudo" in jouw map zijn hetzelfde
+    ding; alleen de romanisering verschilt. Zonder deze stap komt er een tweede
+    serie naast te staan die je daarna met de hand moet samenvoegen — terwijl je
+    juist een bron aan het toevoegen was aan wat je al hebt.
+
+    Alleen op titel en niet op iets slimmers: dat is wat jij ook ziet, en het
+    valt met één blik te controleren. Wat je aan de verkeerde plakt haal je met
+    het losmaken van de uitgave weer uit elkaar.
+    """
+    gezocht = normalise(result.title)
+    if not gezocht:
+        return None
+    for series in session.scalars(select(Series)):
+        if normalise(series.title) == gezocht:
+            return series
+    return None
+
+
 def upsert_series(session: Session, source: Source, result: SearchResult) -> Series:
     """Maak of werk de serie bij die bij een bron-treffer hoort."""
     series = session.scalar(
         select(Series).where(Series.source_id == source.id, Series.source_ref == result.ref)
     )
     if series is None:
+        # Nog geen serie voor déze reeks; misschien heb je hem al onder een
+        # net andere titel staan. Dan hoort dit een uitgave erbij te worden.
+        series = find_existing(session, result)
+    if series is None:
         series = Series(
             title=result.title,
-            sort_title=result.title.lower(),
+            sort_title=sort_title(result.title),
             library_root_id=download_root(session).id,
             source_id=source.id,
             source_ref=result.ref,
@@ -84,6 +116,12 @@ def upsert_series(session: Session, source: Source, result: SearchResult) -> Ser
         # Direct flushen, net als de scanner doet: column-defaults (tags,
         # tracker_ids) worden pas dan gevuld.
         session.flush()
+    elif series.source_id is None:
+        # Een serie uit je eigen mappen die nu ook een bron krijgt. De
+        # verwijzing per abonnement is leidend; deze twee velden blijven voor
+        # alles wat maar één bron kent.
+        series.source_id = source.id
+        series.source_ref = result.ref
 
     series.summary = result.description or series.summary
     if result.cover_url:
@@ -189,12 +227,51 @@ def pick_best_chapters(
     return [chapter for chapter in chapters if chapter in chosen]
 
 
+# Bronnen zetten het in de titel: "One Piece (Official Colored)". Dat is het
+# enige signaal dat er is — of een scan kleur heeft valt niet aan de metadata te
+# zien, en elke pagina bekijken is er niet aan.
+_COLOUR_IN_TITLE = re.compile(r"\b(colou?red|colou?r|kleur)\b", re.IGNORECASE)
+
+
+def edition_note(source_title: str | None) -> str | None:
+    """Een kort label bij de uitgave, als de bron het prijsgeeft."""
+    if source_title and _COLOUR_IN_TITLE.search(source_title):
+        return "kleur"
+    return None
+
+
+def _edition_name(
+    session: Session, series: Series, subscription: Subscription, source_title: str | None
+) -> str:
+    """Hoe deze uitgave heet in de lijst.
+
+    Bij voorkeur de titel zoals de bron hem noemt: "Dragon Ball Super (Coloured
+    Edition)" naast "Dragon Ball Super" zegt precies wat het onderscheid is,
+    terwijl jouw eigen serietitel voor beide hetzelfde is.
+
+    De taal komt er alleen bij als hij nodig is om ze uit elkaar te houden —
+    dezelfde reeks in het Engels en het Japans levert anders twee regels met
+    exact dezelfde naam.
+    """
+    naam = source_title or series.title
+    bezet = {
+        edition.name
+        for edition in session.scalars(
+            select(Edition).where(
+                Edition.series_id == series.id, Edition.subscription_id != subscription.id
+            )
+        )
+    }
+    return f"{naam} · {subscription.language}" if naam in bezet else naam
+
+
 def sync_chapters(
     session: Session,
     series: Series,
     chapters: list[ChapterInfo],
     *,
     subscription: Subscription | None = None,
+    source_title: str | None = None,
 ) -> tuple[int, int]:
     """Zet de hoofdstukkenlijst van een bron om in boeken zonder bestand.
 
@@ -208,20 +285,34 @@ def sync_chapters(
     blijft staan. Anders zou een verandering in de bron — of het omzetten van
     je voorkeur — zomaar iets weghalen wat je al had.
     """
+    edition: Edition | None = None
     if subscription is not None:
         # Vastleggen wat er te kiezen viel, vóór het ontdubbelen: daarna
         # bestaan de afgevallen hoofdstukken niet meer.
         subscription.available_groups = group_summary(chapters)
+        # Alles van deze bron hoort bij één uitgave. Zo blijft "de gekleurde
+        # versie" bij elkaar als er straks een tweede bron bij komt.
+        edition = editions.for_subscription(
+            session,
+            series,
+            subscription,
+            name=_edition_name(session, series, subscription, source_title),
+        )
+        # Alleen invullen als je er zelf nog niets van gemaakt hebt.
+        if edition.note is None:
+            edition.note = edition_note(source_title)
 
     preferred = subscription.preferred_group_id if subscription is not None else None
     chapters = pick_best_chapters(chapters, preferred)
     keep = {chapter.ref for chapter in chapters}
 
-    existing = {
-        book.source_ref: book
-        for book in session.scalars(select(Book).where(Book.series_id == series.id))
-        if book.source_ref
-    }
+    # Alleen de hoofdstukken van déze uitgave. Een serie kan er meer hebben —
+    # een Engelse vertaling naast het Japanse origineel — en die horen niet als
+    # "niet meer bij de bron" te worden opgeruimd wanneer de ander synchroniseert.
+    statement = select(Book).where(Book.series_id == series.id)
+    if edition is not None:
+        statement = statement.where(or_(Book.edition_id == edition.id, Book.edition_id.is_(None)))
+    existing = {book.source_ref: book for book in session.scalars(statement) if book.source_ref}
 
     for ref, book in list(existing.items()):
         if ref in keep or book.file_id is not None:
@@ -242,6 +333,9 @@ def sync_chapters(
             # deze kolommen weten nog niet wie ze vertaald heeft.
             known.source_group_id = known.source_group_id or chapter.group_id
             known.source_group_name = known.source_group_name or chapter.group_name
+            # Hoofdstukken van vóór dit model horen alsnog bij hun uitgave.
+            if known.edition_id is None and edition is not None:
+                known.edition_id = edition.id
             continue
         session.add(
             Book(
@@ -253,13 +347,16 @@ def sync_chapters(
                 sort_number=_sort_number(chapter.number),
                 sort_volume=_sort_number(chapter.volume),
                 page_count=chapter.page_count,
-                # Manga leest van rechts naar links; dat is bij een
-                # manga-bron de juiste aanname.
-                right_to_left=True,
+                # Rechts naar links hoort bij de herkomst, niet bij "het komt
+                # van een bron". Dat laatste stond hier hardgecodeerd, waardoor
+                # een Europese strip van het Internet Archive net zo goed
+                # omgekeerd werd gelezen.
+                right_to_left=series.origin_region is OriginRegion.JAPAN,
                 source_id=series.source_id,
                 source_ref=chapter.ref,
                 source_group_id=chapter.group_id,
                 source_group_name=chapter.group_name,
+                edition_id=edition.id if edition is not None else None,
             )
         )
         added += 1
@@ -319,17 +416,30 @@ def subscribe(
     detail = implementation.detail(ref)
     series = upsert_series(session, source_row, detail)
 
-
     # Het abonnement moet er zijn vóór het synchroniseren: daar staat de
     # voorkeursgroep op, en die bepaalt welke vertaling er wordt aangemaakt.
+    # Ook op taal, want twee talen naast elkaar is een geldige wens: van
+    # Shinya Shokudo is maar een klein deel vertaald, dus de Engelse uitgave
+    # voorop en het Japanse origineel eronder om verder te kunnen lezen. Zonder
+    # de taal in de sleutel zou het tweede abonnement het eerste overschrijven.
+    # Een lege taal is geen taal. Zoek je met "alle talen" en volg je dan,
+    # dan kwam die leegte in het abonnement terecht en vroeg de ronde daarna
+    # om hoofdstukken in het niets.
+    language = (language or "").strip() or "en"
+
     subscription = session.scalar(
         select(Subscription).where(
-            Subscription.source_id == source_row.id, Subscription.series_id == series.id
+            Subscription.source_id == source_row.id,
+            Subscription.series_id == series.id,
+            Subscription.language == language,
         )
     )
     if subscription is None:
-        subscription = Subscription(source_id=source_row.id, series_id=series.id)
+        subscription = Subscription(source_id=source_row.id, series_id=series.id, language=language)
         session.add(subscription)
+    # Altijd bijwerken: bij een serie met meerdere abonnementen is dit het
+    # enige dat vastlegt wélke reeks bij de bron dít abonnement volgt.
+    subscription.source_ref = ref
     subscription.policy = policy
     subscription.readahead_n = readahead_n
     subscription.ttl_days = ttl_days
@@ -337,7 +447,15 @@ def subscribe(
     session.flush()
 
     chapters = implementation.chapters(ref, language=language)
-    added, _ = sync_chapters(session, series, chapters, subscription=subscription)
+    added, _ = sync_chapters(
+        session, series, chapters, subscription=subscription, source_title=detail.title
+    )
+    session.flush()
+
+    # Omslagen erbij, nu de delen bestaan. Zonder dit toont elk deel "pagina 1",
+    # en dat is bij scanlations vaak een credits-pagina van de vertaalgroep.
+    edition = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
+    sync_covers(session, implementation, series, ref=ref, edition=edition)
     session.flush()
     return series, subscription, added
 
@@ -363,6 +481,9 @@ def chapter_path(series: Series, book: Book) -> Path:
     if book.source_ref:
         parts.append(f"[{book.source_ref[:8]}]")
     stem = " ".join(parts) or str(book.id)
+    # ``.cbz`` is een beginwaarde, geen belofte: een bron die hele bestanden
+    # levert kan net zo goed een pdf of epub geven. ``download`` geeft terug
+    # waar hij het écht heeft neergezet.
     return settings.download_dir.resolve() / safe_name(series.title) / f"{safe_name(stem)}.cbz"
 
 
@@ -398,7 +519,23 @@ def download_book(
         raise SourceError("serie niet gevonden")
 
     target = chapter_path(series, book)
-    implementation.download(book.source_ref, target, data_saver=data_saver)
+    # De bron bepaalt de extensie: hij weet welk bestand hij ophaalt. Zonder dit
+    # kwam een pdf van het Internet Archive als ".cbz" op schijf te staan, en
+    # dan opent er niets — het is geen zip.
+    target = implementation.download(book.source_ref, target, data_saver=data_saver)
+
+    # Uitlezen wat er nu op schijf staat. Zonder dit weet de lezer niet hoeveel
+    # pagina's er zijn — en bij een bron die hele bestanden levert weet hij ook
+    # niet dat het een pdf is in plaats van een strip. Beide komen anders pas
+    # bij de eerstvolgende scan goed, en tot dan opent het hoofdstuk niet.
+    fmt = detect_format(target)
+    if fmt is not None:
+        book.kind = FORMAT_KINDS[fmt]
+        try:
+            with open_book(target, fmt) as bestand:
+                book.page_count = bestand.page_count()
+        except (OSError, UnsupportedOperation, ValueError) as exc:
+            logger.warning("paginatelling van %s: %s", target.name, exc)
 
     stat = target.stat()
     file_row = session.scalar(select(File).where(File.path == str(target)))
@@ -462,21 +599,32 @@ def expire_downloads(session: Session, *, now: datetime | None = None) -> int:
     return removed
 
 
-def sync_covers(session: Session, implementation: SourceImpl, series: Series) -> int:
+def sync_covers(
+    session: Session,
+    implementation: SourceImpl,
+    series: Series,
+    *,
+    ref: str | None = None,
+    edition: Edition | None = None,
+) -> int:
     """Haal de omslagen per deel op en hang ze aan de bijbehorende boeken.
 
     MangaDex heeft er meestal één per volume. Zonder dit toont elk deel
     "pagina 1", en dat is bij scanlations vaak een credits-pagina van de
     vertaalgroep in plaats van de echte omslag.
 
+    ``ref`` en ``edition`` horen bij elkaar: bij een serie met meerdere
+    uitgaven hoort de gekleurde omslag alleen bij de gekleurde delen.
+
     Faalt zacht: een serie zonder omslagen is nog steeds prima leesbaar.
     """
     getter = getattr(implementation, "covers", None)
-    if getter is None or not series.source_ref:
+    ref = ref or series.source_ref
+    if getter is None or not ref:
         return 0
 
     try:
-        covers = getter(series.source_ref)
+        covers = getter(ref)
     except SourceError as exc:
         logger.warning("omslagen ophalen voor %s: %s", series.title, exc)
         return 0
@@ -485,8 +633,12 @@ def sync_covers(session: Session, implementation: SourceImpl, series: Series) ->
     if not per_volume:
         return 0
 
+    statement = select(Book).where(Book.series_id == series.id)
+    if edition is not None:
+        statement = statement.where(Book.edition_id == edition.id)
+
     aantal = 0
-    for book in session.scalars(select(Book).where(Book.series_id == series.id)):
+    for book in session.scalars(statement):
         url = per_volume.get(book.volume) if book.volume else None
         if url and book.cover_url != url:
             book.cover_url = url

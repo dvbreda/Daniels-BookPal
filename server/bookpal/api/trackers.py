@@ -23,6 +23,8 @@ from bookpal.schemas import (
     GoodreadsSyncOut,
     MalAuthorizeOut,
     MalCallbackIn,
+    MalImportProgressIn,
+    MalImportProgressOut,
     MalLinkIn,
     MalListItemOut,
     PushReportOut,
@@ -164,9 +166,7 @@ def mal_redirect(
         return RedirectResponse(url="/trackers?mal=mislukt", status_code=303)
 
     rows = session.scalars(select(TrackerAccount).where(TrackerAccount.provider == "mal"))
-    account = next(
-        (row for row in rows if row.credentials.get("_pending_state") == state), None
-    )
+    account = next((row for row in rows if row.credentials.get("_pending_state") == state), None)
     if account is None:
         return RedirectResponse(url="/trackers?mal=onbekend", status_code=303)
 
@@ -247,6 +247,8 @@ def run_tracker(account_id: int, session: Session = Depends(get_session)) -> Pus
             for result in report.results
         ],
         errors=report.errors,
+        skipped=report.skipped,
+        pulled=report.pulled,
     )
 
 
@@ -513,3 +515,56 @@ def mal_link(
         status="",
         series_id=series.id,
     )
+
+
+@router.post("/{account_id}/mal/import-progress", response_model=MalImportProgressOut)
+def mal_import_progress(
+    account_id: int,
+    payload: MalImportProgressIn,
+    session: Session = Depends(get_session),
+) -> MalImportProgressOut:
+    """Neem over wat je bij MyAnimeList al gelezen had.
+
+    Handig bij een serie die je elders begonnen bent: One Piece op 124 hoeft
+    niet opnieuw doorgeklikt te worden. Vult alleen aan — wat je hier al hebt
+    uitgelezen blijft staan, en er gaat nooit iets terug op 'ongelezen'.
+    """
+    account = _get_account(session, account_id)
+    if account.provider != "mal":
+        raise HTTPException(status_code=409, detail="alleen MyAnimeList gebruikt dit")
+
+    tracker = MyAnimeListTracker(account.credentials)
+    try:
+        items = tracker.read_list()
+    except TrackerError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    finally:
+        tracker.close()
+
+    gelezen = {item["mal_id"]: int(item["chapters_read"] or 0) for item in items}
+    user = current_user(session)
+
+    doelen = []
+    for series in session.scalars(select(Series)):
+        mal_id = series.tracker_ids.get("mal")
+        if not mal_id or str(mal_id) not in gelezen:
+            continue
+        if payload.series_id is not None and series.id != payload.series_id:
+            continue
+        doelen.append((series, gelezen[str(mal_id)]))
+
+    if not doelen:
+        raise HTTPException(
+            status_code=409,
+            detail="geen gekoppelde series met leesvoortgang bij MyAnimeList",
+        )
+
+    totaal = 0
+    namen: list[str] = []
+    for series, chapters_read in doelen:
+        gemarkeerd, _bekeken = tracker_service.import_progress(session, user, series, chapters_read)
+        if gemarkeerd:
+            totaal += gemarkeerd
+            namen.append(f"{series.title} ({gemarkeerd})")
+
+    return MalImportProgressOut(marked=totaal, series=namen)

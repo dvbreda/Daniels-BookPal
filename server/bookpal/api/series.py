@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, TypeVar
+from pathlib import Path
+from typing import Any, NamedTuple, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import Select, func, select
@@ -19,30 +20,48 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
+from bookpal.library import editions, sidecars
 from bookpal.library import merge as merge_module
+from bookpal.metadata.filename import normalise_number as _sort_number
+from bookpal.metadata.filename import sort_title as sort_title_for
+from bookpal.metadata.titles import normalise
 from bookpal.models import (
     Book,
     BookKind,
+    Edition,
     File,
     LibraryRoot,
     OriginRegion,
     OriginSource,
+    Progress,
     Series,
     Source,
+    Subscription,
+    User,
 )
 from bookpal.schemas import (
     AttachCoverIn,
+    BookAlternativeOut,
+    BookOut,
+    BookSlotIn,
     ContinueOut,
+    EditionOrderIn,
+    EditionOut,
+    EditionPatch,
     ImportSeriesIn,
     ImportSeriesOut,
     MarkReadBeforeOut,
+    MergeCandidateOut,
     MergeSeriesIn,
     MergeSuggestionOut,
     OriginPatch,
     Paginated,
     SeriesDetailOut,
     SeriesOut,
+    SeriesRenameIn,
+    SeriesRenameOut,
     SetCoverPageIn,
+    SyncCoversOut,
 )
 from bookpal.sources import SourceError, importer
 from bookpal.sources import service as source_service
@@ -106,10 +125,25 @@ def list_series(
 
 
 @router.get("/{series_id}", response_model=SeriesDetailOut)
-def get_series(series_id: int, session: Session = Depends(get_session)) -> SeriesDetailOut:
+def get_series(
+    series_id: int,
+    all_editions: bool = Query(
+        default=False,
+        description="Elk bestand apart tonen in plaats van één regel per aflevering.",
+    ),
+    session: Session = Depends(get_session),
+) -> SeriesDetailOut:
+    """Eén serie met zijn leeslijst.
+
+    Standaard samengevouwen tot één regel per aflevering: heb je dezelfde reeks
+    in kleur én zwart-wit, dan is hoofdstuk 5 één ding om te lezen. Met
+    ``all_editions`` krijg je alles los, om te zien wat waar vandaan komt.
+    """
     series = deps.get_series(session, series_id)
     user = current_user(session)
     books = list(series.books)
+    uitgaven = list(series.editions)
+    kenmerken = _edition_traits(session, uitgaven)
     progress = deps.progress_for(session, user, [book.id for book in books])
     extensions = {
         row.id: row.extension
@@ -123,11 +157,228 @@ def get_series(series_id: int, session: Session = Depends(get_session)) -> Serie
             series, len(books), sorted({book.kind.value for book in books})
         ).model_dump()
     )
-    detail.books = [
-        deps.to_book_out(book, progress.get(book.id), extensions.get(book.file_id or -1))
-        for book in books
-    ]
+
+    gekozen: list[editions.Slot] = editions.slots(books, uitgaven)
+    if all_editions:
+        regels = [
+            deps.to_book_out(book, progress.get(book.id), extensions.get(book.file_id or -1))
+            for book in books
+        ]
+        for regel in regels:
+            _apply_traits(regel, kenmerken.get(regel.edition_id or -1))
+    else:
+        regels = []
+        for slot in gekozen:
+            book = slot.chosen
+            regel = deps.to_book_out(
+                book,
+                editions.best_progress(slot, progress),
+                extensions.get(book.file_id or -1),
+            )
+            _apply_traits(regel, kenmerken.get(book.edition_id or -1))
+            regel.alternatives = [
+                _alternative_out(andere, kenmerken.get(andere.edition_id or -1))
+                for andere in slot.alternatives
+            ]
+            regels.append(regel)
+
+    detail.books = regels
+    detail.editions = _editions_out(
+        uitgaven, books, gekozen, {key: value.language for key, value in kenmerken.items()}
+    )
     return detail
+
+
+class _Traits(NamedTuple):
+    """Waarin een uitgave zich onderscheidt, klaar om te tonen."""
+
+    name: str
+    language: str | None
+    note: str | None
+
+
+def _edition_traits(session: Session, uitgaven: list[Edition]) -> dict[int, _Traits]:
+    """Naam, taal en label per uitgave.
+
+    De taal staat op het abonnement en niet op de uitgave zelf: hij hoort bij
+    waar de hoofdstukken vandaan komen, niet bij de ordening.
+    """
+    talen: dict[int, str] = {}
+    ids = [edition.subscription_id for edition in uitgaven if edition.subscription_id]
+    if ids:
+        talen = {
+            row.id: row.language
+            for row in session.scalars(select(Subscription).where(Subscription.id.in_(ids)))
+        }
+    return {
+        edition.id: _Traits(
+            name=edition.name,
+            language=talen.get(edition.subscription_id or -1),
+            # Zelf gezet wint; anders afgeleid uit de naam, zodat uitgaven van
+            # vóór dit label ook gewoon "kleur" tonen.
+            note=edition.note or source_service.edition_note(edition.name),
+        )
+        for edition in uitgaven
+    }
+
+
+def _apply_traits(regel: BookOut, traits: _Traits | None) -> None:
+    if traits is None:
+        return
+    regel.edition_name = traits.name
+    regel.edition_language = traits.language
+    regel.edition_note = traits.note
+
+
+def _alternative_out(book: Book, traits: _Traits | None) -> BookAlternativeOut:
+    return BookAlternativeOut(
+        id=book.id,
+        title=book.title,
+        edition_id=book.edition_id,
+        edition_name=traits.name if traits else None,
+        edition_language=traits.language if traits else None,
+        edition_note=traits.note if traits else None,
+        has_file=book.file_id is not None,
+    )
+
+
+def _editions_out(
+    uitgaven: list[Edition],
+    books: list[Book],
+    gekozen: list[editions.Slot],
+    talen: dict[int, str | None] | None = None,
+) -> list[EditionOut]:
+    """De uitgaven met hun aandeel in de leeslijst.
+
+    Dat aandeel is het nuttige getal: een uitgave die 0 van de 300 delen levert
+    doet niets, en een die er 40 aanvult vertelt je precies waar je eerste keus
+    ophoudt.
+    """
+    talen = talen or {}
+    per_uitgave: dict[int, int] = {}
+    for book in books:
+        if book.edition_id is not None:
+            per_uitgave[book.edition_id] = per_uitgave.get(book.edition_id, 0) + 1
+
+    zichtbaar: dict[int, int] = {}
+    for slot in gekozen:
+        key = slot.chosen.edition_id
+        if key is not None:
+            zichtbaar[key] = zichtbaar.get(key, 0) + 1
+
+    return [
+        EditionOut(
+            **{
+                **{veld: getattr(edition, veld) for veld in ("id", "series_id", "name", "rank")},
+                # Zelf gezet wint; anders afgeleid uit de naam, net als bij de
+                # hoofdstukken zelf.
+                "note": edition.note or source_service.edition_note(edition.name),
+                "language": talen.get(edition.id),
+                "subscription_id": edition.subscription_id,
+                "folder_path": edition.folder_path,
+                "book_count": per_uitgave.get(edition.id, 0),
+                "chosen_count": zichtbaar.get(edition.id, 0),
+            }
+        )
+        for edition in sorted(uitgaven, key=lambda edition: edition.rank)
+    ]
+
+
+@router.patch("/{series_id}/title", response_model=SeriesRenameOut)
+def rename_series(
+    series_id: int, payload: SeriesRenameIn, session: Session = Depends(get_session)
+) -> SeriesRenameOut:
+    """Hernoem een serie.
+
+    Blijft staan bij een nieuwe scan: alleen de titel verandert, de mappen en
+    bestanden blijven waar ze zijn.
+
+    Kom je daarmee op de naam van een serie die je al hebt, dan komt die terug
+    als ``merge_candidate``. Bijna altijd is dat hetzelfde ding — je bent
+    tenslotte aan het opruimen — maar samenvoegen gebeurt pas als je het zegt.
+    """
+    series = deps.get_series(session, series_id)
+    titel = payload.title.strip()
+    if not titel:
+        raise HTTPException(status_code=400, detail="een serie heeft een titel nodig")
+
+    # Eerst kijken of de naam vrij is, dán pas opslaan. Binnen één map is de
+    # titel uniek, dus een botsing is geen fout maar een aanwijzing: die andere
+    # serie is bijna altijd hetzelfde ding.
+    bezet = session.scalar(
+        select(Series).where(
+            Series.id != series.id,
+            Series.library_root_id == series.library_root_id,
+            Series.title == titel,
+        )
+    )
+    if bezet is None:
+        series.title = titel
+        series.sort_title = sort_title_for(titel)
+        session.commit()
+
+    uit = SeriesRenameOut(
+        **deps.to_series_out(
+            series, len(series.books), sorted({book.kind.value for book in series.books})
+        ).model_dump()
+    )
+    uit.renamed = bezet is None
+    naamgenoot = bezet or _same_name(session, series, titel)
+    if naamgenoot is not None:
+        uit.merge_candidate = MergeCandidateOut(
+            id=naamgenoot.id, title=naamgenoot.title, books=len(naamgenoot.books)
+        )
+    return uit
+
+
+def _same_name(session: Session, series: Series, titel: str) -> Series | None:
+    """Een andere serie die na normaliseren dezelfde naam heeft.
+
+    Dezelfde vergelijking als bij het toevoegen van een bron, zodat "Shinya
+    Shokudou" en "Shinya Shokudo" hier ook als één ding gelden.
+    """
+    gezocht = normalise(titel)
+    if not gezocht:
+        return None
+    for andere in session.scalars(select(Series).where(Series.id != series.id)):
+        if normalise(andere.title) == gezocht:
+            return andere
+    return None
+
+
+def _remember_title(session: Session, book: Book, titel: str, *, lang: str) -> None:
+    """Leg een opgehaalde titel vast in de sidecar naast het bestand."""
+    if book.file_id is None:
+        return
+    bestand = session.get(File, book.file_id)
+    if bestand is None:
+        return
+    pad = Path(bestand.path)
+    if not pad.is_file():
+        return
+    zijkant = sidecars.read(pad) or sidecars.Sidecar()
+    # Onder de taalcode én als naamloze titel: de eerste bewaart dat dit de
+    # Engelse naam is, de tweede is wat je ziet als je niets vraagt.
+    zijkant.titles[lang] = titel
+    zijkant.set_title(titel, herkomst="source")
+    sidecars.write(pad, zijkant)
+
+
+@router.get("/{series_id}/similar", response_model=list[MergeCandidateOut])
+def similar_series(
+    series_id: int, session: Session = Depends(get_session)
+) -> list[MergeCandidateOut]:
+    """Series die op deze lijken, om samen te voegen.
+
+    Staat permanent bij de instellingen: een dubbele serie ontstaat vanzelf —
+    door een scan, door een bron met een net andere titel — en dan wil je erop
+    gewezen worden in plaats van het zelf te moeten opmerken.
+    """
+    series = deps.get_series(session, series_id)
+    return [
+        MergeCandidateOut(id=andere.id, title=andere.title, books=len(andere.books))
+        for andere in merge_module.similar(session, series)
+    ]
 
 
 @router.patch("/{series_id}/origin", response_model=SeriesOut)
@@ -275,19 +526,59 @@ def _cover_response(rendered: RenderedImage) -> Response:
     )
 
 
-def _readable_books(session: Session, series_id: int) -> list[Book]:
-    """De hoofdstukken in leesvolgorde, alleen wat je daadwerkelijk kunt openen.
+def _readable_slots(session: Session, series_id: int) -> list[editions.Slot]:
+    """De afleveringen in leesvolgorde, alleen wat je kunt openen.
+
+    Eén regel per aflevering, niet per bestand: heb je dezelfde reeks in kleur
+    én zwart-wit, dan is hoofdstuk 5 één ding om te lezen en niet twee. Welke
+    uitgave je krijgt bepaalt de volgorde van de uitgaven.
 
     Hoofdstukken zonder bestand (een abonnement dat nog niet is opgehaald)
-    slaan we over: "lees verder" hoort je niet op een lege pagina te zetten.
+    vallen af: "lees verder" hoort je niet op een lege pagina te zetten.
     """
-    return list(
+    books = list(
         session.scalars(
             select(Book)
-            .where(Book.series_id == series_id, Book.file_id.isnot(None))
+            .where(Book.series_id == series_id)
             .order_by(Book.sort_volume, Book.sort_number)
         )
     )
+    uitgaven = list(session.scalars(select(Edition).where(Edition.series_id == series_id)))
+    return editions.readable(editions.slots(books, uitgaven))
+
+
+def _all_slots(session: Session, series_id: int) -> list[editions.Slot]:
+    """Alle afleveringen in leesvolgorde, opgehaald of niet."""
+    books = list(
+        session.scalars(
+            select(Book)
+            .where(Book.series_id == series_id)
+            .order_by(Book.sort_volume, Book.sort_number)
+        )
+    )
+    uitgaven = list(session.scalars(select(Edition).where(Edition.series_id == series_id)))
+    return editions.slots(books, uitgaven)
+
+
+def _readable_books(session: Session, series_id: int) -> list[Book]:
+    return [slot.chosen for slot in _readable_slots(session, series_id)]
+
+
+def _slot_progress(session: Session, user: User, slots: list[editions.Slot]) -> dict[int, Progress]:
+    """Voortgang per aflevering, op de naam van het deel dat je te zien krijgt.
+
+    Uitgelezen in de gekleurde uitgave telt ook als je nu de zwart-witte leest;
+    anders zou het omzetten van je voorkeur een halve serie weer ongelezen
+    maken.
+    """
+    alle = [book.id for slot in slots for book in slot.books]
+    rows = deps.progress_for(session, user, alle)
+    gevonden: dict[int, Progress] = {}
+    for slot in slots:
+        beste = editions.best_progress(slot, rows)
+        if beste is not None:
+            gevonden[slot.chosen.id] = beste
+    return gevonden
 
 
 @router.get("/{series_id}/continue", response_model=ContinueOut)
@@ -305,12 +596,18 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
     pagina. Is het uit, dan het eerstvolgende hoofdstuk dat nog niet uit is.
     """
     deps.get_series(session, series_id)
-    books = _readable_books(session, series_id)
-    if not books:
+    # Bewust over álle afleveringen, ook wat nog niet is opgehaald. Anders komt
+    # een serie die je grotendeels online volgt uit op het laatste bestand dat
+    # je toevallig hebt staan: bij One Piece hoofdstuk 3, terwijl je bij 124
+    # bent. Wat er nog niet is, wordt een ophaalknop — daar is ``has_file``
+    # voor.
+    slots = _all_slots(session, series_id)
+    if not slots:
         raise HTTPException(status_code=404, detail="deze serie heeft nog niets te lezen")
 
     user = current_user(session)
-    progress = deps.progress_for(session, user, [book.id for book in books])
+    books = [slot.chosen for slot in slots]
+    progress = _slot_progress(session, user, slots)
 
     anchor_index: int | None = None
     for index, book in enumerate(books):
@@ -348,6 +645,7 @@ def continue_reading(series_id: int, session: Session = Depends(get_session)) ->
         book_id=target.id,
         title=target.title,
         number=target.number,
+        has_file=target.file_id is not None,
         page=page if isinstance(page, int) and page >= 0 else 0,
         resuming=row is not None and row.percent > 0 and not row.finished,
         unread_before=unread_before,
@@ -370,8 +668,9 @@ def mark_read_before(
         raise HTTPException(status_code=400, detail="dit hoofdstuk hoort niet bij deze serie")
 
     user = current_user(session)
-    books = _readable_books(session, series_id)
-    progress = deps.progress_for(session, user, [book.id for book in books])
+    slots = _readable_slots(session, series_id)
+    books = [slot.chosen for slot in slots]
+    progress = _slot_progress(session, user, slots)
 
     marked = 0
     for book in books:
@@ -481,4 +780,237 @@ def merge_series(
     except merge_module.MergeError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return get_series(series_id, session)
+    return get_series(series_id, False, session)
+
+
+@router.get("/{series_id}/editions", response_model=list[EditionOut])
+def list_editions(series_id: int, session: Session = Depends(get_session)) -> list[EditionOut]:
+    """De uitgaven van deze serie, eerste keus vooraan."""
+    series = deps.get_series(series_id=series_id, session=session)
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    return _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    )
+
+
+@router.post("/{series_id}/editions/order", response_model=list[EditionOut])
+def order_editions(
+    series_id: int, payload: EditionOrderIn, session: Session = Depends(get_session)
+) -> list[EditionOut]:
+    """Bepaal welke uitgave wint waar er meerdere hetzelfde deel hebben.
+
+    Wat je niet noemt schuift er achteraan; zo hoeft een client die één uitgave
+    naar boven sleept niet de hele lijst mee te sturen.
+    """
+    series = deps.get_series(series_id=series_id, session=session)
+    per_id = {edition.id: edition for edition in series.editions}
+    onbekend = [edition_id for edition_id in payload.edition_ids if edition_id not in per_id]
+    if onbekend:
+        raise HTTPException(status_code=400, detail="die uitgave hoort niet bij deze serie")
+
+    rang = 0
+    for edition_id in payload.edition_ids:
+        per_id.pop(edition_id).rank = rang
+        rang += 1
+    for edition in sorted(per_id.values(), key=lambda edition: edition.rank):
+        edition.rank = rang
+        rang += 1
+    session.commit()
+
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    return _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    )
+
+
+@router.patch("/{series_id}/editions/{edition_id}", response_model=EditionOut)
+def rename_edition(
+    series_id: int,
+    edition_id: int,
+    payload: EditionPatch,
+    session: Session = Depends(get_session),
+) -> EditionOut:
+    """Een uitgave een naam geven die jou iets zegt: "kleur", "de mooie scan"."""
+    edition = session.get(Edition, edition_id)
+    if edition is None or edition.series_id != series_id:
+        raise HTTPException(status_code=404, detail="uitgave niet gevonden")
+    if payload.name is not None:
+        naam = payload.name.strip()
+        if not naam:
+            raise HTTPException(status_code=400, detail="een uitgave heeft een naam nodig")
+        edition.name = naam
+    if payload.note is not None:
+        edition.note = payload.note.strip() or None
+    session.commit()
+
+    series = deps.get_series(series_id=series_id, session=session)
+    books = list(series.books)
+    uitgaven = list(series.editions)
+    for regel in _editions_out(
+        uitgaven,
+        books,
+        editions.slots(books, uitgaven),
+        {key: value.language for key, value in _edition_traits(session, uitgaven).items()},
+    ):
+        if regel.id == edition.id:
+            return regel
+    raise HTTPException(status_code=404, detail="uitgave niet gevonden")
+
+
+@router.post("/{series_id}/slots", response_model=SeriesDetailOut)
+def bind_slot(
+    series_id: int, payload: BookSlotIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Zeg dat deze boeken dezelfde uitgave van hetzelfde zijn.
+
+    Bij hoofdstukken regelt het nummer dat vanzelf. Bij losse boeken niet: drie
+    drukken van hetzelfde boek heten net iets anders, en alleen jij weet dat het
+    er één is. Daarna gelden ze als één regel in je lijst, en telt gelezen in de
+    ene ook voor de andere.
+    """
+    deps.get_series(series_id=series_id, session=session)
+    if len(payload.book_ids) < 2:
+        raise HTTPException(status_code=400, detail="hier horen minstens twee boeken bij")
+
+    books = list(session.scalars(select(Book).where(Book.id.in_(payload.book_ids))))
+    if len(books) != len(set(payload.book_ids)):
+        raise HTTPException(status_code=404, detail="niet elk boek bestaat")
+    if any(book.series_id != series_id for book in books):
+        raise HTTPException(status_code=400, detail="deze boeken staan niet in dezelfde serie")
+
+    # De eerste bepaalt het slot: bestaat die al als groep, dan voegen de rest
+    # zich daarbij in plaats van dat er een nieuwe groep ontstaat.
+    sleutel = books[0].slot or editions.slot_of(books[0])
+    for book in books:
+        book.slot = sleutel
+    session.commit()
+    return get_series(series_id, False, session)
+
+
+@router.post("/{series_id}/slots/unbind", response_model=SeriesDetailOut)
+def unbind_slot(
+    series_id: int, payload: BookSlotIn, session: Session = Depends(get_session)
+) -> SeriesDetailOut:
+    """Haal boeken weer uit elkaar; ze krijgen hun eigen regel terug."""
+    deps.get_series(series_id=series_id, session=session)
+    books = list(session.scalars(select(Book).where(Book.id.in_(payload.book_ids))))
+    for book in books:
+        if book.series_id == series_id:
+            book.slot = None
+    session.commit()
+    return get_series(series_id, False, session)
+
+
+@router.post("/{series_id}/covers", response_model=SyncCoversOut)
+def sync_series_covers(series_id: int, session: Session = Depends(get_session)) -> SyncCoversOut:
+    """Haal de omslagen per deel op bij de bron.
+
+    Voor series die je al volgde voordat dit bestond, en voor wanneer een bron
+    er later betere heeft. Per uitgave apart: de gekleurde omslag hoort bij de
+    gekleurde delen, niet bij de zwart-witte.
+    """
+    series = deps.get_series(session, series_id)
+    abonnementen = list(
+        session.scalars(select(Subscription).where(Subscription.series_id == series_id))
+    )
+    if not abonnementen:
+        raise HTTPException(
+            status_code=409, detail="deze serie heeft geen bron om omslagen bij te halen"
+        )
+
+    resultaat = SyncCoversOut()
+    for subscription in abonnementen:
+        source_row = session.get(Source, subscription.source_id)
+        if source_row is None or not source_row.enabled:
+            continue
+        edition = session.scalar(select(Edition).where(Edition.subscription_id == subscription.id))
+        try:
+            implementation = deps.get_source_implementation(source_row)
+        except HTTPException as exc:
+            resultaat.errors.append(str(exc.detail))
+            continue
+
+        aantal = source_service.sync_covers(
+            session,
+            implementation,
+            series,
+            ref=subscription.source_ref or series.source_ref,
+            edition=edition,
+        )
+        if aantal:
+            resultaat.updated += aantal
+            resultaat.editions.append(f"{edition.name if edition else series.title} ({aantal})")
+
+    session.commit()
+    return resultaat
+
+
+@router.post("/{series_id}/titles", response_model=SyncCoversOut)
+def sync_series_titles(series_id: int, session: Session = Depends(get_session)) -> SyncCoversOut:
+    """Haal de hoofdstuktitels op bij de bron.
+
+    Een bestandsnaam als "Shin'ya Shokudou Chapter 01 - Yarō Abe.cbz" levert de
+    naam van de tekenaar op als titel; de bron weet dat het "Herring Roe" heet.
+    Wat hier binnenkomt wordt vastgezet, zodat een volgende scan er niet weer de
+    bestandsnaam overheen legt.
+    """
+    series = deps.get_series(session, series_id)
+    abonnementen = list(
+        session.scalars(select(Subscription).where(Subscription.series_id == series_id))
+    )
+    if not abonnementen and not series.source_ref:
+        raise HTTPException(
+            status_code=409, detail="deze serie heeft geen bron om titels bij te halen"
+        )
+
+    resultaat = SyncCoversOut()
+    boeken = list(session.scalars(select(Book).where(Book.series_id == series_id)))
+
+    for subscription in abonnementen:
+        source_row = session.get(Source, subscription.source_id)
+        ref = subscription.source_ref or series.source_ref
+        if source_row is None or not source_row.enabled or not ref:
+            continue
+        try:
+            implementation = deps.get_source_implementation(source_row)
+            hoofdstukken = implementation.chapters(ref, language=subscription.language)
+            # Volgt je deze reeks in een taal waarin niemand hem heeft
+            # geüpload, dan zijn er geen titels. Een Engelse titel is dan beter
+            # dan geen: het gaat om wát het hoofdstuk is, niet om de taal.
+            if not any(chapter.title for chapter in hoofdstukken) and subscription.language != "en":
+                hoofdstukken = implementation.chapters(ref, language="en")
+        except (HTTPException, SourceError) as exc:
+            resultaat.errors.append(str(getattr(exc, "detail", exc)))
+            continue
+
+        # Op nummer koppelen en niet op volgorde: je bibliotheek kan gaten
+        # hebben, en dan zou tellen de titels één opschuiven.
+        per_nummer = {
+            _sort_number(chapter.number): chapter.title
+            for chapter in hoofdstukken
+            if chapter.number and chapter.title
+        }
+        aantal = 0
+        for book in boeken:
+            titel = per_nummer.get(book.sort_number)
+            if titel and book.title != titel:
+                book.title = titel
+                book.title_locked = True
+                # Ook naast het bestand, zodat het een herinstallatie overleeft
+                # en meeverhuist als je de map ergens anders heen zet.
+                _remember_title(session, book, titel, lang=subscription.language)
+                aantal += 1
+        if aantal:
+            resultaat.updated += aantal
+            resultaat.editions.append(f"{source_row.name} ({aantal})")
+
+    session.commit()
+    return resultaat

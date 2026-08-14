@@ -6,6 +6,7 @@ op wat er níet mag gebeuren: niets overschrijven, niets weggooien.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -74,9 +75,7 @@ class TestNaming:
         series = Series(title="Shinya Shokudo", sort_title="s")
         assert target_dir(root, series).name == "Shinya Shokudo"
 
-    def test_unsafe_characters_are_stripped_from_the_folder(
-        self, session: Session, tmp_path: Path
-    ):
+    def test_unsafe_characters_are_stripped_from_the_folder(self, session: Session, tmp_path: Path):
         root = make_root(session, tmp_path / "manga", name="Manga")
         series = Series(title='Hij/Zij: "raar"', sort_title="h")
         assert "/" not in target_dir(root, series).name
@@ -103,15 +102,23 @@ class TestWritable:
         with pytest.raises(SourceError, match="bestaat niet"):
             check_writable(root)
 
-    def test_a_read_only_folder_names_the_likely_cause(self, session: Session, tmp_path: Path):
-        """Read-only aangekoppeld is de gangbare oorzaak; dat hoort in de
-        melding te staan in plaats van een kale OSError."""
+    def test_a_folder_you_may_not_write_in_names_the_command(
+        self, session: Session, tmp_path: Path
+    ):
+        """De melding hoort te zeggen wát je moet doen.
+
+        Geen schrijfrecht is iets anders dan read-only aangekoppeld: het eerste
+        los je op met chown, het tweede in compose.yml. Een kale OSError laat je
+        op de verkeerde plek zoeken.
+        """
         folder = tmp_path / "alleenlezen"
         folder.mkdir()
         folder.chmod(0o500)
         root = LibraryRoot(name="RO", path=str(folder))
         try:
-            with pytest.raises(SourceError, match=":ro"):
+            if os.access(folder, os.W_OK):
+                pytest.skip("deze test draait als root; dan mag alles toch")
+            with pytest.raises(SourceError, match="chown"):
                 check_writable(root)
         finally:
             folder.chmod(0o700)
@@ -212,3 +219,128 @@ class TestImport:
         report = import_series(session, FakeSource(), series, target, download_missing=False)
         assert report.moved == 1
         assert report.skipped == 1
+
+
+class TestImportingMakesItYours:
+    """Een vooruit opgehaald hoofdstuk is cache, geen eigen bestand.
+
+    Het staat er zolang het handig is en mag daarna weg. Importeren is precies
+    de handeling die er een eigen bestand van maakt — pas dán hoort het bij
+    "Eigen bestanden".
+    """
+
+    def _opzet(self, session: Session, tmp_path: Path):
+        from bookpal.models import Edition, Source, Subscription
+
+        bron = Source(type="mangadex", name="MD")
+        session.add(bron)
+        session.flush()
+        series = Series(title="Reeks", sort_title="reeks", source_id=bron.id)
+        session.add(series)
+        session.flush()
+        abo = Subscription(source_id=bron.id, series_id=series.id)
+        session.add(abo)
+        session.flush()
+        uitgave = Edition(series_id=series.id, name="Reeks via MD", rank=0, subscription_id=abo.id)
+        session.add(uitgave)
+        session.flush()
+
+        from tests.conftest import make_root
+
+        cache = tmp_path / "cache"
+        cache.mkdir()
+        cache_root = make_root(session, cache, name="Downloads")
+        session.flush()
+        pad = cache / "h1.cbz"
+        pad.write_bytes(b"PK\x03\x04nep")
+        bestand = File(
+            library_root_id=cache_root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            file_id=bestand.id,
+            source_id=bron.id,
+            source_ref="abc",
+            edition_id=uitgave.id,
+        )
+        session.add(boek)
+        session.flush()
+        return series, boek, uitgave
+
+    def test_a_cached_chapter_stays_with_its_subscription(self, session: Session, tmp_path: Path):
+        _series, boek, uitgave = self._opzet(session, tmp_path)
+        assert boek.edition_id == uitgave.id, "vooruit opgehaald is nog niet van jou"
+
+    def test_importing_moves_it_to_your_own_files(self, session: Session, tmp_path: Path):
+        from bookpal.library import editions
+        from bookpal.sources.importer import _move
+        from tests.conftest import make_root
+
+        series, boek, uitgave = self._opzet(session, tmp_path)
+        doel_map = tmp_path / "bibliotheek"
+        doel_map.mkdir()
+        root = make_root(session, doel_map, name="Strips")
+        session.flush()
+
+        verplaatst = _move(session, boek, doel_map / "Hoofdstuk 1.cbz", root)
+        session.flush()
+
+        assert verplaatst is True
+        assert boek.edition_id != uitgave.id
+        eigen = editions.for_local_files(session, series)
+        assert boek.edition_id == eigen.id
+
+
+class TestWhyItCannotWrite:
+    """De reden telt: read-only repareer je in compose, eigendom met chown.
+
+    "Permission denied" alleen laat je raden, en dan zoek je op de verkeerde
+    plek.
+    """
+
+    def test_a_missing_folder_says_so(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        assert "bestaat niet" in (why_not_writable(tmp_path / "weg") or "")
+
+    def test_a_writable_folder_has_no_problem(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        assert why_not_writable(tmp_path) is None
+
+    def test_a_folder_owned_by_someone_else_names_the_command(self, tmp_path: Path):
+        from bookpal.sources.importer import why_not_writable
+
+        vreemd = tmp_path / "vanroot"
+        vreemd.mkdir()
+        vreemd.chmod(0o555)
+        try:
+            reden = why_not_writable(vreemd)
+            if reden is None:
+                pytest.skip("deze test draait als root; dan mag alles toch")
+            assert "chown" in reden
+        finally:
+            vreemd.chmod(0o755)
+
+    def test_the_api_says_it_per_folder(self, client, session: Session, tmp_path: Path):
+        """Je hoort het te zien vóórdat je iets probeert te importeren."""
+        from tests.conftest import make_root
+
+        goed = tmp_path / "goed"
+        goed.mkdir()
+        make_root(session, goed, name="Goed")
+        session.commit()
+
+        [rij] = [r for r in client.get("/api/libraries").json() if r["name"] == "Goed"]
+        assert rij["writable"] is True
+        assert rij["write_problem"] is None

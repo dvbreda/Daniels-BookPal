@@ -71,9 +71,9 @@ class TestLiteReading:
         book_id = self._comic_book_id(scanned)
         response = scanned.get(f"/lite/books/{book_id}/read/0")
         assert response.status_code == 200
-        assert f'/api/books/{book_id}/pages/0' in response.text
-        assert f'/lite/books/{book_id}/read/1' in response.text
-        assert f'/lite/books/{book_id}/read/-1' not in response.text
+        assert f"/api/books/{book_id}/pages/0" in response.text
+        assert f"/lite/books/{book_id}/read/1" in response.text
+        assert f"/lite/books/{book_id}/read/-1" not in response.text
 
     def test_read_page_records_progress(self, scanned: TestClient):
         book_id = self._comic_book_id(scanned)
@@ -158,9 +158,7 @@ class TestLiteTranslation:
                 page_index=page,
                 target_lang=settings.translate_lang,
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.4, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.4, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -184,7 +182,7 @@ class TestLiteTranslation:
         book_id = self._comic_book_id(scanned)
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
-        assert f'/api/books/{book_id}/pages/0/overlay' in response.text
+        assert f"/api/books/{book_id}/pages/0/overlay" in response.text
         assert 'class="stack"' in response.text
         assert "Origineel" in response.text
 
@@ -193,7 +191,7 @@ class TestLiteTranslation:
         book_id = self._comic_book_id(scanned)
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
-        assert f'/lite/books/{book_id}/read/1?vertaal=1' in response.text
+        assert f"/lite/books/{book_id}/read/1?vertaal=1" in response.text
 
     def test_the_page_image_itself_is_not_baked(self, scanned: TestClient, session: Session):
         """De pagina blijft één gedeelde afbeelding; alleen de laag komt erbij.
@@ -202,3 +200,412 @@ class TestLiteTranslation:
         self._translate(session, book_id)
         response = scanned.get(f"/lite/books/{book_id}/read/0", params={"vertaal": 1})
         assert "translate=" not in response.text
+
+
+class TestHidingWhatYouRead:
+    """Op een Kobo scroll je niet graag langs honderd uitgelezen hoofdstukken."""
+
+    def _reeks(self, session: Session, aantal: int, gelezen: int, naam: str = "Reeks") -> Series:
+        from bookpal.db import current_user
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Progress
+
+        root = LibraryRoot(name=naam, path=f"/tmp/lite-{naam}")
+        session.add(root)
+        session.flush()
+        series = Series(title=naam, sort_title=naam.lower())
+        session.add(series)
+        session.flush()
+        for index in range(aantal):
+            bestand = File(
+                library_root_id=root.id,
+                path=f"/tmp/lite-{naam}/{index}.cbz",
+                size=1,
+                mtime=0.0,
+                extension=".cbz",
+            )
+            session.add(bestand)
+            session.flush()
+            boek = Book(
+                series_id=series.id,
+                kind=BookKind.COMIC,
+                title=f"Hoofdstuk {index + 1}",
+                number=str(index + 1),
+                sort_number=float(index + 1),
+                page_count=10,
+                file_id=bestand.id,
+            )
+            session.add(boek)
+            session.flush()
+            if index < gelezen:
+                session.add(
+                    Progress(
+                        user_id=current_user(session).id,
+                        book_id=boek.id,
+                        percent=100.0,
+                        finished=True,
+                    )
+                )
+        session.commit()
+        return series
+
+    def test_the_switch_hides_finished_chapters(self, client: TestClient, session: Session):
+        """Verbergen doet de stijl, niet de server.
+
+        Daardoor kan het schakelen zonder de pagina opnieuw op te halen — op
+        e-ink scheelt dat een volle schermverversing — en werkt het zonder
+        JavaScript nog steeds, want de klasse staat er dan al op.
+        """
+        series = self._reeks(session, 4, gelezen=2)
+
+        alles = client.get(f"/lite/series/{series.id}").text
+        assert 'class="verbergen"' not in alles
+        assert alles.count('class="uit"') + alles.count(' uit"') == 2
+
+        verborgen = client.get(f"/lite/series/{series.id}", params={"verberg": 1}).text
+        assert "verbergen" in verborgen.split("<ul")[1].split(">")[0]
+
+    def test_the_switch_stays_on_across_links(self, client: TestClient, session: Session):
+        """Onthouden in een cookie, niet in elke link.
+
+        Anders draagt elk kaartje de weergavekeuze mee, en moet het scriptje na
+        het omschakelen ook nog de hele lijst herschrijven.
+        """
+        self._reeks(session, 2, gelezen=1)
+        client.get("/lite", params={"verberg": 1})
+
+        volgende = client.get("/lite").text
+        assert "verbergen" in volgende.split('<ul id="lijst"')[1].split(">")[0]
+
+    def test_a_series_you_finished_is_marked(self, client: TestClient, session: Session):
+        self._reeks(session, 2, gelezen=2, naam="Uit")
+        self._reeks(session, 2, gelezen=1, naam="Bezig")
+
+        pagina = client.get("/lite", params={"verberg": 1}).text
+        # Beide staan er; de stijl bepaalt wat je ziet.
+        assert "Bezig" in pagina and "Uit" in pagina
+        uitgelezen = [regel for regel in pagina.split("<li") if ">Uit<" in regel]
+        assert uitgelezen and "uit" in uitgelezen[0].split(">")[0]
+
+    def test_without_the_switch_everything_is_there(self, client: TestClient, session: Session):
+        self._reeks(session, 2, gelezen=2, naam="Uit")
+        pagina = client.get("/lite").text
+        assert "Uit" in pagina
+
+    def test_the_switch_offers_the_way_back(self, client: TestClient, session: Session):
+        self._reeks(session, 1, gelezen=0)
+        aan = client.get("/lite", params={"verberg": 1}).text
+        assert "Alles tonen" in aan
+        uit = client.get("/lite").text
+        assert "Gelezen verbergen" in uit
+
+
+class TestReadingOptions:
+    """Wat de Kobo wél aankan: bijsnijden en contrast, op de server gedaan."""
+
+    def _boek(self, session: Session, client: TestClient):
+        from bookpal.db import current_user  # noqa: F401 - houdt de gebruiker aan
+
+        response = client.get("/lite")
+        assert response.status_code == 200
+
+    def test_the_options_travel_along_in_every_link(
+        self, client: TestClient, scanned_series: int | None = None
+    ):
+        """Zonder JavaScript is de URL de enige plek waar een stand kan wonen."""
+        pagina = client.get("/lite", params={"snij": 1, "contrast": 130}).text
+        assert "snij=1" in pagina
+        assert "contrast=130" in pagina
+
+    def test_the_library_shows_covers(self, client: TestClient, session: Session):
+        series = Series(title="Met omslag", sort_title="met omslag")
+        session.add(series)
+        session.commit()
+
+        pagina = client.get("/lite").text
+        assert f"/api/series/{series.id}/cover" in pagina
+
+
+class TestLiteHomeAndGrid:
+    """Een startpagina die je terugbrengt, en omslagen als je die wilt zien."""
+
+    def _bezig(self, session: Session):
+        from bookpal.db import current_user
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Progress
+
+        root = LibraryRoot(name="R", path="/tmp/lite-home")
+        session.add(root)
+        session.flush()
+        series = Series(title="Bezig", sort_title="bezig")
+        session.add(series)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path="/tmp/lite-home/1.cbz",
+            size=1,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            page_count=20,
+            file_id=bestand.id,
+        )
+        session.add(boek)
+        session.flush()
+        session.add(
+            Progress(
+                user_id=current_user(session).id,
+                book_id=boek.id,
+                percent=35.0,
+                finished=False,
+                position={"page": 7},
+            )
+        )
+        session.commit()
+        return series, boek
+
+    def test_the_home_takes_you_back_to_your_page(self, client: TestClient, session: Session):
+        _series, boek = self._bezig(session)
+        pagina = client.get("/lite").text
+        assert "Verder lezen · pagina 8" in pagina
+        assert f"/lite/books/{boek.id}/read/7" in pagina
+
+    def test_without_progress_there_is_no_block(self, client: TestClient, session: Session):
+        session.add(Series(title="Niets", sort_title="niets"))
+        session.commit()
+        assert 'class="hero"' not in client.get("/lite").text
+
+    def test_a_series_can_be_shown_as_a_grid(self, client: TestClient, session: Session):
+        series, _boek = self._bezig(session)
+
+        lijst = client.get(f"/lite/series/{series.id}").text
+        assert "lijst" in lijst.split('<ul id="lijst"')[1].split(">")[0]
+        assert "Als raster" in lijst
+
+        raster = client.get(f"/lite/series/{series.id}", params={"raster": 1}).text
+        assert "raster" in raster.split('<ul id="lijst"')[1].split(">")[0]
+        assert "Als lijst" in raster
+
+    def test_the_view_choice_travels_along(self, client: TestClient, session: Session):
+        """Anders val je terug in de lijst zodra je een serie opent."""
+        series, _boek = self._bezig(session)
+        client.get(f"/lite/series/{series.id}", params={"raster": 1})
+
+        volgende = client.get("/lite").text
+        assert "raster" in volgende.split('<ul id="lijst"')[1].split(">")[0]
+
+
+class TestNoWebpForTheKobo:
+    """De browser van een Kobo kent geen webp; dan blijft er een leeg vlak staan."""
+
+    def test_page_images_ask_for_a_png_profile(self, client: TestClient, session: Session):
+        from bookpal.images import PROFILES
+
+        _series, boek = TestLiteHomeAndGrid()._bezig(session)
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        import re
+
+        for src in re.findall(r'src="(/api/books/[^"]+)"', pagina):
+            assert "profile=" in src, src
+            naam = src.split("profile=")[1].split("&")[0]
+            assert PROFILES[naam].format != "webp", naam
+
+    def test_covers_ask_for_a_png_profile(self, client: TestClient, session: Session):
+        from bookpal.images import PROFILES
+
+        TestLiteHomeAndGrid()._bezig(session)
+        h = client.get("/lite").text
+        naam = h.split("cover?profile=")[1].split('"')[0]
+        assert PROFILES[naam].format != "webp"
+
+    def test_asking_for_a_webp_profile_still_gets_you_a_picture(
+        self, client: TestClient, session: Session
+    ):
+        """Een plaatje dat er is weegt zwaarder dan een paar kilobyte verschil."""
+        _series, boek = TestLiteHomeAndGrid()._bezig(session)
+        import re
+
+        from bookpal.images import PROFILES
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0", params={"profile": "web"}).text
+        srcs = re.findall(r'src="/api/books/[^"]*profile=([^"&]+)', pagina)
+        assert srcs, "er hoort een pagina-plaatje te staan"
+        assert all(PROFILES[naam].format != "webp" for naam in srcs)
+
+
+class TestOldWebkitLayout:
+    """De browser van een Kobo is QtWebKit uit ongeveer 2012.
+
+    Die kent geen flexbox: `display: flex` valt daar terug op `block`, en dan
+    wordt een raster een kolom. Deze test bewaakt dat we het niet per ongeluk
+    weer gebruiken.
+    """
+
+    def test_the_stylesheet_has_no_flexbox(self, client: TestClient):
+        stijl = client.get("/lite").text
+        import re
+
+        blok = stijl.split("<style>")[1].split("</style>")[0]
+        # In commentaar mag het woord staan; als eigenschap niet.
+        code = re.sub(r"/\*.*?\*/", "", blok, flags=re.S)
+        assert "display: flex" not in code
+        assert "gap:" not in code
+        assert "flex:" not in code
+
+    def test_grid_cards_sit_next_to_each_other(self, client: TestClient, session: Session):
+        """inline-block in plaats van flex, en elke derde zonder rechtermarge."""
+        for naam in ("Een", "Twee", "Drie", "Vier"):
+            session.add(Series(title=naam, sort_title=naam.lower()))
+        session.commit()
+
+        pagina = client.get("/lite", params={"raster": 1}).text
+        assert "raster" in pagina.split("<ul")[1].split(">")[0]
+        derde = [regel for regel in pagina.split("<li") if "derde" in regel.split(">")[0]]
+        assert len(derde) == 1
+
+
+class TestGridOnTheHome:
+    def test_the_library_can_be_a_grid_too(self, client: TestClient, session: Session):
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+
+        lijst = client.get("/lite").text
+        assert "Als raster" in lijst
+        assert "lijst" in lijst.split('<ul id="lijst"')[1].split(">")[0]
+
+        raster = client.get("/lite", params={"raster": 1}).text
+        assert "raster" in raster.split('<ul id="lijst"')[1].split(">")[0]
+        assert "Als lijst" in raster
+
+    def test_the_choice_travels_into_a_series(self, client: TestClient, session: Session):
+        series = Series(title="Iets", sort_title="iets")
+        session.add(series)
+        session.commit()
+
+        client.get("/lite", params={"raster": 1})
+        binnen = client.get(f"/lite/series/{series.id}").text
+        assert "raster" in binnen.split('<ul id="lijst"')[1].split(">")[0]
+
+
+class TestProgressiveEnhancement:
+    """Het scriptje is een extraatje; zonder werkt alles nog.
+
+    De browser van een Kobo heeft wél JavaScript, maar een oude engine. Eén
+    onbekend woord en het hele blok doet niets — dus geen pijlfuncties, geen
+    let, geen template-strings, geen classList.
+    """
+
+    def _script(self, client: TestClient) -> str:
+        return client.get("/lite").text.split("<script>")[1].split("</script>")[0]
+
+    def test_it_stays_within_what_an_old_engine_knows(self, client: TestClient):
+        script = self._script(client)
+        assert "=>" not in script
+        assert "let " not in script
+        assert "const " not in script
+        assert "`" not in script
+        assert "classList" not in script
+        assert "fetch(" not in script
+        assert "addEventListener" not in script
+
+    def test_it_hooks_onto_the_buttons_that_exist(self, client: TestClient, session: Session):
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+        pagina = client.get("/lite").text
+        assert 'id="knop-raster"' in pagina
+        assert 'id="lijst"' in pagina
+
+    def test_the_buttons_are_still_ordinary_links(self, client: TestClient, session: Session):
+        """Zonder JavaScript moet dezelfde knop het gewoon doen."""
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+        pagina = client.get("/lite").text
+        knop = next(deel for deel in pagina.split("<a ") if 'id="knop-raster"' in deel)
+        assert 'href="/lite?raster=1"' in knop
+
+    def test_both_views_send_the_same_cards(self, client: TestClient, session: Session):
+        """Anders valt er niets om te schakelen zonder herladen."""
+        session.add(Series(title="Iets", sort_title="iets"))
+        session.commit()
+
+        def kaarten(query: dict) -> str:
+            h = client.get("/lite", params=query).text
+            return h.split('<ul id="lijst"')[1].split(">", 1)[1]
+
+        assert kaarten({}) == kaarten({"raster": 1})
+
+
+class TestLiteShowsTheBestTranslation:
+    """Een hertekende pagina gold in Lite als onvertaald.
+
+    De controle keek hardgecodeerd naar de tekststand, dus het dure werk van het
+    beeldmodel werd nooit getoond.
+    """
+
+    def _boek_met_hertekende_pagina(self, session: Session):
+        from bookpal.db import current_user  # noqa: F401 - houdt de gebruiker aan
+        from bookpal.models import Book, BookKind, File, LibraryRoot, Translation
+
+        root = LibraryRoot(name="R", path="/tmp/lite-vertaald")
+        session.add(root)
+        session.flush()
+        series = Series(title="Vertaald", sort_title="vertaald")
+        session.add(series)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path="/tmp/lite-vertaald/1.cbz",
+            size=1,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Hoofdstuk 1",
+            number="1",
+            sort_number=1.0,
+            page_count=10,
+            file_id=bestand.id,
+        )
+        session.add(boek)
+        session.flush()
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=0,
+                target_lang=settings.translate_lang,
+                provider="gemini-image-pro",
+                payload={"full_page": True, "model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+        return boek
+
+    def test_a_redrawn_page_replaces_the_image(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0", params={"vertaal": 1}).text
+        assert f"/api/books/{boek.id}/pages/0/full" in pagina
+        assert "/overlay" not in pagina, "geen laag eroverheen; dan staat tekst dubbel"
+
+    def test_it_is_offered_at_all(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        assert "Vertaling" in pagina, "er ligt iets klaar, dus dat hoort aangeboden te worden"
+
+    def test_without_the_switch_you_see_the_original(self, client: TestClient, session: Session):
+        boek = self._boek_met_hertekende_pagina(session)
+
+        pagina = client.get(f"/lite/books/{boek.id}/read/0").text
+        assert f"/api/books/{boek.id}/pages/0?" in pagina
+        assert f"/api/books/{boek.id}/pages/0/full" not in pagina

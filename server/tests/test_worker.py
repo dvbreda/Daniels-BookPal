@@ -162,16 +162,14 @@ class TestRunOnce:
 
     def test_refresh_and_download(self, session: Session, temp_settings: Path, monkeypatch):
         """Volledige ronde tegen de nagebootste bron."""
-        monkeypatch.setattr(worker, "get_source", lambda _type: make_source())
+        monkeypatch.setattr(worker, "get_source", lambda _type, _config=None: make_source())
 
         source_row = Source(type="mangadex", name="MangaDex")
         session.add(source_row)
         session.flush()
         from bookpal.sources import service as source_service
 
-        _, subscription, _ = source_service.subscribe(
-            session, source_row, make_source(), MANGA_ID
-        )
+        _, subscription, _ = source_service.subscribe(session, source_row, make_source(), MANGA_ID)
         subscription.readahead_n = 1
         session.commit()
 
@@ -185,7 +183,7 @@ class TestRunOnce:
     def test_download_false_only_refreshes(
         self, session: Session, temp_settings: Path, monkeypatch
     ):
-        monkeypatch.setattr(worker, "get_source", lambda _type: make_source())
+        monkeypatch.setattr(worker, "get_source", lambda _type, _config=None: make_source())
 
         source_row = Source(type="mangadex", name="MangaDex")
         session.add(source_row)
@@ -204,7 +202,7 @@ class TestRunOnce:
     ):
         """Metadata die pas later bij de bron goed komt te staan — auteur,
         omslag, tracker-ids — moet een ronde later alsnog binnenkomen."""
-        monkeypatch.setattr(worker, "get_source", lambda _type: make_source())
+        monkeypatch.setattr(worker, "get_source", lambda _type, _config=None: make_source())
         source_row = Source(type="mangadex", name="MangaDex")
         session.add(source_row)
         session.flush()
@@ -246,13 +244,13 @@ class TestRunOnce:
             def download(self, *args, **kwargs):
                 raise SourceError("bron plat")
 
-        monkeypatch.setattr(worker, "get_source", lambda _type: Kapot())
+        monkeypatch.setattr(worker, "get_source", lambda _type, _config=None: Kapot())
         report = worker.run_once(session)
         assert report.errors
         assert report.downloaded == 0
 
     def test_a_disabled_source_is_skipped(self, session: Session, temp_settings: Path, monkeypatch):
-        monkeypatch.setattr(worker, "get_source", lambda _type: make_source())
+        monkeypatch.setattr(worker, "get_source", lambda _type, _config=None: make_source())
         source_row = Source(type="mangadex", name="MangaDex")
         session.add(source_row)
         session.flush()

@@ -1,94 +1,187 @@
-"""OPDS 1.2: catalogfeed voor apps die dat al spreken."""
+"""OPDS als bron: de plek waar je zelf een catalogus toevoegt.
+
+OPDS is de standaard waarmee bibliotheken hun catalogus publiceren — Kavita,
+Komga, Calibre-web, Standard Ebooks, en BookPal zelf. Wat hier vastligt is dat
+één adres genoeg is, en dat een adres dat geen OPDS geeft dat meteen zegt.
+"""
 
 from __future__ import annotations
 
-from fastapi.testclient import TestClient
-from lxml import etree
+from pathlib import Path
 
-ATOM_NS = "http://www.w3.org/2005/Atom"
+import httpx
+import pytest
+
+from bookpal.sources.base import SourceError
+from bookpal.sources.opds import OpdsSource
+
+WORTEL = "https://catalogus.test/opds"
+
+_ZOEKBESCHRIJVING = """<?xml version="1.0"?>
+<OpenSearchDescription xmlns="http://a9.com/-/spec/opensearch/1.1/">
+  <Url type="application/atom+xml" template="https://catalogus.test/zoek?q={searchTerms}"/>
+</OpenSearchDescription>"""
+
+_FEED = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:dcterms="http://purl.org/dc/terms/">
+  <title>Mijn catalogus</title>
+  <link rel="search" type="application/opensearchdescription+xml" href="/zoek.xml"/>
+  <entry>
+    <title>Shinya Shokudo</title>
+    <id>urn:reeks:1</id>
+    <author><name>Abe Yarou</name></author>
+    <summary>Een kroeg die 's nachts open is.</summary>
+    <dcterms:issued>2007-01-01</dcterms:issued>
+    <link rel="http://opds-spec.org/image" href="/omslag/1.jpg" type="image/jpeg"/>
+    <link rel="subsection" type="application/atom+xml" href="/reeks/1"/>
+  </entry>
+  <entry>
+    <title>Iets anders</title>
+    <id>urn:reeks:2</id>
+    <link rel="subsection" type="application/atom+xml" href="/reeks/2"/>
+  </entry>
+</feed>"""
+
+_REEKS = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Shinya Shokudo</title>
+  <entry>
+    <title>Deel 1</title>
+    <updated>2026-01-01T00:00:00Z</updated>
+    <link rel="http://opds-spec.org/acquisition" href="/bestand/1.cbz" type="application/x-cbz"/>
+    <link rel="http://opds-spec.org/acquisition" href="/bestand/1.pdf" type="application/pdf"/>
+  </entry>
+  <entry>
+    <title>Deel 2</title>
+    <link rel="http://opds-spec.org/acquisition" href="/bestand/2.cbz" type="application/x-cbz"/>
+  </entry>
+</feed>"""
 
 
-def _entries(xml_bytes: bytes) -> list[etree._Element]:
-    root = etree.fromstring(xml_bytes)
-    return root.findall(f"{{{ATOM_NS}}}entry")
+def _bron(handler=None, **opties) -> OpdsSource:
+    def standaard(request: httpx.Request) -> httpx.Response:
+        pad = request.url.path
+        if pad == "/opds":
+            return httpx.Response(200, content=_FEED.encode())
+        if pad == "/zoek.xml":
+            return httpx.Response(200, content=_ZOEKBESCHRIJVING.encode())
+        if pad == "/zoek":
+            return httpx.Response(200, content=_FEED.encode())
+        if pad.startswith("/reeks/"):
+            return httpx.Response(200, content=_REEKS.encode())
+        if pad.startswith("/bestand/"):
+            return httpx.Response(200, content=b"cbz-inhoud")
+        return httpx.Response(404)
+
+    return OpdsSource(
+        WORTEL,
+        client=httpx.Client(transport=httpx.MockTransport(handler or standaard)),
+        rate=1000.0,
+        **opties,
+    )
 
 
-class TestOpdsRoot:
-    def test_root_is_a_navigation_feed(self, scanned: TestClient):
-        response = scanned.get("/opds")
-        assert response.status_code == 200
-        assert response.headers["content-type"].startswith("application/atom+xml")
-        root = etree.fromstring(response.content)
-        assert root.tag == f"{{{ATOM_NS}}}feed"
+class TestSearching:
+    def test_a_catalog_entry_becomes_a_hit(self):
+        treffers = _bron().search("shinya")
+        assert treffers[0].title == "Shinya Shokudo"
+        assert treffers[0].authors == ["Abe Yarou"]
+        assert treffers[0].year == 2007
+        assert treffers[0].cover_url == "https://catalogus.test/omslag/1.jpg"
 
-    def test_root_lists_series_as_subsections(self, scanned: TestClient):
-        response = scanned.get("/opds")
-        entries = _entries(response.content)
-        titles = {e.findtext(f"{{{ATOM_NS}}}title") for e in entries}
-        assert titles == {"Storm", "Tesuto", "Een Testboek", "Een Testdocument"}
-        for entry in entries:
-            link = entry.find(f"{{{ATOM_NS}}}link")
-            assert link.get("rel") == "subsection"
-            assert link.get("href").startswith("/opds/series/")
+    def test_the_ref_is_a_full_address(self):
+        """Dan is elk vervolg zelfstandig op te halen."""
+        [eerste, _tweede] = _bron().search("shinya")
+        assert eerste.ref == "https://catalogus.test/reeks/1"
 
-    def test_pagination_link(self, scanned: TestClient):
-        response = scanned.get("/opds", params={"limit": 2})
-        root = etree.fromstring(response.content)
-        rels = {
-            link.get("rel")
-            for link in root.findall(f"{{{ATOM_NS}}}link")
-        }
-        assert "next" in rels
-        assert "previous" not in rels
+    def test_the_catalog_own_search_is_used(self):
+        gezien: list[str] = []
 
+        def handler(request: httpx.Request) -> httpx.Response:
+            gezien.append(str(request.url))
+            if request.url.path == "/opds":
+                return httpx.Response(200, content=_FEED.encode())
+            if request.url.path == "/zoek.xml":
+                return httpx.Response(200, content=_ZOEKBESCHRIJVING.encode())
+            return httpx.Response(200, content=_FEED.encode())
 
-class TestOpdsSeries:
-    def _series_id(self, client: TestClient, title: str) -> int:
-        return next(
-            item["id"]
-            for item in client.get("/api/series").json()["items"]
-            if item["title"] == title
+        _bron(handler).search("shinya shokudo")
+        assert any("q=shinya%20shokudo" in url for url in gezien)
+
+    def test_without_a_search_link_the_root_is_filtered(self):
+        """Iets teruggeven is beter dan een foutmelding."""
+        kaal = _FEED.replace(
+            '<link rel="search" type="application/opensearchdescription+xml" href="/zoek.xml"/>',
+            "",
         )
 
-    def test_series_feed_is_acquisition(self, scanned: TestClient):
-        series_id = self._series_id(scanned, "Storm")
-        response = scanned.get(f"/opds/series/{series_id}")
-        assert response.status_code == 200
-        entries = _entries(response.content)
-        assert len(entries) == 2
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=kaal.encode())
 
-    def test_entry_has_acquisition_and_thumbnail_links(self, scanned: TestClient):
-        series_id = self._series_id(scanned, "Storm")
-        response = scanned.get(f"/opds/series/{series_id}")
-        entry = _entries(response.content)[0]
-        links = entry.findall(f"{{{ATOM_NS}}}link")
-        rels = {link.get("rel") for link in links}
-        assert "http://opds-spec.org/acquisition" in rels
-        assert "http://opds-spec.org/image/thumbnail" in rels
+        treffers = _bron(handler).search("anders")
+        assert [t.title for t in treffers] == ["Iets anders"]
 
-        acquisition = next(
-            link for link in links if link.get("rel") == "http://opds-spec.org/acquisition"
-        )
-        assert acquisition.get("type") == "application/vnd.comicbook+zip"
-        assert acquisition.get("href").endswith("/file")
 
-    def test_acquisition_link_is_downloadable(self, scanned: TestClient):
-        series_id = self._series_id(scanned, "Storm")
-        feed = scanned.get(f"/opds/series/{series_id}")
-        href = _entries(feed.content)[0].find(f"{{{ATOM_NS}}}link").get("href")
-        download = scanned.get(href)
-        assert download.status_code == 200
-        assert download.content.startswith(b"PK")
+class TestChapters:
+    def test_the_files_under_an_entry_become_chapters(self):
+        delen = _bron().chapters("https://catalogus.test/reeks/1")
+        assert [deel.title for deel in delen] == ["Deel 1", "Deel 2"]
 
-    def test_epub_gets_epub_media_type(self, scanned: TestClient):
-        series_id = self._series_id(scanned, "Een Testboek")
-        entry = _entries(scanned.get(f"/opds/series/{series_id}").content)[0]
-        acquisition = next(
-            link
-            for link in entry.findall(f"{{{ATOM_NS}}}link")
-            if link.get("rel") == "http://opds-spec.org/acquisition"
-        )
-        assert acquisition.get("type") == "application/epub+zip"
+    def test_a_format_we_can_read_wins(self):
+        """Hetzelfde deel staat er vaak in meerdere vormen bij."""
+        [eerste, _tweede] = _bron().chapters("https://catalogus.test/reeks/1")
+        assert eerste.ref.endswith(".cbz")
 
-    def test_unknown_series_is_404(self, scanned: TestClient):
-        assert scanned.get("/opds/series/9999").status_code == 404
+
+class TestDownloading:
+    def test_a_file_lands_on_disk(self, tmp_path: Path):
+        doel = tmp_path / "deel.cbz"
+        _bron().download("https://catalogus.test/bestand/1.cbz", doel)
+        assert doel.read_bytes() == b"cbz-inhoud"
+
+    def test_nothing_half_is_left_behind(self, tmp_path: Path):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(500)
+
+        with pytest.raises(SourceError):
+            _bron(handler).download("https://catalogus.test/bestand/1.cbz", tmp_path / "x.cbz")
+        assert list(tmp_path.iterdir()) == []
+
+
+class TestWhenItGoesWrong:
+    def test_an_address_that_is_not_opds_says_so(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=b"<html>hallo</html>")
+
+        with pytest.raises(SourceError, match="geen OPDS"):
+            _bron(handler).search("iets")
+
+    def test_a_catalog_behind_a_login_says_so(self):
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(401)
+
+        with pytest.raises(SourceError, match="gebruikersnaam"):
+            _bron(handler).search("iets")
+
+    def test_without_an_address_it_refuses_to_start(self):
+        with pytest.raises(SourceError, match="catalogus-adres"):
+            OpdsSource("")
+
+    def test_an_entity_in_the_feed_cannot_read_our_files(self, tmp_path: Path):
+        """Een feed van buiten mag geen bestanden van deze machine opvragen."""
+        geheim = tmp_path / "geheim.txt"
+        geheim.write_text("wachtwoord", encoding="utf-8")
+        kwaad = f"""<?xml version="1.0"?>
+        <!DOCTYPE feed [<!ENTITY xxe SYSTEM "file://{geheim}">]>
+        <feed xmlns="http://www.w3.org/2005/Atom">
+          <entry><title>&xxe;</title><id>1</id></entry>
+        </feed>"""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, content=kwaad.encode())
+
+        try:
+            treffers = _bron(handler).search("iets")
+        except SourceError:
+            return  # geweigerd is ook goed
+        assert all("wachtwoord" not in (t.title or "") for t in treffers)

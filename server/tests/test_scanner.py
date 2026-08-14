@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from bookpal.formats.base import BookMetadata
 from bookpal.library.scanner import ScanAborted, scan_all, scan_root
 from bookpal.metadata.filename import normalise_number, parse_filename, sort_title
 from bookpal.models import Book, BookKind, File, OriginRegion, OriginSource, Series
@@ -51,9 +52,11 @@ class TestFilenameParsing:
         assert normalise_number(None) == float("inf")
 
     def test_sort_title_ignores_articles(self):
-        assert sort_title("De Testreeks") == "Testreeks"
-        assert sort_title("The Sandman") == "Sandman"
-        assert sort_title("Blake en Mortimer") == "Blake en Mortimer"
+        # Kleine letters, want SQLite sorteert op tekencode: anders komt
+        # "Claire" vóór "crayon" en valt de lijst in tweeën.
+        assert sort_title("De Testreeks") == "testreeks"
+        assert sort_title("The Sandman") == "sandman"
+        assert sort_title("Blake en Mortimer") == "blake en mortimer"
 
 
 class TestScanning:
@@ -209,7 +212,7 @@ class TestSeriesGrouping:
         series = session.scalars(select(Series)).all()
         assert len(series) == 1
         assert series[0].title == "De Testreeks"
-        assert series[0].sort_title == "Testreeks"
+        assert series[0].sort_title == "testreeks"
 
     def test_books_are_ordered_by_number(self, session: Session, library_root: Path):
         for number in ("10", "2", "1"):
@@ -305,9 +308,7 @@ class TestSeriesGrouping:
 
 
 class TestAuthorsDuringScan:
-    def test_writer_from_comicinfo_lands_on_the_series(
-        self, session: Session, library_root: Path
-    ):
+    def test_writer_from_comicinfo_lands_on_the_series(self, session: Session, library_root: Path):
         make_cbz(library_root / "a.cbz", pages=1, comicinfo=comicinfo_xml(series="Storm"))
         root = make_root(session, library_root)
         scan_root(session, root)
@@ -434,3 +435,49 @@ class TestOriginDuringScan:
         }
         assert by_region[OriginRegion.EUROPE] == "Storm"
         assert by_region[OriginRegion.JAPAN] == "Tesuto"
+
+
+class TestChapterTitles:
+    """Veel scanlations heten "Reeks Chapter 01 - Tekenaar.cbz"."""
+
+    def test_the_artist_is_not_a_chapter_title(self, session, tmp_path):
+        from bookpal.library.scanner import _chapter_title
+        from bookpal.metadata import parse_filename
+        from bookpal.models import Series
+
+        series = Series(title="Shinya Shokudo", sort_title="s")
+        series.authors = ["Abe Yarou"]
+        parsed = parse_filename("Shin'ya Shokudou Chapter 01 - Yarō Abe")
+        titel = _chapter_title(BookMetadata(), parsed, tmp_path / "x.cbz", series, parsed.number)
+        assert titel == "Hoofdstuk 01"
+
+    def test_a_real_title_is_kept(self, session, tmp_path):
+        from bookpal.library.scanner import _chapter_title
+        from bookpal.metadata import parse_filename
+        from bookpal.models import Series
+
+        series = Series(title="Shinya Shokudo", sort_title="s")
+        series.authors = ["Abe Yarou"]
+        parsed = parse_filename("Shinya Shokudou Chapter 59 - Herring Roe")
+        titel = _chapter_title(BookMetadata(), parsed, tmp_path / "x.cbz", series, parsed.number)
+        assert titel == "Herring Roe"
+
+    def test_the_name_reversed_counts_too(self, session, tmp_path):
+        """ "Yarō Abe" in de bestandsnaam, "Abe Yarou" bij de bron."""
+        from bookpal.library.scanner import _is_author
+        from bookpal.models import Series
+
+        series = Series(title="X", sort_title="x")
+        series.authors = ["Abe Yarou"]
+        assert _is_author("Yarou Abe", series) is True
+        assert _is_author("Herring Roe", series) is False
+
+    def test_without_authors_nothing_is_dropped(self, session, tmp_path):
+        from bookpal.library.scanner import _chapter_title
+        from bookpal.metadata import parse_filename
+        from bookpal.models import Series
+
+        series = Series(title="X", sort_title="x")
+        parsed = parse_filename("X Chapter 01 - Iets")
+        titel = _chapter_title(BookMetadata(), parsed, tmp_path / "x.cbz", series, parsed.number)
+        assert titel == "Iets"

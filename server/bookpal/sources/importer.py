@@ -21,7 +21,9 @@ oude.
 
 from __future__ import annotations
 
+import errno
 import logging
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,6 +31,7 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from bookpal.library import editions
 from bookpal.models import Book, File, LibraryRoot, Series
 from bookpal.sources.base import Source as SourceImpl
 from bookpal.sources.base import SourceError
@@ -76,24 +79,51 @@ def target_name(series: Series, book: Book) -> str:
     return " - ".join(parts) + ".cbz"
 
 
-def check_writable(root: LibraryRoot) -> None:
-    """Vroeg en duidelijk falen als de map read-only is aangekoppeld.
+def why_not_writable(path: Path) -> str | None:
+    """Waarom er niet in deze map geschreven kan worden, in gewone taal.
 
-    Anders zou het importeren pas bij het eerste hoofdstuk stuklopen, met een
-    halve serie op schijf.
+    ``None`` als het gewoon kan. De reden telt, want de oplossing verschilt:
+    een read-only aankoppeling repareer je in compose, en een map die van root
+    is repareer je met chown. "Permission denied" alleen laat je raden.
+
+    Let op het verschil tussen de map en wat erin staat: een bibliotheekmap kan
+    van root zijn terwijl de series-submappen van jou zijn. Dan lukt schrijven
+    naast bestaande bestanden prima en mislukt alleen het aanmaken van iets
+    nieuws — precies het soort halve werking waar je uren naar zoekt.
     """
-    path = Path(root.path)
     if not path.is_dir():
-        raise SourceError(f"de map {root.path} bestaat niet")
+        return f"de map {path} bestaat niet"
+
     probe = path / ".bookpal-schrijftest"
     try:
         probe.write_bytes(b"")
         probe.unlink()
     except OSError as exc:
-        raise SourceError(
-            f"er kan niet geschreven worden in {root.path}: {exc}. "
-            "Staat de map in compose.yml nog op ':ro'?"
-        ) from exc
+        if exc.errno == errno.EROFS:
+            return (
+                f"{path} is read-only aangekoppeld; haal ':ro' weg in compose.yml "
+                "en start de container opnieuw"
+            )
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            info = path.stat()
+            return (
+                f"{path} is van uid {info.st_uid}:{info.st_gid} en wij draaien als "
+                f"{os.getuid()}:{os.getgid()}. Draai op de NAS: "
+                f"chown {os.getuid()}:{os.getgid()} <de map>"
+            )
+        return f"er kan niet geschreven worden in {path}: {exc}"
+    return None
+
+
+def check_writable(root: LibraryRoot) -> None:
+    """Vroeg en duidelijk falen als er niet geschreven kan worden.
+
+    Anders zou het importeren pas bij het eerste hoofdstuk stuklopen, met een
+    halve serie op schijf.
+    """
+    reden = why_not_writable(Path(root.path))
+    if reden is not None:
+        raise SourceError(reden)
 
 
 def import_series(
@@ -180,4 +210,12 @@ def _move(session: Session, book: Book, destination: Path, root: LibraryRoot) ->
     file_row.mtime = stat.st_mtime
     # Blijvend: de TTL van het vooruitlezen geldt hier niet meer voor.
     book.expires_at = None
+
+    # En hiermee is het van jou. Een hoofdstuk dat een abonnement vooruit heeft
+    # gehaald is cache: het staat er zolang het handig is en mag daarna weg.
+    # Importeren is precies de handeling die daar een eigen bestand van maakt,
+    # dus verhuist het boek nu ook naar de uitgave "Eigen bestanden".
+    series = session.get(Series, book.series_id)
+    if series is not None:
+        book.edition_id = editions.for_local_files(session, series).id
     return True

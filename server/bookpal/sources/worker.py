@@ -120,12 +120,17 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
             continue
 
         try:
-            implementation = get_source(source_row.type)
+            implementation = get_source(source_row.type, source_row.config)
         except SourceError as exc:
             report.errors.append(f"{source_row.name}: {exc}")
             continue
 
-        if refresh and series.source_ref:
+        # De reeks van dít abonnement. Een serie kan er meerdere hebben — een
+        # gekleurde uitgave naast de zwart-witte — en dan wijst Series.source_ref
+        # er maar naar één. Zonder dit onderscheid haalt elk abonnement de
+        # hoofdstukken van dezelfde reeks op.
+        ref = subscription.source_ref or series.source_ref
+        if refresh and ref:
             try:
                 # Ook de serie-metadata zelf bijwerken, niet alleen de
                 # hoofdstukkenlijst: auteur, omslag en tracker-ids komen bij een
@@ -133,12 +138,15 @@ def run_once(session: Session, *, refresh: bool = True, download: bool = True) -
                 # zou een serie voor altijd blijven zitten met wat er toevallig
                 # bekend was op de dag dat je 'm ging volgen. Eén extra verzoek
                 # naast de gepagineerde hoofdstukkenfeed valt in het niet.
-                source_service.upsert_series(
-                    session, source_row, implementation.detail(series.source_ref)
-                )
-                chapters = implementation.chapters(series.source_ref)
+                detail = implementation.detail(ref)
+                source_service.upsert_series(session, source_row, detail)
+                chapters = implementation.chapters(ref, language=subscription.language)
                 added, _ = source_service.sync_chapters(
-                    session, series, chapters, subscription=subscription
+                    session,
+                    series,
+                    chapters,
+                    subscription=subscription,
+                    source_title=detail.title,
                 )
                 report.chapters_added += added
                 subscription.last_checked_at = utcnow()
@@ -238,5 +246,3 @@ def stop_worker() -> None:
     if _worker is not None:
         _worker.stop()
         _worker = None
-
-

@@ -40,6 +40,14 @@ export interface Book {
   extension: string | null;
   added_at: string;
   progress: Progress | null;
+  /** Uit welke uitgave dit deel komt; alleen gevuld in de seriepagina. */
+  edition_id: number | null;
+  edition_name: string | null;
+  /** Waarin die uitgave zich onderscheidt: taal en een label als "kleur". */
+  edition_language: string | null;
+  edition_note: string | null;
+  /** Hetzelfde hoofdstuk uit een andere uitgave. */
+  alternatives: BookAlternative[];
 }
 
 export interface TocEntry {
@@ -77,8 +85,30 @@ export interface Series {
   cover_page_index: number | null;
 }
 
+export interface MergeCandidate {
+  id: number;
+  title: string;
+  books: number;
+}
+
+export interface SeriesRenamed extends Series {
+  /** Was de naam vrij? Binnen één map kan een titel maar één keer bestaan;
+   * dan is samenvoegen de enige weg vooruit. */
+  renamed: boolean;
+  /** Een serie die dezelfde naam blijkt te hebben. */
+  merge_candidate: MergeCandidate | null;
+}
+
+export interface SyncCoversResult {
+  updated: number;
+  editions: string[];
+  errors: string[];
+}
+
 export interface SeriesDetail extends Series {
+  /** Eén regel per aflevering, tenzij je om alle uitgaven vraagt. */
   books: Book[];
+  editions: Edition[];
 }
 
 export interface WikiHit {
@@ -108,9 +138,16 @@ export interface ContinueInfo {
   resuming: boolean;
   /** Hoeveel hoofdstukken hiervóór nog niet uit zijn. */
   unread_before: number;
+  /** Staat dit al op de NAS? Zo niet, dan haalt de knop het eerst op. Bij een
+   * serie die je online volgt is dat de normale situatie. */
+  has_file: boolean;
 }
 
 export interface LibraryRoot {
+  /** Kan BookPal hier zelf iets neerzetten? Zo niet staat de reden in
+   * write_problem — in gewone taal, want de oplossing verschilt per oorzaak. */
+  writable?: boolean;
+  write_problem?: string | null;
   id: number;
   name: string;
   path: string;
@@ -223,11 +260,19 @@ export interface SearchHit {
   status: string | null;
   original_language: string | null;
   tracker_ids: Record<string, string>;
-  /** Gevuld als je deze serie al volgt. */
+  /** Gevuld als je precies deze reeks bij deze bron al volgt. */
   subscribed_series_id: number | null;
+  /** Gevuld als je hier al een serie van hebt onder (bijna) dezelfde titel;
+   * volgen voegt dan een uitgave toe in plaats van een tweede serie te maken. */
+  existing_series_id: number | null;
+  existing_series_title: string | null;
   /** Rechtstreeks tonen als miniatuur; alleen na koppelen gaat hij door onze
    * eigen cache (zie SourceBadge/imageUrl.seriesCover). */
   cover_url: string | null;
+  /** De pagina bij de bron, om te kunnen controleren wat dit is. */
+  url: string | null;
+  /** In welke talen er vertalingen bestaan. */
+  languages: string[];
 }
 
 export type SubscriptionPolicy = "permanent" | "readahead";
@@ -246,6 +291,10 @@ export interface SubscriptionRow {
   policy: SubscriptionPolicy;
   readahead_n: number;
   ttl_days: number;
+  /** In welke taal je deze reeks volgt; meerdere talen worden uitgaven van één serie. */
+  language: string;
+  /** Hoe de bron deze reeks noemt — het onderscheid tussen twee uitgaven. */
+  source_title: string;
   last_checked_at: string | null;
   /** Leeg = automatisch kiezen. */
   preferred_group_id: string | null;
@@ -298,6 +347,10 @@ export interface PageTranslation {
 
 export interface TranslateModeInfo {
   mode: TranslateMode;
+  /** Wat de knop in de lezer doet; los van wat er vanzelf gebeurt. */
+  button_mode: TranslateMode;
+  /** Met welk beeldmodel er ingekleurd wordt; altijd een beeldstand. */
+  colour_mode: TranslateMode;
   /** Zonder Gemini-sleutel is er niets te kiezen. */
   configured: boolean;
   /** Ruwe richtprijs per pagina in dollar, per stand. */
@@ -356,6 +409,145 @@ export interface MergeSuggestion {
   absorb_id: number;
   absorb_title: string;
   absorb_books: number;
+}
+
+export interface ReadState {
+  book_id: number;
+  finished: boolean;
+  /** Hoeveel uitgaven van deze aflevering het betrof. */
+  affected: number;
+}
+
+export interface ChapterCount {
+  ref: string;
+  language: string;
+  count: number;
+}
+
+export interface HomeItem {
+  book_id: number;
+  series_id: number;
+  series_title: string;
+  title: string;
+  number: string | null;
+  volume: string | null;
+  kind: BookKind;
+  has_file: boolean;
+  extension: string | null;
+  page_count: number | null;
+  percent: number;
+  finished: boolean;
+  /** De pagina waar je gebleven was; de lezer opent hier. */
+  page: number;
+  updated_at: string | null;
+  added_at: string;
+}
+
+export interface HomeRail {
+  key: string;
+  title: string;
+  items: HomeItem[];
+}
+
+export interface Home {
+  rails: HomeRail[];
+}
+
+export interface SidecarSyncResult {
+  written: number;
+  skipped: number;
+  errors: string[];
+}
+
+export interface KoboStatus {
+  mount: string | null;
+  connected: boolean;
+  writable: boolean;
+  error: string | null;
+  folder: string;
+  ahead: number;
+  series_ids: number[];
+  export_books: boolean;
+  write_shelves: boolean;
+  read_progress: boolean;
+  /** Standaard aan: dit schrijft in de database van je lezer. */
+  dry_run: boolean;
+}
+
+export interface KoboPlanItem {
+  book_id: number;
+  series_title: string;
+  title: string;
+  path: string;
+}
+
+export interface KoboSyncResult {
+  dry_run: boolean;
+  planned: number;
+  copied: number;
+  skipped: number;
+  removed: number;
+  shelves_created: string[];
+  shelf_entries: number;
+  not_imported: number;
+  progress_updated: number;
+  /** De kopie die vóór het schrijven is gemaakt. */
+  backup: string | null;
+  errors: string[];
+  notes: string[];
+}
+
+export interface IntakeUpload {
+  path: string;
+  name: string;
+  size: number;
+}
+
+export interface IntakeFetch {
+  /** bezig | klaar | mislukt | niets */
+  state: string;
+  url: string;
+  folder: string | null;
+  bytes_done: number;
+  /** Wat de server zei dat er zou komen; bij een gedeelde map vaak onbekend. */
+  bytes_total: number | null;
+  saved: string[];
+  skipped: number;
+  errors: string[];
+}
+
+export interface BookAlternative {
+  id: number;
+  title: string;
+  edition_id: number | null;
+  edition_name: string | null;
+  edition_language: string | null;
+  edition_note: string | null;
+  has_file: boolean;
+}
+
+/**
+ * Eén uitgave binnen een serie. `book_count` is wat deze uitgave heeft,
+ * `chosen_count` wat je er daadwerkelijk van te zien krijgt — het verschil is
+ * wat een hoger gerangschikte uitgave al levert.
+ */
+export interface Edition {
+  id: number;
+  series_id: number;
+  name: string;
+  rank: number;
+  note: string | null;
+  /** Taal van het abonnement; leeg voor je eigen bestanden. */
+  language: string | null;
+  subscription_id: number | null;
+  folder_path: string | null;
+  book_count: number;
+  chosen_count: number;
+}
+
+export interface MalImportProgress {
+  marked: number;
+  series: string[];
 }
 
 export interface MalListItem {
@@ -437,4 +629,37 @@ export interface PushReport {
   pushed: number;
   results: PushResultRow[];
   errors: string[];
+}
+
+/** Wat een klus voor een heel hoofdstuk gaat inhouden, vóór je hem start. */
+export interface BatchPlan {
+  kind: BatchKind;
+  mode: TranslateMode;
+  pages: number;
+  price_per_page: number;
+  total: number;
+  /** Batchwerk kost bij Google de helft van een gewone aanroep. */
+  batch_factor: number;
+}
+
+export type BatchKind = "tekst" | "hertekend" | "kleuren";
+
+export interface BatchStatus {
+  kind: BatchKind;
+  book_id: number;
+  mode: TranslateMode;
+  state: "bezig" | "klaar" | "mislukt";
+  done: number;
+  total: number;
+  failed: number;
+  error: string | null;
+}
+
+/** Wat er qua kleur voor een pagina klaarligt. */
+export interface PageColourInfo {
+  available: boolean;
+  /** Van de tekenaar zelf: dan valt er niets in te kleuren. */
+  native: boolean;
+  /** De vertaling zit in dit beeld gebakken. */
+  translated: boolean;
 }

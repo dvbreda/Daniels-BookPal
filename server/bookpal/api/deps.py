@@ -81,7 +81,7 @@ def get_source_row(session: Session, source_id: int) -> Source:
 
 def get_source_implementation(source: Source) -> SourceImpl:
     try:
-        return get_source(source.type)
+        return get_source(source.type, source.config)
     except SourceError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -106,6 +106,19 @@ def book_file_path(session: Session, book: Book) -> Path:
     return path
 
 
+def _at_the_very_start(position: dict[str, object], percent: float) -> bool:
+    """Sta je nog op de eerste pagina, zonder ook maar iets omgeslagen te hebben?
+
+    Strips melden een paginanummer, e-books een percentage; beide beginnen op
+    nul. De marge van 1% vangt een epub-lezer die de eerste locatie net iets
+    anders uitrekent.
+    """
+    page = position.get("page")
+    if isinstance(page, int) and page > 0:
+        return False
+    return percent < 1.0
+
+
 def upsert_progress(
     session: Session,
     user: User,
@@ -123,16 +136,23 @@ def upsert_progress(
     row = session.scalar(
         select(Progress).where(Progress.user_id == user.id, Progress.book_id == book_id)
     )
+    # Even ergens binnenkijken is nog niet lezen. Zonder deze uitzondering raakt
+    # elk aangeklikt hoofdstuk "begonnen", en dan wijst verder-lezen je naar een
+    # deel dat je alleen maar hebt opengeslagen. Alleen voor een nieuw boek: sla
+    # je een boek waar je al in zat weer open op pagina 1, dan is dát het nieuws.
+    vluchtig = row is None and not finished and _at_the_very_start(position, percent)
     if row is None:
         row = Progress(user_id=user.id, book_id=book_id)
-        session.add(row)
+        if not vluchtig:
+            session.add(row)
 
     row.position = position
     row.percent = percent
     row.finished = finished if finished is not None else percent >= 100.0
     row.device = device
     row.updated_at = utcnow()
-    session.commit()
+    if not vluchtig:
+        session.commit()
 
     # M7: gedebounced, dus dit is een goedkope aanroep — geen netwerk, alleen
     # een timer resetten.

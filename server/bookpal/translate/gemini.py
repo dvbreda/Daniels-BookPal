@@ -130,6 +130,71 @@ def _to_bubble(item: dict[str, Any]) -> Bubble | None:
     )
 
 
+def build_text_request(image: bytes, media_type: str, target_lang: str) -> dict[str, Any]:
+    """Het verzoek voor één pagina in de tekststand.
+
+    Losgetrokken van de klasse omdat de batch precies hetzelfde moet sturen.
+    Twee plekken met elk hun eigen opbouw is twee plekken die uit elkaar gaan
+    lopen, en dat merk je pas aan een vertaling die anders uitvalt.
+    """
+    return {
+        "contents": [
+            {
+                "parts": [
+                    {"text": _PROMPT.format(language=_language_name(target_lang))},
+                    {
+                        "inline_data": {
+                            "mime_type": media_type,
+                            "data": base64.b64encode(image).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ],
+        # Temperatuur 0: bij een vertaling wil je hetzelfde antwoord als je
+        # dezelfde pagina nog eens aanbiedt, niet elke keer een variant.
+        "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"},
+    }
+
+
+def parse_result(payload: dict[str, Any], model: str) -> PageResult:
+    """Het antwoord van één pagina omzetten naar tekstvlakken."""
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        # Een lege kandidatenlijst betekent meestal dat een filter heeft
+        # ingegrepen; dat is geen fout in onze code en geen reden om de hele
+        # leessessie te laten struikelen.
+        raise TranslationError("Gemini gaf geen antwoord terug")
+
+    parts = (candidates[0].get("content") or {}).get("parts") or []
+    text = "".join(str(part.get("text", "")) for part in parts).strip()
+    if not text:
+        raise TranslationError("Gemini gaf een leeg antwoord")
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise TranslationError("Gemini gaf geen geldige JSON") from exc
+
+    # Soms komt de lijst verpakt in een object; beide vormen accepteren is
+    # goedkoper dan een pagina laten mislukken om een omhulsel.
+    if isinstance(parsed, dict):
+        for key in ("bubbles", "items", "regions", "result"):
+            if isinstance(parsed.get(key), list):
+                parsed = parsed[key]
+                break
+    if not isinstance(parsed, list):
+        raise TranslationError("Gemini gaf geen lijst tekstvlakken")
+
+    bubbles = [
+        bubble
+        for item in parsed
+        if isinstance(item, dict)
+        if (bubble := _to_bubble(item)) is not None
+    ]
+    return PageResult(bubbles=bubbles, model=model)
+
+
 class GeminiBubbleTranslator(BubbleTranslator):
     provider = "gemini"
 
@@ -145,7 +210,13 @@ class GeminiBubbleTranslator(BubbleTranslator):
             raise TranslationError("geen Gemini-sleutel ingesteld (BOOKPAL_GEMINI_API_KEY)")
         self._api_key = api_key
         self._model = model
-        self._client = client or httpx.Client(base_url=API_BASE, timeout=180.0)
+        # De sleutel in een header en niet in de URL: httpx logt elk verzoek
+        # met volledige URL, en dan staat je sleutel in de containerlogs.
+        self._client = client or httpx.Client(
+            base_url=API_BASE,
+            timeout=180.0,
+            headers={"x-goog-api-key": api_key},
+        )
         self._limiter = RateLimiter(rate)
 
     @property
@@ -153,30 +224,12 @@ class GeminiBubbleTranslator(BubbleTranslator):
         return self._model
 
     def translate_page(self, image: bytes, *, media_type: str, target_lang: str) -> PageResult:
-        body = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": _PROMPT.format(language=_language_name(target_lang))},
-                        {
-                            "inline_data": {
-                                "mime_type": media_type,
-                                "data": base64.b64encode(image).decode("ascii"),
-                            }
-                        },
-                    ]
-                }
-            ],
-            # Temperatuur 0: bij een vertaling wil je hetzelfde antwoord als je
-            # dezelfde pagina nog eens aanbiedt, niet elke keer een variant.
-            "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"},
-        }
+        body = build_text_request(image, media_type, target_lang)
 
         self._limiter.acquire()
         try:
             response = self._client.post(
                 f"/models/{self._model}:generateContent",
-                params={"key": self._api_key},
                 json=body,
             )
         except httpx.HTTPError as exc:
@@ -190,40 +243,7 @@ class GeminiBubbleTranslator(BubbleTranslator):
         return self._parse(response.json())
 
     def _parse(self, payload: dict[str, Any]) -> PageResult:
-        candidates = payload.get("candidates") or []
-        if not candidates:
-            # Een lege kandidatenlijst betekent meestal dat een filter heeft
-            # ingegrepen; dat is geen fout in onze code en geen reden om de
-            # hele leessessie te laten struikelen.
-            raise TranslationError("Gemini gaf geen antwoord terug")
-
-        parts = (candidates[0].get("content") or {}).get("parts") or []
-        text = "".join(str(part.get("text", "")) for part in parts).strip()
-        if not text:
-            raise TranslationError("Gemini gaf een leeg antwoord")
-
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError as exc:
-            raise TranslationError("Gemini gaf geen geldige JSON") from exc
-
-        # Soms komt de lijst verpakt in een object; beide vormen accepteren is
-        # goedkoper dan een pagina laten mislukken om een omhulsel.
-        if isinstance(parsed, dict):
-            for key in ("bubbles", "items", "regions", "result"):
-                if isinstance(parsed.get(key), list):
-                    parsed = parsed[key]
-                    break
-        if not isinstance(parsed, list):
-            raise TranslationError("Gemini gaf geen lijst tekstvlakken")
-
-        bubbles = [
-            bubble
-            for item in parsed
-            if isinstance(item, dict)
-            if (bubble := _to_bubble(item)) is not None
-        ]
-        return PageResult(bubbles=bubbles, model=self._model)
+        return parse_result(payload, self._model)
 
     def close(self) -> None:
         self._client.close()

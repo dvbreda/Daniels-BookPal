@@ -14,7 +14,16 @@ from sqlalchemy.orm import Session
 
 from bookpal import db as db_module
 from bookpal.db import current_user
-from bookpal.models import Book, BookKind, File, LibraryRoot, Progress, Series, TrackerAccount
+from bookpal.models import (
+    Book,
+    BookKind,
+    File,
+    LibraryRoot,
+    OriginRegion,
+    Progress,
+    Series,
+    TrackerAccount,
+)
 from bookpal.trackers import goodreads_browser, scheduler
 from bookpal.trackers.base import (
     PushResult,
@@ -190,7 +199,12 @@ class TestEntryForSeries:
         entry = entry_for_series(session, current_user(session), series, "mal")
         assert entry.remote_id is None
 
-    def test_chapters_read_counts_finished_books(self, session: Session):
+    def test_books_without_a_number_fall_back_to_counting(self, session: Session):
+        """Wat naar de tracker gaat is het hoogste nummer dat je uit hebt.
+
+        Hebben de delen helemaal geen nummer — losse boeken — dan is "hoeveel
+        je er uit hebt" alsnog het beste antwoord.
+        """
         series = _series(session)
         root = LibraryRoot(name="R", path="/tmp/r-entry")
         session.add(root)
@@ -336,9 +350,7 @@ class TestMyAnimeListOAuth:
     def test_push_without_a_token_raises(self):
         client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
         tracker = MyAnimeListTracker({}, client=client)
-        entry = TrackerEntry(
-            series_id=1, title="X", remote_id="2435", status=ReadingStatus.READING
-        )
+        entry = TrackerEntry(series_id=1, title="X", remote_id="2435", status=ReadingStatus.READING)
         with pytest.raises(TrackerError):
             tracker.push(entry, dry_run=False)
 
@@ -443,7 +455,8 @@ class TestMalRedirectFlow:
 
     def test_a_returning_user_without_a_code_lands_on_a_message(self, client: TestClient):
         response = client.get(
-            "/api/trackers/mal/redirect", params={"error": "access_denied"},
+            "/api/trackers/mal/redirect",
+            params={"error": "access_denied"},
             follow_redirects=False,
         )
         assert response.status_code == 303
@@ -591,9 +604,7 @@ class TestGoodreadsBrowser:
     ):
         monkeypatch.setattr(goodreads_browser, "log_in", lambda email, password: {"cookies": []})
         monkeypatch.setattr(goodreads_browser, "available", lambda: (True, ""))
-        client.post(
-            "/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"}
-        )
+        client.post("/api/trackers/goodreads/login", json={"email": "a@b.nl", "password": "x"})
         assert client.delete("/api/trackers/goodreads/login").status_code == 204
         assert client.get("/api/trackers/goodreads/status").json()["connected"] is False
 
@@ -627,9 +638,7 @@ class TestShelves:
             )
             session.add(file_row)
             session.flush()
-            book = Book(
-                series_id=series.id, kind=BookKind.COMIC, title="Deel", file_id=file_row.id
-            )
+            book = Book(series_id=series.id, kind=BookKind.COMIC, title="Deel", file_id=file_row.id)
             session.add(book)
             session.flush()
             session.add(
@@ -950,3 +959,392 @@ class TestMalTitleMatching:
             f"/api/trackers/{account_id}/mal/link", json={"series_id": 9999, "mal_id": "1"}
         )
         assert response.status_code == 404
+
+
+class TestMalProgressImport:
+    """Wat je elders al gelezen had hoef je hier niet opnieuw door te klikken."""
+
+    def _account(self, client: TestClient) -> int:
+        response = client.post(
+            "/api/trackers", json={"provider": "mal", "client_id": "cid", "client_secret": "x"}
+        )
+        account_id = int(response.json()["id"])
+        with db_module.session_scope() as session:
+            account = session.get(TrackerAccount, account_id)
+            assert account is not None
+            account.credentials = {**account.credentials, "access_token": "token"}
+        return account_id
+
+    def _stub(self, monkeypatch: pytest.MonkeyPatch, mal_id: str, gelezen: int) -> None:
+        monkeypatch.setattr(
+            MyAnimeListTracker,
+            "read_list",
+            lambda self, status=None, *, limit=100: [
+                {
+                    "mal_id": mal_id,
+                    "title": "One Piece",
+                    "chapters": 0,
+                    "status": "reading",
+                    "chapters_read": gelezen,
+                    "score": 0,
+                }
+            ],
+        )
+
+    def _serie(self, session: Session, nummers: list[float]) -> Series:
+        series = Series(title="One Piece (Official Colored)", sort_title="o")
+        series.tracker_ids = {"mal": "13"}
+        session.add(series)
+        session.flush()
+        for nummer in nummers:
+            session.add(
+                Book(
+                    series_id=series.id,
+                    kind=BookKind.COMIC,
+                    title=f"Hoofdstuk {nummer:g}",
+                    number=f"{nummer:g}",
+                    sort_number=nummer,
+                    page_count=20,
+                )
+            )
+        session.commit()
+        return series
+
+    def test_chapters_up_to_the_tracker_count_are_marked_read(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        series = self._serie(session, [1.0, 2.0, 3.0, 4.0])
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 3)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.status_code == 200
+        assert response.json()["marked"] == 3
+
+        gelezen = {
+            row.book_id: row.finished
+            for row in session.scalars(select(Progress).where(Progress.user_id == 1))
+        }
+        boeken = list(
+            session.scalars(
+                select(Book).where(Book.series_id == series.id).order_by(Book.sort_number)
+            )
+        )
+        assert [gelezen.get(book.id, False) for book in boeken] == [True, True, True, False]
+
+    def test_a_gap_in_the_library_does_not_shift_the_boundary(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Hoofdstuk 2 mis je; dan hoort 4 nog steeds ongelezen te blijven."""
+        series = self._serie(session, [1.0, 3.0, 4.0])
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 3)
+
+        client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+
+        boeken = list(
+            session.scalars(
+                select(Book).where(Book.series_id == series.id).order_by(Book.sort_number)
+            )
+        )
+        gelezen = {
+            row.book_id: row.finished
+            for row in session.scalars(select(Progress).where(Progress.user_id == 1))
+        }
+        assert [gelezen.get(book.id, False) for book in boeken] == [True, True, False]
+
+    def test_your_own_progress_is_never_thrown_away(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Verder dan de tracker? Dan blijft jouw stand staan."""
+        series = self._serie(session, [1.0, 2.0])
+        boek = session.scalars(
+            select(Book).where(Book.series_id == series.id).order_by(Book.sort_number.desc())
+        ).first()
+        assert boek is not None
+        session.add(
+            Progress(user_id=1, book_id=boek.id, percent=100.0, finished=True, device="kobo")
+        )
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 1)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.json()["marked"] == 1
+
+        row = session.scalars(select(Progress).where(Progress.book_id == boek.id)).one()
+        assert row.finished is True
+        assert row.device == "kobo"
+
+    def test_a_series_without_a_link_is_left_alone(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        session.add(Series(title="Oishinbo", sort_title="o"))
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 124)
+
+        response = client.post(f"/api/trackers/{account_id}/mal/import-progress", json={})
+        assert response.status_code == 409
+
+    def test_one_series_can_be_singled_out(
+        self, client: TestClient, session: Session, monkeypatch: pytest.MonkeyPatch
+    ):
+        self._serie(session, [1.0, 2.0])
+        andere = Series(title="Andere", sort_title="a")
+        andere.tracker_ids = {"mal": "13"}
+        session.add(andere)
+        session.flush()
+        session.add(
+            Book(series_id=andere.id, kind=BookKind.COMIC, title="H1", number="1", sort_number=1.0)
+        )
+        session.commit()
+        account_id = self._account(client)
+        self._stub(monkeypatch, "13", 2)
+
+        response = client.post(
+            f"/api/trackers/{account_id}/mal/import-progress", json={"series_id": andere.id}
+        )
+        assert response.json()["marked"] == 1
+
+
+class TestHowFarYouAre:
+    """Wat er naar de tracker gaat is hoe ver je bent, niet hoeveel je hebt."""
+
+    def _genummerd(
+        self, session: Session, series: Series, nummer: str, volume: str | None = None
+    ) -> Book:
+        from bookpal.metadata.filename import normalise_number
+
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+            sort_number=normalise_number(nummer),
+            volume=volume,
+            sort_volume=normalise_number(volume),
+        )
+        session.add(book)
+        session.flush()
+        return book
+
+    def test_the_highest_chapter_wins(self, session: Session):
+        series = _series(session)
+        for nummer in ("1", "2", "3"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3
+
+    def test_two_editions_of_one_chapter_do_not_count_double(self, session: Session):
+        """De gekleurde en de zwart-witte uitgave zijn hetzelfde hoofdstuk."""
+        series = _series(session)
+        for nummer in ("1", "2"):
+            _finish(session, self._genummerd(session, series, nummer))
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 2, "vier bestanden, maar je bent bij 2"
+
+    def test_a_gap_in_your_library_does_not_hold_you_back(self, session: Session):
+        """Je mist deel 2, maar je bent wel degelijk bij 3."""
+        series = _series(session)
+        for nummer in ("1", "3"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3
+
+    def test_rereading_something_earlier_changes_nothing(self, session: Session):
+        series = _series(session)
+        for nummer in ("1", "2", "9"):
+            _finish(session, self._genummerd(session, series, nummer))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 9
+
+    def test_the_highest_volume_wins_too(self, session: Session):
+        series = _series(session)
+        _finish(session, self._genummerd(session, series, "1", volume="1"))
+        _finish(session, self._genummerd(session, series, "20", volume="3"))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.volumes_read == 3
+
+    def test_a_half_chapter_rounds_down(self, session: Session):
+        """Een tracker kent geen hoofdstuk 30,5."""
+        series = _series(session)
+        _finish(session, self._genummerd(session, series, "30.5"))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 30
+
+    def test_without_numbers_it_falls_back_to_counting(self, session: Session):
+        """Bij losse boeken is "hoeveel je er uit hebt" het beste antwoord."""
+        series = _series(session)
+        _finish(session, _book(session, series))
+        _finish(session, _book(session, series))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 2
+
+    def test_what_you_push_matches_what_you_import(self, session: Session):
+        """Heen en terug horen elkaars spiegelbeeld te zijn."""
+        from bookpal.trackers.service import import_progress
+
+        series = _series(session)
+        for nummer in ("1", "2", "3", "4"):
+            self._genummerd(session, series, nummer)
+        session.flush()
+
+        import_progress(session, current_user(session), series, 3)
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 3
+
+
+class TestNeverGoingBackwards:
+    """Je leest ook buiten BookPal om — op papier, in een app, elders."""
+
+    def _genummerd(self, session: Session, series: Series, nummer: str) -> Book:
+        from bookpal.metadata.filename import normalise_number
+
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+            sort_number=normalise_number(nummer),
+        )
+        session.add(book)
+        session.flush()
+        return book
+
+    def _tracker(self, ver: int):
+        class Nep:
+            provider = "mal"
+
+            def __init__(self) -> None:
+                self.geduwd: list[TrackerEntry] = []
+
+            def read_list(self, status=None, *, limit=100):
+                return [{"mal_id": "2435", "chapters_read": ver}]
+
+            def push(self, entry, *, dry_run=False):
+                self.geduwd.append(entry)
+                return PushResult(entry=entry, pushed=True, dry_run=dry_run)
+
+        return Nep()
+
+    def _serie(self, session: Session, tot: int) -> Series:
+        series = _series(session, tracker_ids={"mal": "2435"})
+        series.origin_region = OriginRegion.JAPAN
+        for nummer in range(1, tot + 1):
+            _finish(session, self._genummerd(session, series, str(nummer)))
+        session.flush()
+        return series
+
+    def test_a_higher_number_at_the_tracker_wins(self, session: Session):
+        """Anders zet één ronde je stand ongemerkt terug."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 22)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        report = push_all(session, tracker, account, current_user(session))
+
+        assert tracker.geduwd == [], "er hoorde niets gepusht te worden"
+        assert report.pulled and "overgenomen" in report.pulled[0]
+
+    def test_the_higher_number_comes_in_here(self, session: Session):
+        """Niet alleen niet-achteruit-pushen: die stand hoort hier binnen te komen.
+
+        Anders zie je elke ronde hetzelfde verschil zonder dat het ooit wordt
+        gladgestreken.
+        """
+        from bookpal.trackers.service import entry_for_series, push_all
+
+        series = self._serie(session, 22)
+        # De hoofdstukken 23 t/m 25 bestaan wel, maar staan nog niet als gelezen.
+        for nummer in range(23, 26):
+            self._genummerd(session, series, str(nummer))
+        session.flush()
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        push_all(session, self._tracker(25), account, current_user(session))
+
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 25
+
+    def test_a_dry_run_changes_nothing_here_either(self, session: Session):
+        from bookpal.trackers.service import entry_for_series, push_all
+
+        series = self._serie(session, 22)
+        for nummer in range(23, 26):
+            self._genummerd(session, series, str(nummer))
+        session.flush()
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=True)
+        session.add(account)
+        session.flush()
+
+        report = push_all(session, self._tracker(25), account, current_user(session))
+
+        assert report.pulled == []
+        assert report.skipped and "overgenomen" in report.skipped[0]
+        entry = entry_for_series(session, current_user(session), series, "mal")
+        assert entry.chapters_read == 22, "een proefronde raakt je bibliotheek niet aan"
+
+    def test_our_own_higher_number_is_pushed(self, session: Session):
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 30)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        push_all(session, tracker, account, current_user(session))
+
+        assert [entry.chapters_read for entry in tracker.geduwd] == [30]
+
+    def test_the_same_number_is_still_pushed(self, session: Session):
+        """Gelijk is geen achteruitgang; status en delen kunnen wél veranderd zijn."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 25)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        tracker = self._tracker(25)
+        push_all(session, tracker, account, current_user(session))
+
+        assert len(tracker.geduwd) == 1
+
+    def test_a_tracker_that_cannot_be_read_still_gets_pushed(self, session: Session):
+        """Goodreads geeft zijn lijst niet terug; dat mag pushen niet blokkeren."""
+        from bookpal.trackers.service import push_all
+
+        self._serie(session, 5)
+        account = TrackerAccount(provider="mal", credentials={}, dry_run=False)
+        session.add(account)
+        session.flush()
+
+        class Blind:
+            provider = "mal"
+
+            def __init__(self) -> None:
+                self.geduwd: list[TrackerEntry] = []
+
+            def push(self, entry, *, dry_run=False):
+                self.geduwd.append(entry)
+                return PushResult(entry=entry, pushed=True, dry_run=dry_run)
+
+        tracker = Blind()
+        push_all(session, tracker, account, current_user(session))
+        assert len(tracker.geduwd) == 1

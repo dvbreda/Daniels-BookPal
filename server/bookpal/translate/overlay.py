@@ -81,9 +81,7 @@ def _wrap(
 ) -> list[str]:
     words: list[str] = []
     for word in text.split():
-        words.extend(
-            _break_long(draw, word, font, max_width) if hard_break else [word]
-        )
+        words.extend(_break_long(draw, word, font, max_width) if hard_break else [word])
     if not words:
         return []
 
@@ -168,9 +166,7 @@ def _fit(
     return font, _wrap(draw, text, font, box_w, hard_break=True), _MIN_FONT * 1.2
 
 
-def draw_bubbles(
-    image: Image.Image, bubbles: list[Bubble], *, boxes: bool = True
-) -> Image.Image:
+def draw_bubbles(image: Image.Image, bubbles: list[Bubble], *, boxes: bool = True) -> Image.Image:
     """Teken de vertalingen over een pagina heen.
 
     De modus blijft wat hij was. Dat is niet vrijblijvend: een Kobo-profiel
@@ -183,9 +179,7 @@ def draw_bubbles(
     canvas = image if image.mode in ("RGB", "L") else image.convert("RGB")
     white: int | tuple[int, ...] = 255 if canvas.mode == "L" else (255, 255, 255)
     black: int | tuple[int, ...] = 0 if canvas.mode == "L" else (0, 0, 0)
-    _draw_onto(
-        ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black, boxes=boxes
-    )
+    _draw_onto(ImageDraw.Draw(canvas), canvas.size, bubbles, white=white, black=black, boxes=boxes)
     return canvas
 
 
@@ -219,7 +213,24 @@ def _draw_onto(
             continue
 
         if boxes:
-            draw.rectangle((x0, y0, x1, y1), fill=white, outline=black, width=1)
+            # Zo rond als het vlak toelaat: de straal is de helft van de kortste
+            # zijde, dus een ongeveer vierkant vlak wordt een cirkel en een breed
+            # vlak een ovaal met ronde uiteinden. Dat dekt merkbaar minder
+            # tekening af dan een rechthoek, en het lijkt op wat eronder zit.
+            #
+            # De vorm groeit een paar procent buiten het tekstvlak. Een pil die
+            # er precies ín past verliest juist de hoeken waar de tekst staat,
+            # en dan valt die op de tekening in plaats van op het wit.
+            groei_x = (x1 - x0) * 0.05
+            groei_y = (y1 - y0) * 0.05
+            vx0 = max(0.0, x0 - groei_x)
+            vy0 = max(0.0, y0 - groei_y)
+            vx1 = min(float(width), x1 + groei_x)
+            vy1 = min(float(height), y1 + groei_y)
+            straal = min(vx1 - vx0, vy1 - vy0) / 2
+            draw.rounded_rectangle(
+                (vx0, vy0, vx1, vy1), radius=straal, fill=white, outline=black, width=1
+            )
 
         # Striplettering staat traditioneel in kapitalen; een vertaling in
         # onderkast daartussen valt meteen op als "ingeplakt". We vragen dit
@@ -260,9 +271,7 @@ def render_layer(size: tuple[int, int], bubbles: list[Bubble], *, boxes: bool = 
         return _to_png(layer)
 
     draw = ImageDraw.Draw(layer)
-    _draw_onto(
-        draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255), boxes=boxes
-    )
+    _draw_onto(draw, size, bubbles, white=(255, 255, 255, 255), black=(0, 0, 0, 255), boxes=boxes)
     return _to_png(layer)
 
 
@@ -272,9 +281,7 @@ def _to_png(image: Image.Image) -> bytes:
     return buffer.getvalue()
 
 
-def bake(
-    data: bytes, bubbles: list[Bubble], *, media_type: str, boxes: bool = True
-) -> bytes:
+def bake(data: bytes, bubbles: list[Bubble], *, media_type: str, boxes: bool = True) -> bytes:
     """Zelfde bytes in, bytes met vertaling eruit — in hetzelfde formaat."""
     with Image.open(BytesIO(data)) as source:
         source.load()

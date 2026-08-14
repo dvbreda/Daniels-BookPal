@@ -542,7 +542,7 @@ class TestPickBestChapters:
         assert [c.ref for c in eerste] == [c.ref for c in tweede]
 
     def test_a_preferred_group_beats_the_bigger_one(self):
-        """"De meeste hoofdstukken" is niet hetzelfde als "de mooiste
+        """ "De meeste hoofdstukken" is niet hetzelfde als "de mooiste
         vertaling"; die keuze hoort bij de lezer."""
         chapters = [
             self._chapter("a1", "1", "vlijtig"),
@@ -577,16 +577,31 @@ class TestGroupSummary:
     def test_lists_groups_with_their_share(self):
         chapters = [
             ChapterInfo(
-                ref="a", number="1", volume="1", title=None, language="en",
-                group_id="g1", group_name="Vlijtig",
+                ref="a",
+                number="1",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g1",
+                group_name="Vlijtig",
             ),
             ChapterInfo(
-                ref="b", number="2", volume="1", title=None, language="en",
-                group_id="g1", group_name="Vlijtig",
+                ref="b",
+                number="2",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g1",
+                group_name="Vlijtig",
             ),
             ChapterInfo(
-                ref="c", number="1", volume="1", title=None, language="en",
-                group_id="g2", group_name="Mooier",
+                ref="c",
+                number="1",
+                volume="1",
+                title=None,
+                language="en",
+                group_id="g2",
+                group_name="Mooier",
             ),
         ]
         samenvatting = source_service.group_summary(chapters)
@@ -620,8 +635,11 @@ class TestSubscriptionPreferenceApi:
         client.post("/api/sources", json={"type": "mangadex", "name": "MangaDex"})
         return client
 
-    def test_by_series_is_404_without_a_subscription(self, scanned):
-        assert scanned.get("/api/sources/subscriptions/by-series/1").status_code == 404
+    def test_by_series_is_empty_without_a_subscription(self, scanned):
+        """Een lege lijst, want een serie kan er ook meerdere hebben."""
+        response = scanned.get("/api/sources/subscriptions/by-series/1")
+        assert response.status_code == 200
+        assert response.json() == []
 
     def test_patching_an_unknown_subscription_is_404(self, client):
         response = client.patch("/api/sources/subscriptions/999", json={"readahead_n": 5})
@@ -732,9 +750,7 @@ class TestSyncDeduplication:
         )
         session.add(gelezen)
         session.flush()
-        session.add(
-            Progress(user_id=current_user(session).id, book_id=gelezen.id, percent=30.0)
-        )
+        session.add(Progress(user_id=current_user(session).id, book_id=gelezen.id, percent=30.0))
         session.flush()
 
         source_service.sync_chapters(
@@ -867,7 +883,9 @@ class TestSeriesCoverApi:
     def test_attach_cover_persists_on_the_series(
         self, client, session: Session, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        monkeypatch.setattr(
+            "bookpal.api.deps.get_source", lambda _type, _config=None: make_source()
+        )
         source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
             "id"
         ]
@@ -926,7 +944,9 @@ class TestSourcesApi:
     def test_search_includes_the_cover_for_the_picker(
         self, client, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr("bookpal.api.deps.get_source", lambda _type: make_source())
+        monkeypatch.setattr(
+            "bookpal.api.deps.get_source", lambda _type, _config=None: make_source()
+        )
         source_id = client.post("/api/sources", json={"type": "mangadex", "name": "MD"}).json()[
             "id"
         ]
@@ -941,3 +961,188 @@ class TestSourcesApi:
 
     def test_expire_endpoint_runs(self, client):
         assert client.post("/api/sources/downloads/expire").json() == {"removed": 0}
+
+
+class TestADownloadIsReadableRightAway:
+    """Zonder paginatelling weet de lezer niet hoeveel er is, en opent er niets.
+
+    Bij MangaDex vulde de bron dat getal zelf, maar een bron die hele bestanden
+    levert doet dat niet. Dan bleef het leeg tot de eerstvolgende scan.
+    """
+
+    def _boek_met_bron(self, session: Session, tmp_path: Path):
+        from bookpal.models import BookKind, Series, Source
+
+        bron = Source(type="archiveorg", name="IA")
+        session.add(bron)
+        session.flush()
+        series = Series(title="Darakuya", sort_title="darakuya", source_id=bron.id)
+        session.add(series)
+        session.flush()
+        boek = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title="Deel 1",
+            number="1",
+            sort_number=1.0,
+            source_id=bron.id,
+            source_ref="darakuya/deel_1.cbz",
+        )
+        session.add(boek)
+        session.flush()
+        return boek
+
+    def test_the_page_count_is_there_without_a_scan(
+        self, session: Session, tmp_path: Path, temp_settings
+    ):
+        from tests.conftest import make_cbz
+
+        boek = self._boek_met_bron(session, tmp_path)
+
+        class Nep:
+            def download(self, ref, target, *, data_saver=False):
+                make_cbz(target, pages=7)
+                return target
+
+        source_service.download_book(session, Nep(), boek)
+        assert boek.page_count == 7
+
+    def test_a_pdf_is_recognised_as_a_pdf(self, session: Session, tmp_path: Path, temp_settings):
+        """De bron levert hele bestanden; wat het ís blijkt pas uit het bestand."""
+        from bookpal.models import BookKind
+
+        boek = self._boek_met_bron(session, tmp_path)
+
+        class Nep:
+            def download(self, ref, target, *, data_saver=False):
+                doel = target.with_suffix(".pdf")
+                doel.parent.mkdir(parents=True, exist_ok=True)
+                doel.write_bytes(_MINIMALE_PDF)
+                return doel
+
+        source_service.download_book(session, Nep(), boek)
+        assert boek.kind is BookKind.PDF
+
+
+# Een pdf van één lege pagina — genoeg om te herkennen en te tellen.
+_MINIMALE_PDF = (
+    b"%PDF-1.4\n"
+    b"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n"
+    b"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n"
+    b"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 200 200]>>endobj\n"
+    b"trailer<</Root 1 0 R>>\n"
+)
+
+
+class TestUnsubscribingCleansUp:
+    """Wat je hebt binnengehaald is van jou; een verwijzing is dat niet.
+
+    Zonder abonnement kun je een hoofdstuk zonder bestand niet meer ophalen —
+    dan blijft er een lege huls in je bibliotheek staan waar je niets mee kunt.
+    """
+
+    def _gevolgd(self, session: Session, *, met_bestand: int = 0, referenties: int = 2):
+        from bookpal.models import BookKind, LibraryRoot, Series, Source, Subscription
+
+        bron = Source(type="mangadex", name="MD")
+        root = LibraryRoot(name="D", path="/tmp/r-ontvolg")
+        session.add_all([bron, root])
+        session.flush()
+        series = Series(title="Gevolgd", sort_title="gevolgd", source_id=bron.id)
+        session.add(series)
+        session.flush()
+        abo = Subscription(source_id=bron.id, series_id=series.id)
+        session.add(abo)
+        session.flush()
+
+        nummer = 0
+        for _ in range(met_bestand):
+            nummer += 1
+            bestand = File(
+                library_root_id=root.id,
+                path=f"/tmp/r-ontvolg/{nummer}.cbz",
+                size=1,
+                mtime=0.0,
+                extension=".cbz",
+            )
+            session.add(bestand)
+            session.flush()
+            session.add(
+                Book(
+                    series_id=series.id,
+                    kind=BookKind.COMIC,
+                    title=f"H{nummer}",
+                    number=str(nummer),
+                    sort_number=float(nummer),
+                    file_id=bestand.id,
+                    source_id=bron.id,
+                    source_ref=f"ref-{nummer}",
+                )
+            )
+        for _ in range(referenties):
+            nummer += 1
+            session.add(
+                Book(
+                    series_id=series.id,
+                    kind=BookKind.COMIC,
+                    title=f"H{nummer}",
+                    number=str(nummer),
+                    sort_number=float(nummer),
+                    source_id=bron.id,
+                    source_ref=f"ref-{nummer}",
+                )
+            )
+        session.commit()
+        return series, abo
+
+    def test_references_go_and_downloads_stay(self, client, session: Session):
+        from bookpal.models import Series
+
+        series, abo = self._gevolgd(session, met_bestand=1, referenties=3)
+
+        assert client.delete(f"/api/sources/subscriptions/{abo.id}").status_code == 204
+
+        session.expire_all()
+        boeken = session.query(Book).filter_by(series_id=series.id).all()
+        assert [b.title for b in boeken] == ["H1"], "alleen wat je had blijft"
+        assert session.get(Series, series.id) is not None
+
+    def test_an_empty_shell_disappears_completely(self, client, session: Session):
+        from bookpal.models import Series
+
+        series, abo = self._gevolgd(session, met_bestand=0, referenties=2)
+        series_id = series.id
+
+        client.delete(f"/api/sources/subscriptions/{abo.id}")
+
+        session.expire_all()
+        assert session.get(Series, series_id) is None
+
+    def test_what_you_read_stays_even_without_a_file(self, client, session: Session):
+        """Voortgang is een spoor van jou, geen restje van de bron."""
+        from bookpal.db import current_user
+        from bookpal.models import Progress, Series
+
+        series, abo = self._gevolgd(session, met_bestand=0, referenties=2)
+        boek = session.query(Book).filter_by(series_id=series.id).first()
+        session.add(Progress(user_id=current_user(session).id, book_id=boek.id, percent=40.0))
+        session.commit()
+
+        client.delete(f"/api/sources/subscriptions/{abo.id}")
+
+        session.expire_all()
+        assert session.get(Series, series.id) is not None
+        assert session.query(Book).filter_by(series_id=series.id).count() == 1
+
+    def test_a_second_subscription_keeps_everything(self, client, session: Session):
+        from bookpal.models import Subscription
+
+        series, abo = self._gevolgd(session, met_bestand=0, referenties=2)
+        tweede = Subscription(source_id=abo.source_id, series_id=series.id, language="ja")
+        session.add(tweede)
+        session.commit()
+
+        client.delete(f"/api/sources/subscriptions/{abo.id}")
+
+        session.expire_all()
+        assert session.query(Book).filter_by(series_id=series.id).count() == 2

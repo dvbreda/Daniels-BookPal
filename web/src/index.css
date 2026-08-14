@@ -111,3 +111,26 @@
     overscroll-behavior: none;
   }
 }
+
+@layer utilities {
+  /*
+   * De hoogte van wat je écht ziet.
+   *
+   * `100vh` is op iOS Safari de grote viewport — die van als de adresbalk is
+   * weggeschoven. Een balk op `bottom: 0` valt daardoor achter die adresbalk
+   * zodra hij wél in beeld staat. `100dvh` volgt wat er nu zichtbaar is; de
+   * eerste regel blijft staan voor browsers die dat niet kennen.
+   */
+  .h-viewport {
+    height: 100vh;
+    height: 100dvh;
+  }
+
+  /*
+   * Ruimte voor de home-indicator en de adresbalk onderaan. Nul op alles wat
+   * geen inkeping heeft, dus dit kost niets waar het niet nodig is.
+   */
+  .pb-safe {
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
+  }
+}

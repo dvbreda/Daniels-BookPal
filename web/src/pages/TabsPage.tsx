@@ -7,7 +7,9 @@ import type { RuleNode, Tab, TabIn } from "../api/types";
 import { RuleEditor } from "../components/RuleEditor";
 import { fieldDefs } from "../lib/ruleBuilder";
 
-export function TabsPage() {
+/** ``embedded`` laat de eigen kop en terugknop weg: in de instellingen staat
+ * die er al, en twee keer "← Bibliotheek" onder elkaar is verwarrend. */
+export function TabsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const queryClient = useQueryClient();
   const { data: tabs } = useQuery({ queryKey: ["tabs"], queryFn: api.tabs });
   const { data: roots } = useQuery({ queryKey: ["libraries"], queryFn: api.libraries });
@@ -35,11 +37,15 @@ export function TabsPage() {
   const sorted = [...(tabs ?? [])].sort((a, b) => a.position - b.position);
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-6">
-      <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
-        ← Bibliotheek
-      </Link>
-      <h1 className="mt-4 text-2xl font-semibold text-slate-100">Tabs</h1>
+    <div className={embedded ? "" : "mx-auto max-w-3xl px-4 py-6"}>
+      {!embedded && (
+        <>
+          <Link to="/" className="text-sm text-slate-400 hover:text-slate-200">
+            ← Bibliotheek
+          </Link>
+          <h1 className="mt-4 text-2xl font-semibold text-slate-100">Tabs</h1>
+        </>
+      )}
       <p className="mt-1 text-sm text-slate-500">
         Een tab is een opgeslagen regel. Dezelfde regel bepaalt straks ook wat een
         slimme collectie toont — zie{" "}

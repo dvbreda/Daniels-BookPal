@@ -3,6 +3,7 @@ ermee kan als het misgaat."""
 
 from __future__ import annotations
 
+import io
 import json
 from io import BytesIO
 from pathlib import Path
@@ -22,7 +23,14 @@ from bookpal.translate.modes import BEST_FIRST, TranslateMode, from_provider
 from bookpal.translate.overlay import _fit, _load_font, bake, draw_bubbles, render_layer
 from bookpal.translate.preferences import get_mode, set_mode
 from bookpal.translate.queue import TranslationQueue
-from bookpal.translate.service import find, plan_pages, translate_page, translated_pages
+from bookpal.translate.service import (
+    find,
+    plan_pages,
+    render_for_translation,
+    translate_page,
+    translated_pages,
+)
+from tests.fixtures import make_cbz
 
 
 def _reply(items: list[dict]) -> httpx.Response:
@@ -89,9 +97,7 @@ class TestGeminiTranslator:
                 ]
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert [b.translation for b in result.bubbles] == ["HOI", "DOEI"]
 
     def test_the_model_name_is_recorded(self):
@@ -116,9 +122,7 @@ class TestGeminiTranslator:
                 json={"candidates": [{"content": {"parts": [{"text": json.dumps(payload)}]}}]},
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert len(result.bubbles) == 1
 
     def test_one_broken_bubble_does_not_lose_the_rest(self):
@@ -130,9 +134,7 @@ class TestGeminiTranslator:
                 ]
             )
 
-        result = _translator(handler).translate_page(
-            b"x", media_type="image/png", target_lang="nl"
-        )
+        result = _translator(handler).translate_page(b"x", media_type="image/png", target_lang="nl")
         assert [b.translation for b in result.bubbles] == ["GOED"]
 
     def test_rate_limit_is_reported_clearly(self):
@@ -231,10 +233,28 @@ class TestOverlay:
 
     def test_the_layer_is_much_smaller_than_the_page(self):
         """De reden om een laag te sturen in plaats van de pagina opnieuw: hij
-        kost een fractie van de bytes."""
-        page = _png(800, 1200)
+        kost een fractie van de bytes.
+
+        Met een geruisde pagina in plaats van een egaal wit vlak, want dat
+        laatste comprimeert tot een paar kilobyte en is dus geen eerlijke maat
+        voor een echte scan.
+        """
+        import random
+
+        ruis = Image.new("RGB", (800, 1200))
+        willekeurig = random.Random(1)
+        ruis.putdata(
+            [
+                (willekeurig.randrange(256), willekeurig.randrange(256), willekeurig.randrange(256))
+                for _ in range(800 * 1200)
+            ]
+        )
+        buffer = BytesIO()
+        ruis.save(buffer, format="PNG")
+        page = buffer.getvalue()
+
         layer = render_layer((800, 1200), [Bubble(0.1, 0.1, 0.4, 0.2, "HI", "HOI")])
-        assert len(layer) < len(page)
+        assert len(layer) < len(page) / 10
 
     def test_baking_keeps_the_format(self):
         data = bake(_png(), [Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")], media_type="image/png")
@@ -295,9 +315,11 @@ class TestService:
         """Net als het vooruitlezen van M5: wat je al voorbij bent hoeft niet
         meer vertaald te worden."""
         book = _comic(session, pages=6)
-        assert plan_pages(
-            session, book, target_lang="nl", provider="gemini", from_page=3
-        ) == [3, 4, 5]
+        assert plan_pages(session, book, target_lang="nl", provider="gemini", from_page=3) == [
+            3,
+            4,
+            5,
+        ]
 
     def test_plan_respects_the_limit(self, session: Session):
         book = _comic(session, pages=10)
@@ -449,9 +471,7 @@ class TestApi:
         assert asked.status_code == 200
         assert asked.content == plain.content
 
-    def test_asking_for_a_translated_page_bakes_it_in(
-        self, scanned: TestClient, session: Session
-    ):
+    def test_asking_for_a_translated_page_bakes_it_in(self, scanned: TestClient, session: Session):
         book_id = _comic_id(scanned)
         session.add(
             Translation(
@@ -459,9 +479,7 @@ class TestApi:
                 page_index=0,
                 target_lang="nl",
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -471,9 +489,7 @@ class TestApi:
         assert baked.status_code == 200
         assert baked.content != plain.content
 
-    def test_the_overlay_is_a_png_the_size_of_the_page(
-        self, scanned: TestClient, session: Session
-    ):
+    def test_the_overlay_is_a_png_the_size_of_the_page(self, scanned: TestClient, session: Session):
         book_id = _comic_id(scanned)
         session.add(
             Translation(
@@ -481,9 +497,7 @@ class TestApi:
                 page_index=0,
                 target_lang="nl",
                 provider="gemini",
-                payload=PageResult(
-                    bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]
-                ).to_payload(),
+                payload=PageResult(bubbles=[Bubble(0.1, 0.1, 0.9, 0.5, "HI", "HOI")]).to_payload(),
             )
         )
         session.commit()
@@ -632,7 +646,8 @@ class TestModePreference:
 
 
 class TestSidecar:
-    def test_the_path_is_named_after_series_and_chapter(self, session: Session):
+    def test_the_path_sits_next_to_the_series(self, session: Session, temp_settings):
+        """Naast de serie in je eigen bibliotheek, in een verborgen map."""
         series = Series(title="Shinya Shokudo", sort_title="shinya")
         session.add(series)
         session.flush()
@@ -642,7 +657,8 @@ class TestSidecar:
 
         path = sidecar.json_path(series, book, 7, "nl")
         assert "Shinya Shokudo" in str(path)
-        assert "03 Deel" in str(path)
+        assert sidecar.SIDECAR_DIRNAME in path.parts
+        assert path.parent.name == "c003", "nullen ervoor, zodat ls op volgorde staat"
         assert path.name == "p0007-nl.json"
 
     def test_unsafe_characters_are_stripped(self, session: Session):
@@ -755,3 +771,876 @@ class TestSidecarPersistence:
         assert [b.translation for b in result.bubbles] == ["B"]
         # En de database is bijgewerkt, zodat de statusteller weer klopt.
         assert find(session, book.id, 1, "nl", "gemini") is not None
+
+
+class TestTwoTranslateModes:
+    """Vanzelf mag goedkoop zijn, de knop mag duur zijn.
+
+    Dat zijn twee losse keuzes: de wachtrij loopt zonder dat je erom vraagt, en
+    als jij zelf op een pagina drukt is dat juist omdat díé pagina het waard is.
+    """
+
+    def test_they_start_apart(self, client: TestClient):
+        body = client.get("/api/translate/mode").json()
+        assert body["mode"] == "text", "vanzelf hoort goedkoop te zijn"
+        assert body["button_mode"] == "image_fast", "de knop een stap hoger"
+
+    def test_setting_one_leaves_the_other_alone(self, client: TestClient):
+        client.put("/api/translate/mode", json={"button_mode": "image_pro"})
+        body = client.get("/api/translate/mode").json()
+        assert body["button_mode"] == "image_pro"
+        assert body["mode"] == "text"
+
+        client.put("/api/translate/mode", json={"mode": "image_fast"})
+        body = client.get("/api/translate/mode").json()
+        assert body["mode"] == "image_fast"
+        assert body["button_mode"] == "image_pro", "de knopstand bleef staan"
+
+    def test_an_unknown_mode_is_refused(self, client: TestClient):
+        response = client.put("/api/translate/mode", json={"button_mode": "gratis"})
+        assert response.status_code == 400
+
+    def test_sending_nothing_changes_nothing(self, client: TestClient):
+        voor = client.get("/api/translate/mode").json()
+        na = client.put("/api/translate/mode", json={}).json()
+        assert na["mode"] == voor["mode"]
+        assert na["button_mode"] == voor["button_mode"]
+
+
+class TestColourising:
+    """Inkleuren is geen vertaling en mag er nooit voor doorgaan.
+
+    Zou het als vertaalstand meetellen, dan zou "de beste die er ligt" een
+    ingekleurde pagina boven een vertaalde kiezen — en dan lees je ineens weer
+    de oorspronkelijke taal.
+    """
+
+    def test_grey_is_not_put_back(self):
+        """Bij een vertaling hoort zwart-wit zwart-wit te blijven; hier juist niet."""
+        from bookpal.translate.imagepage import _match_original
+
+        grijs = Image.new("L", (40, 60), 200)
+        buffer = BytesIO()
+        grijs.save(buffer, format="PNG")
+
+        gekleurd = Image.new("RGB", (40, 60), (200, 40, 40))
+        uit = BytesIO()
+        gekleurd.save(uit, format="PNG")
+
+        # Op de pixels en niet op de modus: webp kent geen grijswaardenmodus,
+        # dus alles komt als RGB terug. Waar het om gaat is of de kleur er nog
+        # ín zit.
+        def heeft_kleur(data: bytes) -> bool:
+            with Image.open(BytesIO(data)) as beeld:
+                rgb = beeld.convert("RGB")
+                return any(
+                    abs(r - g) > 12 or abs(g - b) > 12 for r, g, b in list(rgb.getdata())[:400]
+                )
+
+        assert heeft_kleur(_match_original(uit.getvalue(), buffer.getvalue(), keep_gray=False))
+        assert not heeft_kleur(_match_original(uit.getvalue(), buffer.getvalue())), (
+            "een vertaling houdt zich wél aan het zwart-wit van het origineel"
+        )
+
+    def test_the_size_still_follows_the_original(self):
+        from bookpal.translate.imagepage import _match_original
+
+        klein = BytesIO()
+        Image.new("L", (40, 60), 200).save(klein, format="PNG")
+        groot = BytesIO()
+        Image.new("RGB", (80, 120), (10, 20, 30)).save(groot, format="PNG")
+
+        uit = _match_original(groot.getvalue(), klein.getvalue(), keep_gray=False)
+        with Image.open(BytesIO(uit)) as beeld:
+            assert beeld.size == (40, 60)
+
+    def test_it_is_stored_under_its_own_name(self, session: Session, temp_settings):
+        """Naast de vertalingen, niet ertussen."""
+        from bookpal.translate import sidecar
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import COLOUR_VARIANT
+
+        boek = _comic(session)
+        kleur = sidecar.variant_path(None, boek, 3, COLOUR_VARIANT)
+        vertaald = sidecar.image_path(None, boek, 3, "nl", TranslateMode.IMAGE_PRO)
+        assert kleur != vertaald
+        assert "kleur" in kleur.name
+
+    def test_a_colour_page_is_never_offered_as_a_translation(self, session: Session, temp_settings):
+        from bookpal.models import Translation
+        from bookpal.translate.service import COLOUR_PROVIDER, best_available
+
+        boek = _comic(session)
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=0,
+                target_lang="src",
+                provider=COLOUR_PROVIDER,
+                payload={"model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+
+        assert best_available(session, boek, 0, "nl") is None
+
+    def test_asking_for_a_page_that_is_not_coloured_is_a_404(
+        self, client: TestClient, session: Session
+    ):
+        boek = _comic(session)
+        session.commit()
+        response = client.get(f"/api/books/{boek.id}/pages/0/colour")
+        assert response.status_code == 404
+
+
+class TestColourAndTranslationTogether:
+    """Eén keer inkleuren, en die kleur over elke vertaling.
+
+    Eerder werd de hertekende vertaling zelf ingekleurd; dat werkte, maar
+    maakte kleur taalgebonden — elke taal een nieuwe aanroep van tientallen
+    centen voor dezelfde verf. Nu is de kleur taalloos en wordt de combinatie
+    ter plekke berekend.
+    """
+
+    def _serie(self, session: Session, boek: Book) -> Series:
+        gevonden = session.get(Series, boek.series_id)
+        assert gevonden is not None
+        return gevonden
+
+    def _kleur(self, session: Session, boek: Book, kleur=(40, 160, 40)) -> None:
+        from bookpal.translate.service import COLOUR_VARIANT
+
+        plaat = io.BytesIO()
+        Image.new("RGB", (40, 60), kleur).save(plaat, format="WEBP")
+        sidecar.write_bytes(
+            sidecar.variant_path(self._serie(session, boek), boek, 0, COLOUR_VARIANT),
+            plaat.getvalue(),
+        )
+
+    def _hertekend(self, session: Session, boek: Book) -> None:
+        from bookpal.models import Translation
+        from bookpal.translate.modes import TranslateMode
+
+        plaat = Image.new("RGB", (40, 60), (255, 255, 255))
+        for x in range(40):
+            plaat.putpixel((x, 30), (0, 0, 0))  # "tekst" op de vertaalde pagina
+        buffer = io.BytesIO()
+        plaat.save(buffer, format="WEBP", lossless=True)
+        sidecar.write_bytes(
+            sidecar.image_path(self._serie(session, boek), boek, 0, "nl", TranslateMode.IMAGE_PRO),
+            buffer.getvalue(),
+        )
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=0,
+                target_lang="nl",
+                provider=TranslateMode.IMAGE_PRO.provider,
+                payload={"full_page": True, "model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+
+    def test_the_colour_page_is_language_free(self, session: Session, temp_settings):
+        """Anders betaal je twee keer voor dezelfde verf."""
+        from bookpal.translate.service import COLOUR_VARIANT, colour_variant
+
+        assert colour_variant(None) == COLOUR_VARIANT
+
+    def test_asking_with_a_language_builds_the_combination(self, session: Session, temp_settings):
+        from bookpal.translate.service import colour_variant, read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        gemaakt = read_colour(session, boek, 0, "nl")
+        assert gemaakt is not None
+        # En hij wordt bewaard, zodat het rekenwerk eenmalig is.
+        assert sidecar.variant_path(
+            self._serie(session, boek), boek, 0, colour_variant("nl")
+        ).is_file()
+
+    def test_the_translated_text_survives(self, session: Session, temp_settings):
+        """De letters komen van onze pagina, niet van de ingekleurde."""
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        beeld = Image.open(io.BytesIO(read_colour(session, boek, 0, "nl"))).convert("RGB")
+        rood, groen, blauw = beeld.getpixel((20, 30))
+        assert max(rood, groen, blauw) < 60, "de zwarte regel hoort zwart te blijven"
+
+    def test_colour_arrives_where_the_page_is_white(self, session: Session, temp_settings):
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+        self._hertekend(session, boek)
+
+        beeld = Image.open(io.BytesIO(read_colour(session, boek, 0, "nl"))).convert("RGB")
+        rood, groen, blauw = beeld.getpixel((20, 10))
+        assert groen > rood and groen > blauw, "het groen van de verf hoort door te komen"
+
+    def test_without_a_redrawn_page_you_get_the_plain_colour(self, session: Session, temp_settings):
+        """Onze eigen tekstvlakken komen er in de lezer gewoon overheen."""
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._kleur(session, boek)
+
+        assert read_colour(session, boek, 0, "nl") is not None
+
+    def test_nothing_coloured_means_nothing(self, session: Session, temp_settings):
+        from bookpal.translate.service import read_colour
+
+        boek = _comic(session)
+        session.commit()
+        self._hertekend(session, boek)
+
+        assert read_colour(session, boek, 0, "nl") is None
+        assert read_colour(session, boek, 0) is None
+
+
+class TestRecompose:
+    """De kleur komt van het model, het lijnwerk van ons."""
+
+    def _bytes(self, image: Image.Image) -> bytes:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_our_ink_stays_black(self):
+        """Het model levert de inkt zachter terug dan hij erin ging."""
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (255, 255, 255))
+        pagina.putpixel((5, 5), (0, 0, 0))
+        verzacht = Image.new("RGB", (20, 20), (255, 255, 255))
+        verzacht.putpixel((5, 5), (120, 120, 120))
+
+        samen = recompose(self._bytes(pagina), self._bytes(verzacht))
+        assert samen.getpixel((5, 5)) == (0, 0, 0)
+
+    def test_the_colour_comes_from_the_painted_version(self):
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (200, 200, 200))
+        geverfd = Image.new("RGB", (20, 20), (200, 60, 60))
+
+        rood, groen, blauw = recompose(self._bytes(pagina), self._bytes(geverfd)).getpixel((1, 1))
+        assert rood > groen and rood > blauw, "de tint hoort van de verf te komen"
+
+    def test_a_wash_darker_than_the_paper_is_kept(self):
+        """Anders verdwijnt juist de schaduw die aquarel zijn textuur geeft."""
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (20, 20), (255, 255, 255))
+        wassing = Image.new("RGB", (20, 20), (160, 190, 160))
+
+        rood, _groen, _blauw = recompose(self._bytes(pagina), self._bytes(wassing)).getpixel((1, 1))
+        assert rood < 255, "de wassing hoort donkerder te blijven dan het papier"
+
+    def test_a_different_size_is_scaled_to_the_page(self):
+        from bookpal.translate.recolour import recompose
+
+        pagina = Image.new("RGB", (30, 40), (255, 255, 255))
+        verf = Image.new("RGB", (60, 80), (200, 60, 60))
+
+        assert recompose(self._bytes(pagina), self._bytes(verf)).size == (30, 40)
+
+
+def _colour_book(session: Session, tmp_path: Path) -> Book:
+    """Een boek waarvan de eerste pagina al kleur van de tekenaar heeft."""
+    import zipfile
+
+    from bookpal.models import File, LibraryRoot
+
+    pad = tmp_path / "kleurstrip.cbz"
+    plaat = io.BytesIO()
+    Image.new("RGB", (60, 90), (200, 40, 40)).save(plaat, format="PNG")
+    with zipfile.ZipFile(pad, "w") as archief:
+        for nummer in range(3):
+            archief.writestr(f"{nummer + 1:03d}.png", plaat.getvalue())
+
+    boek = _comic(session, pages=3)
+    root = LibraryRoot(name="R", path=str(tmp_path))
+    session.add(root)
+    session.flush()
+    bestand = File(
+        library_root_id=root.id,
+        path=str(pad),
+        size=pad.stat().st_size,
+        mtime=0.0,
+        extension=".cbz",
+    )
+    session.add(bestand)
+    session.flush()
+    boek.file_id = bestand.id
+    session.commit()
+    return boek
+
+
+class TestAlreadyColour:
+    """Een pagina die de tekenaar zelf kleurde wordt overschilderd, niet ingekleurd."""
+
+    def _bytes(self, image: Image.Image) -> bytes:
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue()
+
+    def test_a_black_and_white_page_is_not_colour(self):
+        from bookpal.translate.recolour import is_colour
+
+        pagina = Image.new("RGB", (60, 60), (255, 255, 255))
+        for x in range(60):
+            pagina.putpixel((x, 30), (0, 0, 0))
+        assert is_colour(self._bytes(pagina)) is False
+
+    def test_yellowed_paper_is_not_colour(self):
+        """Anders zou elke oude scan als kleurpagina gelden."""
+        from bookpal.translate.recolour import is_colour
+
+        assert is_colour(self._bytes(Image.new("RGB", (60, 60), (240, 228, 200)))) is False
+
+    def test_a_two_tone_page_counts_as_colour(self):
+        """Bewust: liever een vraag te veel dan een palet stilletjes vervangen."""
+        from bookpal.translate.recolour import is_colour
+
+        pagina = Image.new("RGB", (60, 60), (255, 255, 255))
+        for y in range(30):
+            for x in range(60):
+                pagina.putpixel((x, y), (200, 30, 30))
+        assert is_colour(self._bytes(pagina)) is True
+
+    def test_colourising_a_colour_page_asks_first(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _colour_book(session, tmp_path)
+        response = client.post(f"/api/books/{boek.id}/pages/0/colour")
+        assert response.status_code == 412
+        assert "kleur" in response.json()["detail"]
+
+    def test_force_goes_ahead(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """De vraag is een bevestiging, geen verbod."""
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _colour_book(session, tmp_path)
+        geverfd = Image.new("RGB", (40, 60), (40, 120, 40))
+        buffer = io.BytesIO()
+        geverfd.save(buffer, format="PNG")
+        monkeypatch.setattr(
+            "bookpal.translate.imagepage.GeminiPageTranslator.colorise_page",
+            lambda self, image, *, media_type: buffer.getvalue(),
+        )
+
+        response = client.post(f"/api/books/{boek.id}/pages/0/colour?force=true")
+        assert response.status_code == 200
+        assert client.get(f"/api/books/{boek.id}/pages/0/colour").status_code == 200
+
+
+class TestColourMode:
+    """Met welk beeldmodel er ingekleurd wordt, is een eigen keuze."""
+
+    def test_it_defaults_to_the_cheap_model(self, session: Session):
+        from bookpal.translate.preferences import get_colour_mode
+
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_it_can_be_set_to_the_heavy_one(self, session: Session):
+        from bookpal.translate.preferences import get_colour_mode, set_colour_mode
+
+        set_colour_mode(session, TranslateMode.IMAGE_PRO)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_PRO
+
+    def test_it_is_separate_from_the_button(self, session: Session):
+        """Anders zou een dure vertaalknop ook duur inkleuren afdwingen."""
+        from bookpal.translate.preferences import get_colour_mode, set_button_mode
+
+        set_button_mode(session, TranslateMode.IMAGE_PRO)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_the_text_mode_is_not_a_colour_mode(self, session: Session):
+        """Inkleuren levert een afbeelding op; de tekststand kan dat niet."""
+        from bookpal.translate.preferences import get_colour_mode, set_colour_mode
+
+        set_colour_mode(session, TranslateMode.TEXT)
+        assert get_colour_mode(session) is TranslateMode.IMAGE_FAST
+
+    def test_the_api_refuses_the_text_mode(self, client: TestClient):
+        response = client.put("/api/translate/mode", json={"colour_mode": "text"})
+        assert response.status_code == 400
+        assert "beeldstand" in response.json()["detail"]
+
+    def test_the_api_reports_and_stores_it(self, client: TestClient):
+        assert client.get("/api/translate/mode").json()["colour_mode"] == "image_fast"
+        response = client.put("/api/translate/mode", json={"colour_mode": "image_pro"})
+        assert response.json()["colour_mode"] == "image_pro"
+        assert client.get("/api/translate/mode").json()["colour_mode"] == "image_pro"
+
+    def test_colourising_uses_the_chosen_model(
+        self,
+        client: TestClient,
+        session: Session,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """De stand hoort ook echt het model te kiezen, niet alleen te tonen."""
+        from bookpal.config import settings as app_config
+
+        monkeypatch.setattr(app_config, "gemini_api_key", "test-sleutel")
+        boek = _comic(session, pages=3)
+        pad = make_cbz(tmp_path / "grijs.cbz", pages=3)
+        from bookpal.models import File, LibraryRoot
+
+        root = LibraryRoot(name="R", path=str(tmp_path))
+        session.add(root)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek.file_id = bestand.id
+        session.commit()
+
+        gebruikt: list[str] = []
+        plaat = io.BytesIO()
+        Image.new("RGB", (40, 60), (40, 120, 40)).save(plaat, format="PNG")
+
+        def onthoud(self, image, *, media_type):
+            gebruikt.append(self.model)
+            return plaat.getvalue()
+
+        monkeypatch.setattr(
+            "bookpal.translate.imagepage.GeminiPageTranslator.colorise_page", onthoud
+        )
+
+        # force omdat de proefpagina's zelf kleur hebben; hier gaat het om het
+        # model dat gekozen wordt, niet om de vraag of het mag.
+        eerste = client.post(f"/api/books/{boek.id}/pages/0/colour?force=true")
+        assert eerste.status_code == 200, eerste.json()
+        assert gebruikt == [app_config.gemini_image_model_fast]
+
+        client.put("/api/translate/mode", json={"colour_mode": "image_pro"})
+        client.post(f"/api/books/{boek.id}/pages/1/colour?force=true")
+        assert gebruikt[-1] == app_config.gemini_image_model_pro
+
+
+class TestTheAutomaticMode:
+    """De stand bij "vanzelf" hoort ook echt te bepalen wat er gebeurt.
+
+    Hij werd wel bewaard en getoond, maar nergens gelezen: de wachtrij pakte
+    altijd de tekstvertaler. Een schakelaar die niets doet is erger dan geen
+    schakelaar, want je denkt dat je iets hebt ingesteld.
+    """
+
+    def test_the_queue_carries_the_mode(self, session: Session):
+        from bookpal.translate.preferences import set_mode
+
+        set_mode(session, TranslateMode.IMAGE_FAST)
+        queue = TranslationQueue()
+        queue.submit(1, [0, 1], "nl", mode=TranslateMode.IMAGE_FAST)
+        assert all(job.mode is TranslateMode.IMAGE_FAST for job in queue._jobs)
+
+    def test_the_same_page_in_two_modes_is_two_jobs(self):
+        """Anders zou een hertekende pagina een tekstvertaling verdringen."""
+        queue = TranslationQueue()
+        queue.submit(1, [0], "nl", mode=TranslateMode.TEXT)
+        toegevoegd = queue.submit(1, [0], "nl", mode=TranslateMode.IMAGE_FAST)
+        assert toegevoegd == 1
+        assert len(queue._jobs) == 2
+
+    def test_reading_ahead_follows_the_setting(
+        self, session: Session, temp_settings, monkeypatch: pytest.MonkeyPatch
+    ):
+        from bookpal.translate.preferences import set_mode
+        from bookpal.translate.queue import TranslationQueue as Q
+
+        monkeypatch.setattr(app_settings, "gemini_api_key", "test-sleutel")
+        boek = _comic(session, pages=10)
+        session.commit()
+        set_mode(session, TranslateMode.IMAGE_FAST)
+
+        queue = Q()
+        queue.notify_reading(boek.id, 0, "nl")
+        assert queue._jobs, "er hoort iets vooruit gelezen te worden"
+        assert all(job.mode is TranslateMode.IMAGE_FAST for job in queue._jobs)
+
+    def test_the_counter_sees_every_mode(self, session: Session):
+        """Anders staat de balk op nul zodra je in een andere stand werkt."""
+        from bookpal.api.translate import _done_pages
+
+        boek = _comic(session)
+        session.commit()
+        _store(session, boek, 0, "nl")
+        session.add(
+            Translation(
+                book_id=boek.id,
+                page_index=4,
+                target_lang="nl",
+                provider=TranslateMode.IMAGE_PRO.provider,
+                payload={"full_page": True, "model": "gemini-3-pro-image"},
+            )
+        )
+        session.commit()
+
+        assert _done_pages(session, boek.id, "nl") == {0, 4}
+
+
+class TestWhereSidecarsLive:
+    """Naast de serie in je eigen bibliotheek, in een verborgen map.
+
+    Belangrijk genoeg om vast te leggen: hier staat betaald werk, en een pad
+    dat stilletjes verschuift betekent dat je er opnieuw voor betaalt.
+    """
+
+    def _serie(self, session: Session, **velden) -> Series:
+        series = Series(title="Oishinbo", sort_title="oishinbo", **velden)
+        session.add(series)
+        session.flush()
+        return series
+
+    def _boek(self, session: Session, series: Series, **velden) -> Book:
+        velden.setdefault("title", "Deel")
+        book = Book(series_id=series.id, kind=BookKind.COMIC, **velden)
+        session.add(book)
+        session.flush()
+        return book
+
+    def test_volume_and_chapter_are_padded(self, session: Session, temp_settings):
+        """Zodat een ls op leesvolgorde staat in plaats van 1, 10, 2."""
+        series = self._serie(session)
+        book = self._boek(session, series, volume="3", number="12", title="Iets")
+        assert sidecar.chapter_slug(book) == "v03c012"
+
+    def test_a_half_chapter_keeps_its_half(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, number="12.5")
+        assert sidecar.chapter_slug(book) == "c012.5"
+
+    def test_something_unnumbered_falls_back_to_its_title(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, title="Extra hoofdstuk")
+        assert sidecar.chapter_slug(book) == "Extra hoofdstuk"
+
+    def test_the_place_is_remembered(self, session: Session, temp_settings):
+        """Een serie kan verhuizen; het betaalde werk mag niet meeverhuizen."""
+        from bookpal.models import LibraryRoot
+
+        root = LibraryRoot(name="Manga", path="/library/manga")
+        session.add(root)
+        session.flush()
+        series = self._serie(session, library_root_id=root.id)
+        book = self._boek(session, series, number="1")
+
+        eerst = sidecar.chapter_dir(series, book)
+        assert series.sidecar_path, "de plek hoort vastgelegd te worden"
+
+        # Serie verhuist naar een andere root: het pad blijft waar het stond.
+        series.library_root_id = None
+        session.flush()
+        assert sidecar.chapter_dir(series, book) == eerst
+
+    def test_the_download_cache_is_never_chosen(self, session: Session, temp_settings):
+        """Daar wordt opgeruimd, en dan is een betaalde vertaling weg."""
+        from bookpal.models import LibraryRoot
+
+        cache = LibraryRoot(name="Downloads", path=str(app_settings.download_dir))
+        eigen = LibraryRoot(name="Manga", path="/library/manga")
+        session.add_all([cache, eigen])
+        session.flush()
+        series = self._serie(session, library_root_id=cache.id)
+        book = self._boek(session, series, number="1")
+
+        pad = sidecar.chapter_dir(series, book)
+        assert str(app_settings.download_dir) not in str(pad)
+        assert "/library/manga" in str(pad)
+
+    def test_the_hidden_folder_sits_between_them(self, session: Session, temp_settings):
+        series = self._serie(session)
+        book = self._boek(session, series, number="1")
+        pad = sidecar.chapter_dir(series, book)
+        assert pad.parent.name == sidecar.SIDECAR_DIRNAME
+        assert pad.parent.parent.name == "Oishinbo"
+
+
+class TestMovingTheOldOnes:
+    def test_files_move_to_the_new_place(self, session: Session, temp_settings):
+        series = Series(title="Oishinbo", sort_title="oishinbo")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, number="12", title="Iets")
+        session.add(book)
+        session.commit()
+
+        oud = sidecar.legacy_chapter_dir(series, book)
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text('{"bubbles": []}', encoding="utf-8")
+
+        verplaatst = sidecar.move_legacy(session)
+
+        assert verplaatst == 1
+        assert (sidecar.chapter_dir(series, book) / "p0001-nl.json").is_file()
+        assert not oud.exists()
+
+    def test_it_only_runs_once(self, session: Session, temp_settings):
+        """Anders zou elke herstart de hele bibliotheek langslopen."""
+        sidecar.move_legacy(session)
+        assert sidecar.move_legacy(session) == 0
+
+    def test_a_failed_move_is_not_ticked_off(self, session: Session, temp_settings, monkeypatch):
+        """Wat er niet mee kwam is betaald werk; dat probeer je opnieuw."""
+        from bookpal.models import Setting
+
+        series = Series(title="Oishinbo", sort_title="oishinbo")
+        session.add(series)
+        session.flush()
+        book = Book(series_id=series.id, kind=BookKind.COMIC, number="12", title="Iets")
+        session.add(book)
+        session.commit()
+        oud = sidecar.legacy_chapter_dir(series, book)
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text("{}", encoding="utf-8")
+
+        def stuk(*_args, **_kwargs):
+            raise OSError("andere schijf")
+
+        monkeypatch.setattr("bookpal.translate.sidecar.shutil.move", stuk)
+        sidecar.move_legacy(session)
+
+        assert session.get(Setting, sidecar.MOVED_KEY) is None
+        assert (oud / "p0001-nl.json").is_file(), "het origineel blijft staan"
+
+
+class TestRecoveringOrphans:
+    """Mappen die niet meer op naam te vinden waren, alsnog thuisbrengen.
+
+    Hoofdstukken zijn onderweg hernoemd; die vertalingen waren daarmee ook in
+    de oude indeling al onvindbaar. Er is wel voor betaald.
+    """
+
+    def _serie_met_boek(self, session: Session, titel: str, nummer: str) -> tuple[Series, Book]:
+        series = Series(title=titel, sort_title=titel.lower())
+        session.add(series)
+        session.flush()
+        book = Book(
+            series_id=series.id,
+            kind=BookKind.COMIC,
+            title=f"Hoofdstuk {nummer}",
+            number=nummer,
+        )
+        session.add(book)
+        session.commit()
+        return series, book
+
+    def test_a_renamed_chapter_is_found_by_its_number(self, session: Session, temp_settings):
+        series, book = self._serie_met_boek(session, "Shinya Shokudo", "39")
+        # Zoals hij vroeger heette: op de titel van toen.
+        oud = app_settings.sidecar_dir / "Shinya Shokudo" / "39 Yarō Abe"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0003-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0003-nl.json").is_file()
+
+    def test_an_edition_suffix_still_matches_the_series(self, session: Session, temp_settings):
+        """De map heette naar de uitgave, de serie heet nu zonder."""
+        series, book = self._serie_met_boek(session, "One Piece", "251")
+        oud = app_settings.sidecar_dir / "One Piece (Official Colored)" / "251 Overture"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0002-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0002-nl.json").is_file()
+
+    def test_capitals_do_not_matter(self, session: Session, temp_settings):
+        """Dezelfde serie heette ooit "Crayon Shin-chan" en nu "Crayon Shin-Chan"."""
+        series, book = self._serie_met_boek(session, "Crayon Shin-Chan", "0")
+        oud = app_settings.sidecar_dir / "Crayon Shin-chan" / "0 Vol.2 Ch.0"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0004-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (sidecar.chapter_dir(series, book) / "p0004-nl.json").is_file()
+
+    def test_something_unrecognisable_is_left_alone(self, session: Session, temp_settings):
+        """Niet begrijpen is geen reden om iets weg te gooien."""
+        self._serie_met_boek(session, "Shinya Shokudo", "39")
+        oud = app_settings.sidecar_dir / "Iets Anders" / "geen nummer"
+        oud.mkdir(parents=True, exist_ok=True)
+        (oud / "p0001-nl.json").write_text("{}", encoding="utf-8")
+
+        sidecar.move_legacy(session)
+
+        assert (oud / "p0001-nl.json").is_file()
+
+
+class TestTheColourBadgeKnows:
+    """Wat het merkje meldt bepaalt welke plaat de lezer opvraagt."""
+
+    def test_a_combination_that_can_be_made_counts_as_available(
+        self, session: Session, temp_settings
+    ):
+        """Anders zie je de eerste keer de kale kleurversie met de oude tekst."""
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._kleur(session, boek)
+        samen._hertekend(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is True
+
+    def test_without_colour_there_is_nothing_to_combine(self, session: Session, temp_settings):
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._hertekend(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is False
+
+    def test_without_a_redrawn_page_there_is_nothing_to_combine(
+        self, session: Session, temp_settings
+    ):
+        from bookpal.translate.service import has_colour_for_language
+
+        samen = TestColourAndTranslationTogether()
+        boek = _comic(session)
+        session.commit()
+        samen._kleur(session, boek)
+
+        assert has_colour_for_language(session, boek, 0, "nl") is False
+
+
+class TestColourRepairsItself:
+    """De ruwe plaat van het model is het enige waar geld in zit.
+
+    Zolang die er ligt is elke bewerking opnieuw te maken: een andere taal, een
+    betere samenstelling, of een bestand dat kwijt is.
+    """
+
+    def _boek_met_bestand(self, session: Session, tmp_path: Path) -> Book:
+        from bookpal.models import File, LibraryRoot
+
+        boek = _comic(session, pages=3)
+        pad = make_cbz(tmp_path / "h.cbz", pages=3)
+        root = LibraryRoot(name="R", path=str(tmp_path))
+        session.add(root)
+        session.flush()
+        bestand = File(
+            library_root_id=root.id,
+            path=str(pad),
+            size=pad.stat().st_size,
+            mtime=0.0,
+            extension=".cbz",
+        )
+        session.add(bestand)
+        session.flush()
+        boek.file_id = bestand.id
+        session.commit()
+        return boek
+
+    def _plaat(self, kleur=(40, 160, 40)) -> bytes:
+        buffer = io.BytesIO()
+        Image.new("RGB", (40, 60), kleur).save(buffer, format="WEBP")
+        return buffer.getvalue()
+
+    def test_the_finished_page_is_rebuilt_from_the_raw_one(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        from bookpal.translate.service import COLOUR_RAW_VARIANT, COLOUR_VARIANT, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(sidecar.variant_path(serie, boek, 0, COLOUR_RAW_VARIANT), self._plaat())
+
+        assert read_colour(session, boek, 0) is not None
+        assert sidecar.variant_path(serie, boek, 0, COLOUR_VARIANT).is_file()
+
+    def test_an_old_language_version_can_restore_the_plain_one(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """De kleur erin komt van het model en klopt nog; alleen de letters niet."""
+        from bookpal.translate.service import COLOUR_VARIANT, colour_variant, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(
+            sidecar.variant_path(serie, boek, 0, colour_variant("nl")), self._plaat()
+        )
+
+        assert read_colour(session, boek, 0) is not None
+        assert sidecar.variant_path(serie, boek, 0, COLOUR_VARIANT).is_file()
+
+    def test_no_ghost_text_when_restoring_from_a_language_version(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """De letters van de vertaling mogen niet door het origineel heen."""
+        from bookpal.translate.service import colour_variant, read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        # Een taalversie met een zwarte regel waar het origineel wit is.
+        plaat = Image.new("RGB", (40, 60), (40, 160, 40))
+        for x in range(40):
+            plaat.putpixel((x, 5), (0, 0, 0))
+        buffer = io.BytesIO()
+        plaat.save(buffer, format="WEBP", lossless=True)
+        sidecar.write_bytes(
+            sidecar.variant_path(serie, boek, 0, colour_variant("nl")), buffer.getvalue()
+        )
+
+        hersteld = Image.open(io.BytesIO(read_colour(session, boek, 0))).convert("RGB")
+        origineel = Image.open(io.BytesIO(render_for_translation(session, boek, 0)[0])).convert(
+            "RGB"
+        )
+        rood, groen, blauw = hersteld.getpixel((20, int(5 * hersteld.height / 60)))
+        was = origineel.getpixel((20, int(5 * origineel.height / 60)))
+        assert max(rood, groen, blauw) > 60 or max(was) < 60, (
+            "hier stond geen inkt in het origineel, dus hier hoort niets zwart te zijn"
+        )
+
+    def test_the_raw_plate_is_not_mistaken_for_a_language(
+        self, session: Session, temp_settings, tmp_path: Path
+    ):
+        """ "kleur-ruw" ziet eruit als "kleur-<taal>" en is het niet."""
+        from bookpal.translate.service import COLOUR_RAW_VARIANT, _any_language_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        serie = session.get(Series, boek.series_id)
+        sidecar.write_bytes(sidecar.variant_path(serie, boek, 0, COLOUR_RAW_VARIANT), self._plaat())
+
+        assert _any_language_colour(serie, boek, 0) is None
+
+    def test_nothing_at_all_stays_nothing(self, session: Session, temp_settings, tmp_path: Path):
+        from bookpal.translate.service import read_colour
+
+        boek = self._boek_met_bestand(session, tmp_path)
+        assert read_colour(session, boek, 0) is None

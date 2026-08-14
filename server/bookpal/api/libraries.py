@@ -9,9 +9,15 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import get_session
-from bookpal.library import ScanAborted, scan_all, scan_root
-from bookpal.models import Book, LibraryRoot, Series
-from bookpal.schemas import LibraryRootIn, LibraryRootOut, ScanResultOut
+from bookpal.library import ScanAborted, scan_all, scan_root, sidecars
+from bookpal.models import Book, File, LibraryRoot, Series
+from bookpal.schemas import (
+    LibraryRootIn,
+    LibraryRootOut,
+    ScanResultOut,
+    SidecarSyncOut,
+)
+from bookpal.sources.importer import why_not_writable
 
 router = APIRouter(prefix="/api/libraries", tags=["libraries"])
 
@@ -33,6 +39,11 @@ def _to_out(session: Session, root: LibraryRoot) -> LibraryRootOut:
     out = LibraryRootOut.model_validate(root)
     out.series_count = series_count
     out.book_count = book_count
+    # Meteen meesturen: dat je hier niets kunt neerzetten hoor je te zien
+    # vóórdat je iets probeert te importeren, niet daarna.
+    probleem = why_not_writable(Path(root.path))
+    out.writable = probleem is None
+    out.write_problem = probleem
     return out
 
 
@@ -121,3 +132,50 @@ def scan_everything(
         )
         for name, result in results.items()
     ]
+
+
+@router.post("/sidecars", response_model=SidecarSyncOut)
+def write_sidecars(session: Session = Depends(get_session)) -> SidecarSyncOut:
+    """Schrijf naast elk boek vast wat we ervan weten.
+
+    Voor een bibliotheek die er al stond voordat dit bestond. Daarna houdt de
+    scanner ze vanzelf bij: hij leest ze bij elke ronde en vult aan wat er nog
+    niet in staat.
+
+    Alleen aanvullen, nooit weggooien: een sidecar die jij hebt aangepast blijft
+    zoals hij is.
+    """
+    resultaat = SidecarSyncOut()
+    boeken = session.scalars(select(Book).where(Book.file_id.isnot(None)))
+    for book in boeken:
+        bestand = session.get(File, book.file_id) if book.file_id else None
+        if bestand is None:
+            continue
+        pad = Path(bestand.path)
+        if not pad.is_file():
+            resultaat.skipped += 1
+            continue
+
+        series = session.get(Series, book.series_id)
+        zijkant = sidecars.read(pad) or sidecars.Sidecar()
+        herkomst = "source" if book.title_locked else "filename"
+        veranderd = zijkant.set_title(book.title, herkomst=herkomst)
+        if series is not None and zijkant.series != series.title:
+            zijkant.series = series.title
+            veranderd = True
+        if zijkant.number != book.number or zijkant.volume != book.volume:
+            zijkant.number, zijkant.volume = book.number, book.volume
+            veranderd = True
+        if series is not None and series.authors and not zijkant.authors:
+            zijkant.authors = list(series.authors)
+            veranderd = True
+
+        if not veranderd and sidecars.path_for(pad).is_file():
+            resultaat.skipped += 1
+            continue
+        if sidecars.write(pad, zijkant) is None:
+            resultaat.errors.append(f"{pad.name}: niet te schrijven")
+        else:
+            resultaat.written += 1
+
+    return resultaat

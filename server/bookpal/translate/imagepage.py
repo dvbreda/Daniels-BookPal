@@ -62,6 +62,80 @@ Regels:
 Geef alleen de bewerkte pagina terug, op exact dezelfde afmeting als deze."""
 
 
+# Waarom de opdracht begint met wat er níét mag veranderen: een model dat
+# vrijelijk mag inkleuren, componeert de pagina opnieuw. Door de omtrekken,
+# paneelranden en ballonnen als anker te benoemen blijft de tekening staan.
+# Gemeten over twee pagina's legde dit de uitlijning van 0,840 op 0,886 en
+# 0,861 op 0,868 (overlap met het origineel, zonder enige correctie achteraf),
+# en leverde het meteen meer kleur op. Zie recolour.py voor wat er daarna
+# gebeurt: hiervan gebruiken we alleen de kleur.
+_COLOUR_PROMPT = """Dit is een zwart-witte pagina uit een stripverhaal.
+
+Schilder er aquarel in, en houd daarbij de tekening exact op zijn plek.
+
+Wat onaangetast blijft, pixel voor pixel:
+- De omtrekken van alle figuren, gezichten en voorwerpen.
+- De randen van elk paneel, en de vorm en plek van elke tekstballon.
+- Alle tekst, in dezelfde letters op dezelfde plek. Vertaal niets en herschrijf
+  niets.
+
+Wat je toevoegt — aquarel, zoals de kleurpagina's die mangaka zelf schilderen:
+- Doorschijnende wassingen, geen egale vlakken. Binnen één vlak mag de kleur
+  verlopen van vol naar bijna niets, en het wit van het papier schijnt eronder
+  door.
+- Zachte randen, en kleuren die in elkaar mogen lopen waar ze elkaar raken.
+- Kies de kleur die het onderwerp in het echt heeft. Bladeren zijn groen,
+  bloemen en kleding mogen uitgesproken kleurrijk zijn, eten ziet er eetbaar
+  uit. Verf het niet allemaal in bruin en grijs.
+- De arcering mag opgaan in de wassing; de omtrekken zelf niet. Die blijven
+  scherp, met de verf eronder.
+- Tekstballonnen en de papierrand blijven wit. Papier is papier en inkt is inkt.
+- Houd het rustig genoeg om te blijven lezen. Een overdreven verzadigde pagina
+  leest slechter dan het zwart-witte origineel.
+
+Verschuif, herschaal of herteken niets. Iemand legt jouw pagina straks precies
+over deze heen, en dan moet elke lijn samenvallen.
+
+Geef alleen de geschilderde pagina terug, op exact dezelfde afmeting als deze."""
+
+
+def build_image_request(image: bytes, media_type: str, target_lang: str) -> dict[str, Any]:
+    """Het verzoek om deze pagina te hertekenen mét vertaling.
+
+    Losgetrokken van de klasse zodat de batch exact hetzelfde stuurt; twee
+    plekken met elk hun eigen opbouw lopen vroeg of laat uit elkaar.
+    """
+    language = _LANGUAGE_NAMES.get(target_lang.lower(), target_lang)
+    return _request(image, media_type, _PROMPT.format(language=language))
+
+
+def build_colour_request(image: bytes, media_type: str) -> dict[str, Any]:
+    """Het verzoek om deze pagina in te kleuren."""
+    return _request(image, media_type, _COLOUR_PROMPT)
+
+
+def _request(image: bytes, media_type: str, prompt: str) -> dict[str, Any]:
+    return {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": media_type,
+                            "data": base64.b64encode(image).decode("ascii"),
+                        }
+                    },
+                ]
+            }
+        ]
+    }
+
+
+def read_image(payload: dict[str, Any], original: bytes, *, keep_gray: bool) -> bytes:
+    """Het beeld uit een antwoord halen en terugbrengen naar onze maat."""
+    return _match_original(_extract_image(payload), original, keep_gray=keep_gray)
+
 
 class GeminiPageTranslator:
     """Levert een hele vertaalde pagina in plaats van losse tekstvlakken."""
@@ -80,7 +154,13 @@ class GeminiPageTranslator:
         self._model = model
         # Ruimer dan de tekststand: dit duurt 10-30 seconden per pagina en
         # loopt nooit in een wachtrij die er honderden achter elkaar doet.
-        self._client = client or httpx.Client(base_url=API_BASE, timeout=300.0)
+        # De sleutel in een header en niet in de URL: httpx logt elk verzoek
+        # met volledige URL, en dan staat je sleutel in de containerlogs.
+        self._client = client or httpx.Client(
+            base_url=API_BASE,
+            timeout=300.0,
+            headers={"x-goog-api-key": api_key},
+        )
         self._limiter = RateLimiter(rate)
 
     @property
@@ -88,31 +168,25 @@ class GeminiPageTranslator:
         return self._model
 
     def translate_page(self, image: bytes, *, media_type: str, target_lang: str) -> bytes:
-        language = _LANGUAGE_NAMES.get(target_lang.lower(), target_lang)
-        return self._run(image, media_type, _PROMPT.format(language=language))
+        return self._send(
+            build_image_request(image, media_type, target_lang), image, keep_gray=True
+        )
 
-    def _run(self, image: bytes, media_type: str, prompt: str) -> bytes:
-        body = {
-            "contents": [
-                {
-                    "parts": [
-                        {"text": prompt},
-                        {
-                            "inline_data": {
-                                "mime_type": media_type,
-                                "data": base64.b64encode(image).decode("ascii"),
-                            }
-                        },
-                    ]
-                }
-            ]
-        }
+    def colorise_page(self, image: bytes, *, media_type: str) -> bytes:
+        """Dezelfde pagina, ingekleurd.
 
+        Dit is geen vertaling en hoort er ook niet mee te concurreren: het
+        resultaat wordt apart bewaard, zodat een ingekleurde pagina nooit in de
+        plaats komt van een vertaalde. Wel houden we grijs níét terug — dat is
+        precies wat er hier moet veranderen.
+        """
+        return self._send(build_colour_request(image, media_type), image, keep_gray=False)
+
+    def _send(self, body: dict[str, Any], original: bytes, *, keep_gray: bool) -> bytes:
         self._limiter.acquire()
         try:
             response = self._client.post(
                 f"/models/{self._model}:generateContent",
-                params={"key": self._api_key},
                 json=body,
             )
         except httpx.HTTPError as exc:
@@ -123,8 +197,7 @@ class GeminiPageTranslator:
         if response.status_code >= 400:
             raise TranslationError(f"Gemini gaf {response.status_code}")
 
-        produced = _extract_image(response.json())
-        return _match_original(produced, image)
+        return read_image(response.json(), original, keep_gray=keep_gray)
 
     def close(self) -> None:
         self._client.close()
@@ -145,17 +218,20 @@ def _extract_image(payload: dict[str, Any]) -> bytes:
     raise TranslationError("Gemini gaf geen afbeelding terug")
 
 
-def _match_original(produced: bytes, original: bytes) -> bytes:
+def _match_original(produced: bytes, original: bytes, *, keep_gray: bool = True) -> bytes:
     """Terug naar de afmeting en het kleurkarakter van het origineel.
 
     Het model werkt in zijn eigen resolutie, dus zonder dit past de vertaalde
     pagina niet meer op de plek van de originele — en dat merk je pas als de
     lezer ernaast staat.
+
+    ``keep_gray`` uit bij het inkleuren: daar is het veranderen van grijs naar
+    kleur juist de bedoeling, en terugzetten zou het hele werk ongedaan maken.
     """
     with Image.open(BytesIO(original)) as source:
         source.load()
         size = source.size
-        was_gray = _is_grayscale(source)
+        was_gray = keep_gray and _is_grayscale(source)
 
     try:
         with Image.open(BytesIO(produced)) as opened:
@@ -187,8 +263,11 @@ def _is_grayscale(image: Image.Image, *, sample: int = 64) -> bool:
     if image.mode in ("L", "1"):
         return True
     small = image.convert("RGB").resize((sample, sample), Image.Resampling.BILINEAR)
-    for pixel in list(small.getdata()):
-        red, green, blue = pixel[0], pixel[1], pixel[2]
+    # tobytes en niet getdata: dat laatste is in nieuwere Pillow afgeschaft, en
+    # drie bytes per pixel uitlezen komt op hetzelfde neer.
+    raw = small.tobytes()
+    for start in range(0, len(raw), 3):
+        red, green, blue = raw[start], raw[start + 1], raw[start + 2]
         if abs(red - green) > 12 or abs(green - blue) > 12 or abs(red - blue) > 12:
             return False
     return True

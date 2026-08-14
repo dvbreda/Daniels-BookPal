@@ -96,6 +96,11 @@ class PushReport:
     provider: str
     results: list[PushResult] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    # Overgeslagen omdat er niets te doen viel — bij een proefronde bijvoorbeeld.
+    skipped: list[str] = field(default_factory=list)
+    # Andersom binnengehaald: de tracker stond verder, dus die stand is hier
+    # overgenomen. Geen fout maar het punt van synchroniseren.
+    pulled: list[str] = field(default_factory=list)
 
     @property
     def pushed(self) -> int:

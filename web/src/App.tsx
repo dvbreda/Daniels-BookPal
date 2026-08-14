@@ -3,7 +3,7 @@ import { BrowserRouter, Route, Routes } from "react-router-dom";
 
 import { CollectionsPage } from "./pages/CollectionsPage";
 import { CollectionViewPage } from "./pages/CollectionViewPage";
-import { LibraryPage } from "./pages/LibraryPage";
+import { HomePage } from "./pages/HomePage";
 import { ReaderPage } from "./pages/ReaderPage";
 import { SeriesPage } from "./pages/SeriesPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -29,7 +29,9 @@ export function App() {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<LibraryPage />} />
+          <Route path="/" element={<HomePage />} />
+          {/* De oude bibliotheekpagina blijft bereikbaar voor wie hem bookmarkte. */}
+          <Route path="/bibliotheek" element={<HomePage />} />
           <Route path="/serie/:id" element={<SeriesPage />} />
           <Route path="/lezen/:id" element={<ReaderPage />} />
           <Route path="/instellingen" element={<SettingsPage />} />

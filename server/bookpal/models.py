@@ -169,6 +169,11 @@ class Series(Base):
         ForeignKey("library_root.id", ondelete="CASCADE"), default=None
     )
     folder_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # Waar de sidecars van deze serie staan: vertalingen, ingekleurde pagina's,
+    # metadata. Eenmaal gekozen blijft dit staan, ook als de serie later ergens
+    # anders terechtkomt — anders zou betaald werk verweesd raken op een pad
+    # dat niemand meer uitrekent.
+    sidecar_path: Mapped[str | None] = mapped_column(String(1024), default=None)
 
     origin_language: Mapped[str | None] = mapped_column(String(8), default=None)
     origin_country: Mapped[str | None] = mapped_column(String(8), default=None)
@@ -214,8 +219,49 @@ class Series(Base):
         cascade="all, delete-orphan",
         order_by="Book.sort_volume, Book.sort_number",
     )
+    editions: Mapped[list[Edition]] = relationship(
+        back_populates="series",
+        cascade="all, delete-orphan",
+        order_by="Edition.rank",
+    )
 
     __table_args__ = (UniqueConstraint("library_root_id", "title", name="uq_series_root_title"),)
+
+
+class Edition(Base):
+    """Eén uitgave binnen een serie: dezelfde reeks, andere herkomst.
+
+    Van één serie bestaan vaak meerdere versies naast elkaar: de gekleurde
+    uitgave online, de zwart-witte met meer delen, je eigen bestanden op de
+    NAS, en van een boek soms gewoon drie drukken. Dat zijn geen aparte series
+    — je wilt ze in één lijst lezen, met een voorkeur die zegt welke versie
+    wint als beide een deel hebben.
+
+    ``rank`` legt die voorkeur vast: 0 is eerste keus. Een lager gerangschikte
+    uitgave verdwijnt daarmee niet, hij vult aan waar je eerste keus niets
+    heeft — precies wat je nodig hebt bij een gekleurde uitgave die achterloopt
+    op het zwart-witte origineel.
+    """
+
+    __tablename__ = "edition"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    series_id: Mapped[int] = mapped_column(ForeignKey("series.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(300))
+    rank: Mapped[int] = mapped_column(Integer, default=0)
+
+    # Waar deze uitgave vandaan komt — precies één van beide is gevuld.
+    subscription_id: Mapped[int | None] = mapped_column(
+        ForeignKey("subscription.id", ondelete="SET NULL"), default=None
+    )
+    folder_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+
+    # Vrij label voor jezelf: "kleur", "zwart-wit", "hardcover".
+    note: Mapped[str | None] = mapped_column(String(100), default=None)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    series: Mapped[Series] = relationship(back_populates="editions")
 
 
 class Book(Base):
@@ -245,6 +291,25 @@ class Book(Base):
     # leesvolgorde. Eerst op deel, dan pas op hoofdstuk.
     sort_volume: Mapped[float] = mapped_column(Float, default=0.0)
 
+    # Uit welke uitgave dit deel komt. Leeg voor alles wat er stond voordat een
+    # serie meerdere uitgaven kon hebben; dat telt als de eerste keus.
+    edition_id: Mapped[int | None] = mapped_column(
+        ForeignKey("edition.id", ondelete="SET NULL"), default=None, index=True
+    )
+    # Welke pagina de omslag van dít deel is, als het niet de eerste is. De
+    # serie heeft dezelfde keuze; die van het deel wint, want die is
+    # specifieker. Komt onder meer uit de sidecar naast het bestand.
+    cover_page_index: Mapped[int | None] = mapped_column(Integer, default=None)
+    # Titel met de hand of bij de bron opgehaald? Dan laat de scanner hem staan.
+    # Zonder dit zet de eerstvolgende scan er weer de bestandsnaam overheen, en
+    # bij een scanlation is dat vaak de naam van de tekenaar of "Chapter 12".
+    title_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Welke aflevering dit ís, los van de uitgave. Normaal afgeleid van het
+    # nummer, zodat hoofdstuk 5 uit de gekleurde en de zwart-witte uitgave
+    # hetzelfde vakje vullen. Handmatig te zetten voor boeken zonder nummer:
+    # drie drukken van één boek horen ook bij elkaar.
+    slot: Mapped[str | None] = mapped_column(String(200), default=None)
+
     page_count: Mapped[int | None] = mapped_column(Integer, default=None)
     right_to_left: Mapped[bool] = mapped_column(Boolean, default=False)
 
@@ -273,9 +338,7 @@ class Book(Base):
         back_populates="book", cascade="all, delete-orphan"
     )
 
-    __table_args__ = (
-        Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),
-    )
+    __table_args__ = (Index("ix_book_series_sort", "series_id", "sort_volume", "sort_number"),)
 
 
 class User(Base):
@@ -364,6 +427,17 @@ class Subscription(Base):
     )
     readahead_n: Mapped[int] = mapped_column(Integer, default=3)
     ttl_days: Mapped[int] = mapped_column(Integer, default=14)
+    # Welke reeks bij de bron dit abonnement volgt. Staat ook op Series, maar
+    # dat veld kan er maar één bevatten: zodra een serie meerdere abonnementen
+    # heeft — een gekleurde uitgave naast de zwart-witte — hoort elk zijn eigen
+    # bron-reeks te onthouden. Leeg betekent: die van de serie.
+    source_ref: Mapped[str | None] = mapped_column(String(200), default=None)
+    # In welke taal je deze reeks volgt. Nodig omdat je er meerdere naast
+    # elkaar kunt hebben: van Shinya Shokudo is maar een klein deel vertaald,
+    # dus de Engelse uitgave voorop en het Japanse origineel eronder om de rest
+    # te kunnen lezen. Zonder dit veld haalt de achtergrondronde altijd Engels
+    # op en klapt het Japanse abonnement bij de eerste ronde om.
+    language: Mapped[str] = mapped_column(String(8), default="en")
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
     # Welke vertaalgroep je wilt lezen. Leeg = automatisch kiezen (de groep die
