@@ -143,12 +143,17 @@ def for_local_files(session: Session, series: Series) -> Edition:
 
     Die is eerste keus zolang er niets anders is, en blijft dat ook als er later
     een bron bij komt — wat je zelf hebt staan is meestal wat je wilt lezen.
+
+    ``export_key IS NULL`` erbij: zonder dat zou dit ook de eerste zelfgemaakte
+    exporteditie (M9) opnieuw als "Eigen bestanden" herkennen, want die heeft
+    net als je eigen bestanden geen abonnement en geen mappad.
     """
     bestaand = session.scalar(
         select(Edition).where(
             Edition.series_id == series.id,
             Edition.subscription_id.is_(None),
             Edition.folder_path.is_(None),
+            Edition.export_key.is_(None),
         )
     )
     if bestaand is not None:
@@ -156,8 +161,29 @@ def for_local_files(session: Session, series: Series) -> Edition:
     return _new(session, series, name="Eigen bestanden")
 
 
+def for_export(session: Session, series: Series, *, export_key: str, name: str) -> Edition:
+    """De uitgave voor een hoofdstuk dat wíj zelf hebben samengesteld (M9).
+
+    Nieuw komt achteraan in de voorkeur, net als bij een abonnement: een editie
+    die vanzelf verschijnt zodra een hoofdstuk compleet is mag niet ongevraagd
+    je voorkeur worden. Jij zet 'm zelf naar boven in de editielijst als je 'm
+    als eerste keus wilt lezen.
+    """
+    bestaand = session.scalar(
+        select(Edition).where(Edition.series_id == series.id, Edition.export_key == export_key)
+    )
+    if bestaand is not None:
+        return bestaand
+    return _new(session, series, name=name, export_key=export_key)
+
+
 def _new(
-    session: Session, series: Series, *, name: str, subscription_id: int | None = None
+    session: Session,
+    series: Series,
+    *,
+    name: str,
+    subscription_id: int | None = None,
+    export_key: str | None = None,
 ) -> Edition:
     volgende = session.scalar(select(func.max(Edition.rank)).where(Edition.series_id == series.id))
     edition = Edition(
@@ -165,6 +191,7 @@ def _new(
         name=name,
         rank=0 if volgende is None else volgende + 1,
         subscription_id=subscription_id,
+        export_key=export_key,
     )
     session.add(edition)
     session.flush()
@@ -174,6 +201,7 @@ def _new(
 __all__ = [
     "Slot",
     "best_progress",
+    "for_export",
     "for_local_files",
     "for_subscription",
     "readable",

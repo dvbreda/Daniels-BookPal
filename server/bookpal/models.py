@@ -259,6 +259,14 @@ class Edition(Base):
     # Vrij label voor jezelf: "kleur", "zwart-wit", "hardcover".
     note: Mapped[str | None] = mapped_column(String(100), default=None)
 
+    # Herkenning voor een editie die wíj zelf gemaakt hebben, zoals "vertaald
+    # naar het nl" of "ingekleurd" (M9). `subscription_id` en `folder_path`
+    # zijn dan allebei leeg — dit is de derde herkomst, en zonder een eigen
+    # sleutel zou `for_local_files` zo'n editie verkeerd herkennen als "je
+    # eigen bestanden". Uniek per serie; het exacte formaat staat in
+    # `bookpal.library.export`.
+    export_key: Mapped[str | None] = mapped_column(String(60), default=None)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     series: Mapped[Series] = relationship(back_populates="editions")

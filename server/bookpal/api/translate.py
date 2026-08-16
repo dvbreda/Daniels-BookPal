@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile
+from bookpal.library import export
 from bookpal.schemas import (
     BatchPlanOut,
     BatchStartIn,
@@ -229,6 +230,9 @@ def make_full_page_translation(
             mode=mode,
             force=payload.force,
         )
+        # Los werk kan een hoofdstuk net zo goed compleet maken als een batch —
+        # bijvoorbeeld de laatste ontbrekende pagina die je zelf nog aanvulde.
+        export.probeer_alle(session, book)
     except TranslationError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     finally:
@@ -449,6 +453,7 @@ def make_page_colour(
     translator = GeminiPageTranslator(settings.gemini_api_key, get_colour_mode(session).model)
     try:
         colorise_page(session, translator, book, page_index, force=force)
+        export.probeer_alle(session, book)
     except AlreadyColour as exc:
         # 412 en geen 502: er is niets kapot. De lezer herkent deze code, vraagt
         # het je, en stuurt het dan opnieuw met force.

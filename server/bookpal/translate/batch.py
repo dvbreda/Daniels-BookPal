@@ -29,6 +29,7 @@ from sqlalchemy.orm import Session
 
 from bookpal.config import settings
 from bookpal.db import session_scope
+from bookpal.library import export
 from bookpal.models import Book, Series, Setting
 from bookpal.translate import sidecar
 from bookpal.translate.base import TranslationError
@@ -201,6 +202,14 @@ def _run(state: BatchState) -> None:
             payload = _wait(client, state)
             _store(state, invoer, payload)
         state.state = "mislukt" if state.done == 0 and state.failed else "klaar"
+        if state.done:
+            # Een batch is precies het moment waarop een heel hoofdstuk in één
+            # keer compleet kan raken; buiten de sessie hierboven, want die is
+            # dicht zodra `_store` klaar is.
+            with session_scope() as sessie:
+                boek = sessie.get(Book, state.book_id)
+                if boek is not None:
+                    export.probeer_alle(sessie, boek)
     except (TranslationError, httpx.HTTPError, OSError, ValueError) as exc:
         logger.warning("batch %s mislukt: %s", state.kind, exc)
         state.error = str(exc)
