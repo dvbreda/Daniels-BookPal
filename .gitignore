@@ -34,3 +34,6 @@ web/dist/
 .env.*
 !.env.example
 *.tsbuildinfo
+
+# Proefplaten van verificatieruns: bevatten pagina's uit de bibliotheek.
+_tests/

@@ -1,12 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(mount)",
-      "Bash(ls -la /)",
-      "Read(//run/**)",
-      "Read(//library/**)",
-      "Bash(getent group *)",
-      "Bash(curl -sI --max-time 5 https://download.docker.com/linux/static/stable/x86_64/)"
+      "Bash",
+      "Bash(python3 *)",
+      "Read",
+      "Write",
+      "Edit",
+      "WebSearch",
+      "WebFetch"
     ]
   }
 }

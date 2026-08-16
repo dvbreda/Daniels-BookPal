@@ -1,0 +1,95 @@
+# XcodeGen-spec voor de iOS-app (M4).
+#
+# Waarom een spec en geen ingecheckte .xcodeproj: een pbxproj is een
+# gegenereerd bestand van duizenden regels waarin elke wijziging als ruis in de
+# diff komt. Deze spec is te lezen én te reviewen, en `xcodegen generate` maakt
+# het project er weer uit. De .xcodeproj staat daarom in .gitignore.
+name: BookPal
+options:
+  bundleIdPrefix: nl.danielvanbreda
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+
+packages:
+  # Een epub is een zip; die moeten we op het toestel open kunnen maken.
+  # Dezelfde library als Daniels Plantpal gebruikt voor zijn boekenkast.
+  ZIPFoundation:
+    url: https://github.com/weichsel/ZIPFoundation
+    from: "0.9.0"
+
+settings:
+  base:
+    # Het team heeft een wildcard-profiel op nl.danielvanbreda.*, dus deze
+    # bundle-id is meteen gedekt zonder in het portaal iets aan te maken.
+    DEVELOPMENT_TEAM: 747Z62Q5AL
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    # De app praat alleen met de eigen NAS; er is geen serverkant om te delen.
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+
+targets:
+  BookPal:
+    type: application
+    platform: iOS
+    sources:
+      - path: BookPal
+    dependencies:
+      - package: ZIPFoundation
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.danielvanbreda.bookpal
+        INFOPLIST_FILE: BookPal/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_PREVIEWS: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        SWIFT_STRICT_CONCURRENCY: complete
+
+  BookPalTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: BookPalTests
+    dependencies:
+      - target: BookPal
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.danielvanbreda.bookpal.tests
+        # De testbundel heeft geen eigen Info.plist nodig; laat Xcode er een
+        # maken in plaats van er een lege naast te zetten.
+        GENERATE_INFOPLIST_FILE: YES
+
+  # Aparte bundel, want XCUITest draait de app als los proces. Bewust één
+  # rooktest en geen uitgebreide UI-suite: hij bewijst dat bibliotheek, serie en
+  # lezer echt met de NAS praten, en dat is precies wat een unittest niet kan.
+  BookPalUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: BookPalUITests
+    dependencies:
+      - target: BookPal
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: nl.danielvanbreda.bookpal.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: BookPal
+
+schemes:
+  BookPal:
+    build:
+      targets:
+        BookPal: all
+        BookPalTests: [test]
+        BookPalUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - BookPalTests
+        # De rooktest heeft een bereikbare NAS nodig. Draai daarom standaard
+        # alleen de unittests (`-only-testing:BookPalTests`) en deze erbij als je
+        # de aansluiting op de echte API wilt controleren.
+        - BookPalUITests

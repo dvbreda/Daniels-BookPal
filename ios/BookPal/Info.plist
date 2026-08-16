@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Deze vier vult Xcode alleen aan als hij de plist zelf genereert. Met een
+	     eigen Info.plist moeten ze er staan, anders installeert er niets: de
+	     foutmelding is dan "Missing bundle ID" en die wijst niet hierheen. -->
+	<key>CFBundleDevelopmentRegion</key>
+	<string>nl</string>
+	<key>CFBundleExecutable</key>
+	<string>$(EXECUTABLE_NAME)</string>
+	<key>CFBundleIdentifier</key>
+	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+	<key>CFBundleName</key>
+	<string>$(PRODUCT_NAME)</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleDisplayName</key>
+	<string>BookPal</string>
+	<key>CFBundleShortVersionString</key>
+	<string>$(MARKETING_VERSION)</string>
+	<key>CFBundleVersion</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<!-- Striplettering voor de vertaaloverlay. Dezelfde vier stijlen als de
+	     web-app en de ingebakken versie voor de Kobo gebruiken, zodat een
+	     vertaalde pagina er overal hetzelfde uitziet. Zie Lettertypen/HERKOMST.md. -->
+	<key>UIAppFonts</key>
+	<array>
+		<string>digistrip.ttf</string>
+		<string>digistrip_b.ttf</string>
+		<string>digistrip_i.ttf</string>
+	</array>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+	<!-- De NAS praat gewoon http op het eigen netwerk; een certificaat voor een
+	     adres als 192.168.68.98 bestaat niet. NSAllowsLocalNetworking staat
+	     precies dat toe en niets meer: klaartekst naar privé-adressen, maar
+	     alles wat het internet op gaat moet nog steeds https zijn. Dat is de
+	     smalle uitzondering, in plaats van NSAllowsArbitraryLoads die hem
+	     overal openzet. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
+	<!-- Sinds iOS 14 vraagt het systeem toestemming voor het lokale netwerk, en
+	     zonder deze tekst is die vraag niet te stellen — de app krijgt dan stil
+	     geen verbinding. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>BookPal leest je bibliotheek van de NAS op je eigen netwerk.</string>
+</dict>
+</plist>
