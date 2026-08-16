@@ -42,6 +42,7 @@ def scan_intake() -> IntakeScanOut:
                 size=item.size,
                 series=item.series,
                 number=item.number,
+                pages=item.pages,
             )
             for item in intake.scan(folders)
         ],

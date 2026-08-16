@@ -397,6 +397,10 @@ class IntakeCandidateOut(BaseModel):
     size: int
     series: str | None = None
     number: str | None = None
+    # Aantal losse pagina's als dit een map is die tot één cbz wordt
+    # samengevoegd; 0 voor een gewoon bestand. Een client wil dat verschil
+    # kunnen tonen — "12 pagina's" leest anders dan een bestandsgrootte.
+    pages: int = 0
 
 
 class IntakeScanOut(BaseModel):

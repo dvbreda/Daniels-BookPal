@@ -6,6 +6,7 @@ endpoint mag geen willekeurig bestand op de NAS kunnen verplaatsen.
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -223,3 +224,95 @@ class TestUpload:
         with pytest.raises(SourceError):
             intake.receive_upload(io.BytesIO(b"x" * 5000), "groot.cbz", folder, max_bytes=1000)
         assert list(folder.iterdir()) == []
+
+
+class TestPaginamappen:
+    """Een hoofdstuk dat je zelf pagina voor pagina hebt opgeslagen.
+
+    Een browser levert losse jpg's; die horen er na het importeren hetzelfde
+    uit te zien als een gedownloade cbz, anders herkent de scanner ze niet als
+    hoofdstuk.
+    """
+
+    def _map_met(self, basis: Path, naam: str, namen: list[str]) -> Path:
+        map_ = basis / naam
+        map_.mkdir(parents=True, exist_ok=True)
+        for bestand in namen:
+            (map_ / bestand).write_bytes(b"x" * 32)
+        return map_
+
+    def test_a_folder_of_pages_is_offered_as_one_chapter(self, tmp_path: Path):
+        self._map_met(tmp_path, "Hirayasumi c012", ["1.jpg", "2.jpg", "3.jpg"])
+        kandidaten = intake.scan([str(tmp_path)])
+        assert len(kandidaten) == 1
+        assert kandidaten[0].is_folder
+        assert kandidaten[0].pages == 3
+        assert kandidaten[0].name == "Hirayasumi c012.cbz"
+
+    def test_a_couple_of_stray_images_is_not_a_chapter(self, tmp_path: Path):
+        """Een omslag of twee knopjes naast een download horen er niet in."""
+        self._map_met(tmp_path, "rommel", ["logo.png", "banner.jpg"])
+        assert intake.scan([str(tmp_path)]) == []
+
+    def test_pages_are_ordered_by_number_and_not_alphabetically(self, tmp_path: Path):
+        """Een browser slaat op als 1.jpg … 10.jpg, en alfabetisch komt de
+        tien dan vóór de twee."""
+        map_ = self._map_met(tmp_path, "hoofdstuk", ["1.jpg", "2.jpg", "9.jpg", "10.jpg", "11.jpg"])
+        volgorde = [pad.name for pad in intake._page_files(map_)]
+        assert volgorde == ["1.jpg", "2.jpg", "9.jpg", "10.jpg", "11.jpg"]
+
+    def test_importing_makes_a_real_cbz(self, session: Session, tmp_path: Path):
+        bron = tmp_path / "intake"
+        self._map_met(bron, "Hirayasumi c012", ["1.jpg", "2.jpg", "3.jpg"])
+        doel = tmp_path / "bibliotheek"
+        doel.mkdir()
+        root = make_root(session, doel, name="Strips")
+
+        verslag = intake.import_files(
+            session, [str(bron / "Hirayasumi c012")], root, allowed=[str(bron)]
+        )
+        assert verslag.moved == 1
+        gemaakt = doel / "Hirayasumi c012.cbz"
+        assert gemaakt.is_file()
+        with zipfile.ZipFile(gemaakt) as archief:
+            assert archief.namelist() == ["0001.jpg", "0002.jpg", "0003.jpg"]
+
+    def test_the_pages_are_only_removed_after_the_archive_exists(
+        self, session: Session, tmp_path: Path
+    ):
+        """Gaat het schrijven mis, dan heb je je opgeslagen pagina's nog."""
+        bron = tmp_path / "intake"
+        map_ = self._map_met(bron, "Hirayasumi c013", ["1.jpg", "2.jpg", "3.jpg"])
+        doel = tmp_path / "bibliotheek"
+        doel.mkdir()
+        root = make_root(session, doel, name="Strips")
+
+        intake.import_files(session, [str(map_)], root, allowed=[str(bron)])
+        assert not map_.exists()  # gelukt, dus opgeruimd
+        assert (doel / "Hirayasumi c013.cbz").is_file()
+
+    def test_an_existing_chapter_is_never_overwritten(self, session: Session, tmp_path: Path):
+        bron = tmp_path / "intake"
+        map_ = self._map_met(bron, "Hirayasumi c014", ["1.jpg", "2.jpg", "3.jpg"])
+        doel = tmp_path / "bibliotheek"
+        doel.mkdir()
+        (doel / "Hirayasumi c014.cbz").write_bytes(b"van mij")
+        root = make_root(session, doel, name="Strips")
+
+        verslag = intake.import_files(session, [str(map_)], root, allowed=[str(bron)])
+        assert verslag.skipped == 1
+        assert (doel / "Hirayasumi c014.cbz").read_bytes() == b"van mij"
+        assert map_.exists()  # en je pagina's staan er nog
+
+    def test_a_folder_outside_the_allowed_area_is_refused(self, session: Session, tmp_path: Path):
+        elders = tmp_path / "elders"
+        self._map_met(elders, "geheim", ["1.jpg", "2.jpg", "3.jpg"])
+        doel = tmp_path / "bibliotheek"
+        doel.mkdir()
+        root = make_root(session, doel, name="Strips")
+
+        verslag = intake.import_files(
+            session, [str(elders / "geheim")], root, allowed=[str(tmp_path / "intake")]
+        )
+        assert verslag.moved == 0
+        assert verslag.errors
