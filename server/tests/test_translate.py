@@ -842,7 +842,13 @@ class TestColourising:
             "een vertaling houdt zich wél aan het zwart-wit van het origineel"
         )
 
-    def test_the_size_still_follows_the_original(self):
+    def test_a_bigger_page_from_the_model_is_kept(self):
+        """Nooit afschalen: bij het hertekenen ís het model de tekening.
+
+        Oishinbo staat op 750x1080 en het model geeft rond de 1024 breed terug.
+        Dat terugbrengen naar 750 gooide bij elke betaalde pagina de helft van
+        de lijnen weg.
+        """
         from bookpal.translate.imagepage import _match_original
 
         klein = BytesIO()
@@ -852,7 +858,37 @@ class TestColourising:
 
         uit = _match_original(groot.getvalue(), klein.getvalue(), keep_gray=False)
         with Image.open(BytesIO(uit)) as beeld:
+            assert beeld.size == (80, 120)
+
+    def test_a_smaller_page_is_pulled_back_up_to_the_original(self):
+        """Anders past de vertaalde pagina niet meer op de plek van de originele."""
+        from bookpal.translate.imagepage import _match_original
+
+        groot = BytesIO()
+        Image.new("L", (40, 60), 200).save(groot, format="PNG")
+        klein = BytesIO()
+        Image.new("RGB", (20, 30), (10, 20, 30)).save(klein, format="PNG")
+
+        uit = _match_original(klein.getvalue(), groot.getvalue(), keep_gray=False)
+        with Image.open(BytesIO(uit)) as beeld:
             assert beeld.size == (40, 60)
+
+    def test_the_shape_of_the_original_always_wins(self):
+        """Een vierkant antwoord op een staande pagina wordt weer staand.
+
+        De verhouding is wat de pagina op zijn plek houdt; de maat is wat we
+        niet meer weggooien.
+        """
+        from bookpal.translate.imagepage import _match_original
+
+        origineel = BytesIO()
+        Image.new("L", (40, 60), 200).save(origineel, format="PNG")
+        vierkant = BytesIO()
+        Image.new("RGB", (60, 60), (10, 20, 30)).save(vierkant, format="PNG")
+
+        uit = _match_original(vierkant.getvalue(), origineel.getvalue(), keep_gray=False)
+        with Image.open(BytesIO(uit)) as beeld:
+            assert beeld.size == (60, 90)
 
     def test_it_is_stored_under_its_own_name(self, session: Session, temp_settings):
         """Naast de vertalingen, niet ertussen."""

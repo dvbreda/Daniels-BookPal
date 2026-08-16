@@ -55,7 +55,14 @@ Regels:
   veranderen is de ergste fout die je kunt maken, want die valt niet op.
 - Laat tekst die bij de tekening hoort (winkelborden, opschriften in een andere
   taal) staan zoals hij is.
-- Gebruik per vlak dezelfde letterstijl, grootte en uitlijning als het origineel.
+- Gebruik per vlak dezelfde letterstijl en grootte als het origineel.
+- Zet de vertaling ALTIJD horizontaal, van links naar rechts, en verdeel hem
+  over meerdere regels binnen de ballon. Ook als het origineel verticaal van
+  boven naar beneden loopt, zoals in Japanse ballonnen: die richting hoort bij
+  het Japanse schrift, niet bij de ballon. Losse letters onder elkaar gestapeld
+  zijn onleesbaar.
+- De ballon zelf houdt zijn vorm en plek. Past de vertaling er horizontaal niet
+  fatsoenlijk in, maak de letters dan kleiner — niet de ballon groter.
 - Verander verder NIETS: geen tekening, geen arcering, geen kleuren, geen
   paneelindeling, geen ballonvormen. Een zwart-wit pagina blijft zwart-wit.
 
@@ -219,11 +226,22 @@ def _extract_image(payload: dict[str, Any]) -> bytes:
 
 
 def _match_original(produced: bytes, original: bytes, *, keep_gray: bool = True) -> bytes:
-    """Terug naar de afmeting en het kleurkarakter van het origineel.
+    """Naar de verhouding van het origineel, maar nooit naar beneden.
 
-    Het model werkt in zijn eigen resolutie, dus zonder dit past de vertaalde
-    pagina niet meer op de plek van de originele — en dat merk je pas als de
-    lezer ernaast staat.
+    Het model werkt in zijn eigen resolutie en levert soms een net andere maat
+    terug. Zonder correctie past de vertaalde pagina niet meer op de plek van de
+    originele, en dat merk je pas als de lezer ernaast staat — vandaar dat de
+    *verhouding* van het origineel altijd wint.
+
+    De *maat* niet. Bij het hertekenen tekent het model de hele plaat, dus zijn
+    resolutie ís de resolutie van je pagina. Gemeten is Oishinbo 750x1080 en One
+    Piece 780x1200, terwijl het model rond de 1024 breed teruggeeft: dat naar
+    750 terugbrengen gooide bij elke betaalde pagina de helft van de lijnen weg.
+    Daarom schalen we alleen nog op, nooit meer af.
+
+    Voor het inkleuren maakt dit niets uit: daar komt het lijnwerk uit het
+    origineel en gebruiken we van het model alleen de kleur (zie recolour.py),
+    dus een grotere plaat zou daar alleen een grotere waas zijn.
 
     ``keep_gray`` uit bij het inkleuren: daar is het veranderen van grijs naar
     kleur juist de bedoeling, en terugzetten zou het hele werk ongedaan maken.
@@ -237,8 +255,9 @@ def _match_original(produced: bytes, original: bytes, *, keep_gray: bool = True)
         with Image.open(BytesIO(produced)) as opened:
             opened.load()
             result: Image.Image = opened
-            if result.size != size:
-                result = result.resize(size, Image.Resampling.LANCZOS)
+            doel = _doelmaat(size, result.size)
+            if result.size != doel:
+                result = result.resize(doel, Image.Resampling.LANCZOS)
             if was_gray:
                 # Een zwart-wit manga hoort zwart-wit terug te komen; het model
                 # levert altijd RGB, en een grijze pagina als kleurenplaat
@@ -252,6 +271,20 @@ def _match_original(produced: bytes, original: bytes, *, keep_gray: bool = True)
             return buffer.getvalue()
     except OSError as exc:
         raise TranslationError(f"vertaalde pagina kon niet verwerkt worden: {exc}") from exc
+
+
+def _doelmaat(origineel: tuple[int, int], geleverd: tuple[int, int]) -> tuple[int, int]:
+    """De verhouding van het origineel, op de grootste breedte van de twee.
+
+    Losgetrokken van ``_match_original`` omdat dit het enige rekenwerk erin is
+    en het precies het soort regel is waar je een tabelletje van wilt kunnen
+    testen.
+    """
+    breed_o, hoog_o = origineel
+    if breed_o <= 0 or hoog_o <= 0:
+        return geleverd
+    breedte = max(breed_o, geleverd[0])
+    return breedte, max(1, round(breedte * hoog_o / breed_o))
 
 
 def _is_grayscale(image: Image.Image, *, sample: int = 64) -> bool:
