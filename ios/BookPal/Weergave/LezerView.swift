@@ -331,10 +331,22 @@ struct LezerView: View {
         case .balk:
             withAnimation { toontBalk.toggle() }
         case .volgende:
+            sluitBalk()
             volgende()
         case .vorige:
+            sluitBalk()
             vorige()
         }
+    }
+
+    /// De balken weg zodra je verder bladert.
+    ///
+    /// Ze liggen over de strip heen, dus zolang ze open staan dekken ze de
+    /// bovenste en onderste stroken van de volgende pagina af. Wie doorbladert
+    /// is klaar met het menu — dat is precies wat de tik zegt.
+    private func sluitBalk() {
+        guard toontBalk else { return }
+        withAnimation { toontBalk = false }
     }
 
     private func volgende() {
@@ -942,7 +954,11 @@ private struct PaneelView: View {
                 .gesture(
                     MagnifyGesture()
                         .onChanged { waarde in
-                            zoom = min(5, max(1, zoomBasis * waarde.magnification))
+                            // Ook onder 1 mogen: het paneel vult standaard het
+                            // scherm, en soms wil je even zien waar het op de
+                            // pagina stond zonder de stand te verlaten. Tot 0,4
+                            // — verder uitzoomen levert een postzegel op.
+                            zoom = min(5, max(0.4, zoomBasis * waarde.magnification))
                         }
                         .onEnded { _ in zoomBasis = zoom }
                         .simultaneously(
