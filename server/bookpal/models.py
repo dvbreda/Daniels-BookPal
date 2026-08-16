@@ -260,7 +260,7 @@ class Edition(Base):
     note: Mapped[str | None] = mapped_column(String(100), default=None)
 
     # Herkenning voor een editie die wíj zelf gemaakt hebben, zoals "vertaald
-    # naar het nl" of "ingekleurd" (M9). `subscription_id` en `folder_path`
+    # naar het nl" of "ingekleurd". `subscription_id` en `folder_path`
     # zijn dan allebei leeg — dit is de derde herkomst, en zonder een eigen
     # sleutel zou `for_local_files` zo'n editie verkeerd herkennen als "je
     # eigen bestanden". Uniek per serie; het exacte formaat staat in

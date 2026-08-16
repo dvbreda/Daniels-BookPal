@@ -132,7 +132,7 @@ async def upload(
 
     sidecar.write_bytes(pad, data)
     _index(session, book, name)
-    # Dit is precies het geval waar M9 voor bedoeld is: de telefoon vult
+    # Precies waar deze route voor bedoeld is: de telefoon vult
     # onderweg de laatste ontbrekende pagina aan, en dan mag het hoofdstuk
     # hier — zonder dat iemand erom vraagt — een leesbare editie worden.
     export.probeer_alle(session, book)

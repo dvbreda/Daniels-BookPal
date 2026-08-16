@@ -1,4 +1,4 @@
-"""Een compleet vertaald of ingekleurd hoofdstuk als eigen editie (M9).
+"""Een compleet vertaald of ingekleurd hoofdstuk als eigen editie.
 
 Tot nu toe was een vertaling of inkleuring alleen zichtbaar ín de lezer: de
 overlay komt live over de originele pagina's heen, en wie geen BookPal gebruikt

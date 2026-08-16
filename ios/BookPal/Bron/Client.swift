@@ -415,7 +415,7 @@ struct Client: Sendable {
         _ = try await stuur(verzoek)
     }
 
-    // MARK: - Sidecars zonder NAS (M10)
+    // MARK: - Sidecars zonder NAS
     //
     // Voor het synchroniseren van sidecars die de telefoon zelf maakte terwijl
     // er geen NAS was, en voor het binnenhalen van wat er al op de NAS ligt.

@@ -628,6 +628,55 @@ zodat een verhuizing het niet verweesd achterlaat (punt 12).
     aantal binnengehaalde bytes: 882 MB kwam eerder binnen zonder één teken van leven, en dat is niet
     te onderscheiden van "er gebeurt niets". Eén download tegelijk.
 
+## Buiten het plan gebouwd
+
+M0 t/m M8 waren vooraf bedacht. Wat hieronder staat is er tijdens het gebruik bij gekomen — geen
+mijlpaal, maar wel onderdeel van het werkende geheel. Ze staan hier apart zodat de mijlpalenlijst
+blijft zeggen wat hij zei.
+
+1. **Uitgave-export.** Een hoofdstuk dat volledig hertekend of ingekleurd is, wordt vanzelf een
+   leesbare cbz naast de serie: `<naam>.nl.cbz`, `<naam>.col.cbz`, `<naam>.col.nl.cbz`. Tot dan was
+   betaald werk alleen zichtbaar ín de lezer, en dat is zonde van tientallen centen per pagina. De
+   editie komt achteraan in de voorkeur — hij verschijnt vanzelf, maar wordt nooit ongevraagd je
+   eerste keus. Vereiste een eigen kolom (`Edition.export_key`), want zonder herkenning zou
+   `for_local_files` zo'n editie voor "je eigen bestanden" aanzien: beide hebben geen abonnement en
+   geen mappad. Getriggerd na elke voltooide pagina — los, via een batch, of via een sidecar die van
+   een client binnenkomt.
+
+2. **Sidecars uitwisselen tussen apparaten** (`/api/sidecars`). Zodra een telefoon onderweg zelf
+   vertaalt, ontstaat er betaald werk op een tweede plek. Drie routes: inventaris, ophalen,
+   terugzetten. Een botsing laat staan wat er al ligt — twee kanten met dezelfde pagina hebben
+   allebei iets bruikbaars — en `stored` in het antwoord zegt de client of híj degene was die het
+   neerzette. Dat is nodig zodra er een derde of vierde apparaat meedoet. De naam komt van buiten en
+   wordt een pad, dus die loopt eerst langs een streng patroon.
+
+3. **De iOS-app werkt zonder NAS.** Pagina's die je ooit opende komen van schijf terug
+   (`Paginacache`), de startpagina en bibliotheek vallen terug op hun laatste geslaagde antwoord, met
+   een balk erboven zodat je weet dat je naar een oude stand kijkt. Eén opslagbudget voor de hele
+   bibliotheek; vol betekent dat het langst niet bekekene het eerst gaat, behalve series met "offline
+   bewaren" en alles wat van een abonnement komt. Buiten je netwerk heb je vaak wél internet en geen
+   NAS: dan roept de app zelf Gemini aan met een sleutel uit de sleutelhanger, en het resultaat gaat
+   naar een lokale sidecarmap die bij de eerstvolgende verbinding synchroniseert.
+
+4. **Grove indeling boeken/strips/manga** als serverfilter (`?group=`). "Strips" is *wel een strip,
+   maar niet uit Japan*, en dat was met geen enkele losse parameter te zeggen. Naschiften in de
+   client liet series wegvallen zodra de paginalimiet bereikt werd, en telde het totaal verkeerd.
+
+5. **Panelherkenning zonder model** — recursieve XY-snede, gespiegeld in Python en Swift. Twee
+   drempels moesten samen omlaag (`GOOT_VULLING` 0,012 → 0,05, `GOOT_MINIMUM` 0,012 → 0,008); los
+   van elkaar hielp geen van beide. Wat het niet kan: een grote witte ballon die een paneelrand raakt
+   maakt een valse goot. Drie oplossingen geprobeerd, gemeten en teruggedraaid.
+
+6. **MangaKakalot als bron** — de eerste zonder API. De regel "geen scrapers" in `sources/base.py`
+   was een startbeperking om M5 eenvoudig te houden, geen blijvend uitgangspunt. Deze bron leest de
+   HTML van de site en faalt daarom hard en bij naam zodra de opmaak verandert; een lege lijst zou
+   als "deze reeks heeft niets" gelezen worden. Zoeken kan niet (de zoekpagina vult zichzelf in de
+   browser), dus `search` lost een geplakte URL op.
+
+7. **Losse pagina's als hoofdstuk.** Een map met minstens drie plaatjes in de intake wordt bij het
+   importeren tot één cbz geregen, op nummer gesorteerd en niet alfabetisch — een browser slaat op
+   als `1.jpg` tot `10.jpg`. Voor wie zelf scant of pagina voor pagina opslaat.
+
 ## Verificatie
 
 - `docker compose up` op de NAS; scan een echte root en controleer serie-groepering en covers.

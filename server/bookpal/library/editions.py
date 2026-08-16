@@ -145,7 +145,7 @@ def for_local_files(session: Session, series: Series) -> Edition:
     een bron bij komt — wat je zelf hebt staan is meestal wat je wilt lezen.
 
     ``export_key IS NULL`` erbij: zonder dat zou dit ook de eerste zelfgemaakte
-    exporteditie (M9) opnieuw als "Eigen bestanden" herkennen, want die heeft
+    exporteditie opnieuw als "Eigen bestanden" herkennen, want die heeft
     net als je eigen bestanden geen abonnement en geen mappad.
     """
     bestaand = session.scalar(
@@ -162,7 +162,7 @@ def for_local_files(session: Session, series: Series) -> Edition:
 
 
 def for_export(session: Session, series: Series, *, export_key: str, name: str) -> Edition:
-    """De uitgave voor een hoofdstuk dat wíj zelf hebben samengesteld (M9).
+    """De uitgave voor een hoofdstuk dat wíj zelf hebben samengesteld.
 
     Nieuw komt achteraan in de voorkeur, net als bij een abonnement: een editie
     die vanzelf verschijnt zodra een hoofdstuk compleet is mag niet ongevraagd
