@@ -46,6 +46,11 @@ struct LezerView: View {
     /// je stónd — niet je opgeslagen voortgang, want die loopt achter op waar je
     /// nu leest.
     @State private var startpagina = 0
+    /// Of de doorlopende weergave al naar `startpagina` gesprongen is. Tot dat
+    /// moment mag de eerste strook zijn `onAppear` niet als "hier ben ik" laten
+    /// tellen: een `LazyVStack` bouwt vanaf nul op, dus die meldt pagina 1 nog
+    /// voordat er gescrold is — en bewaart die dan ook.
+    @State private var doorlopendGeplaatst = false
 
     // Het volgende hoofdstuk, om aan te bieden als je aan het eind bent.
     @State private var volgendAanbod: VolgendHoofdstuk?
@@ -90,8 +95,15 @@ struct LezerView: View {
         )
     }
 
-    private var huidigePagina: Int {
-        if weergave == .panelen { return paneelpad.pagina }
+    private var huidigePagina: Int { paginaIn(weergave) }
+
+    /// Op welke pagina een bepáálde stand staat.
+    ///
+    /// Met de stand als argument en niet impliciet, want bij een standwissel
+    /// moet je hem uitlezen vóórdat hij omgaat — daarna wijst hij naar de
+    /// nieuwe stand, die nog nergens staat.
+    private func paginaIn(_ stand: Weergavestand) -> Int {
+        if stand == .panelen { return paneelpad.pagina }
         guard spreads.indices.contains(spreadIndex) else { return 0 }
         return spreads[spreadIndex].first ?? 0
     }
@@ -157,6 +169,14 @@ struct LezerView: View {
         }
         .task { start() }
         .task { volgendAanbod = try? await instellingen.client?.volgendHoofdstuk(boek: boek.id) }
+        // Eén plek waar je plek meeverhuist, wélke weg de wissel ook loopt:
+        // dubbeltik, de knop in de balk, of de keuze in de instellingen.
+        .onChange(of: weergaveRuw) { oud, nieuw in
+            guard let van = Weergavestand(rawValue: oud),
+                  let naar = Weergavestand(rawValue: nieuw)
+            else { return }
+            verhuis(van: van, naar: naar)
+        }
         .onChange(of: huidigePagina) { _, _ in aanbodWeg = false }
         .navigationDestination(item: $volgendBoek) { boek in
             LezerView(boek: boek)
@@ -251,11 +271,14 @@ struct LezerView: View {
                         )
                         .id(index)
                         .onAppear {
-                            spreadIndex = Spreads.spreadVanPagina(spreads, pagina: index)
                             Task { await haalMerkjes(index) }
                             lader.laadVooruit(
                                 (index + 1...index + 3).filter { $0 < paginas }
                             )
+                            // Pas meetellen als we op onze plek staan — zie
+                            // `doorlopendGeplaatst`.
+                            guard doorlopendGeplaatst else { return }
+                            spreadIndex = Spreads.spreadVanPagina(spreads, pagina: index)
                             planBewaren()
                         }
                     }
@@ -270,11 +293,16 @@ struct LezerView: View {
                 // doorlopende weergave bovenaan en meldt de eerste strook
                 // meteen pagina 1 terug — dan ben je je plek kwijt bij elke
                 // moduswissel.
-                let start = boek.progress?.page ?? 0
+                //
+                // `startpagina` en niet je opgeslagen voortgang: die is van
+                // toen je het boek opende en loopt dus achter op waar je nu
+                // staat. Precies dáárom kwam je na een wissel op pagina 1 uit.
+                let start = startpagina
                 if start > 0 {
                     try? await Task.sleep(for: .milliseconds(120))
                     scroll.scrollTo(start, anchor: .top)
                 }
+                doorlopendGeplaatst = true
             }
         }
     }
@@ -401,15 +429,36 @@ struct LezerView: View {
     /// Dubbeltikken op de pagina: heen en weer tussen paneelzoom en
     /// doorlopend. Op een tekstballon telt de dubbeltik niet mee — die opent
     /// daar het origineel, en dat gebaar hoort bij de ballon.
+    ///
+    /// Je plek meenemen gebeurt niet hier maar in `verhuis(van:naar:)`, zodat
+    /// het ook geldt voor de knop in de balk en de keuze in de instellingen.
     private func wisselStand() {
-        // Eerst vastleggen waar je stáát, en pas dan wisselen: `huidigePagina`
-        // leest na de wissel uit de nieuwe stand, en dan ben je je plek kwijt.
-        let hier = huidigePagina
-        startpagina = hier
         withAnimation(.easeInOut(duration: 0.25)) {
             weergave = weergave.naDubbeltik
+        }
+    }
+
+    /// Je plek meenemen naar de nieuwe stand.
+    ///
+    /// De drie standen tellen ieder hun eigen plek: de pagina- en doorlopende
+    /// stand via `spreadIndex`, de panelenstand via `paneelpad`. Wisselen zonder
+    /// over te zetten laat de nieuwe stand staan waar hij de vorige keer was —
+    /// en dat was bij een vers geopend boek pagina 1.
+    private func verhuis(van oud: Weergavestand, naar nieuw: Weergavestand) {
+        let hier = paginaIn(oud)
+        startpagina = hier
+        switch nieuw {
+        case .panelen:
+            // Op het overzicht en niet in paneel 1: eerst zien wat de pagina
+            // is, dan pas inzoomen.
             paneelpad = Paneelpad(pagina: hier, paneel: Paneelpad.overzicht)
+        case .paginas:
             spreadIndex = Spreads.spreadVanPagina(spreads, pagina: hier)
+        case .doorlopend:
+            spreadIndex = Spreads.spreadVanPagina(spreads, pagina: hier)
+            // De doorlopende weergave is net opgebouwd en staat bovenaan; zijn
+            // eigen `task` scrollt naar `startpagina` zodra hij er is.
+            doorlopendGeplaatst = false
         }
     }
 
