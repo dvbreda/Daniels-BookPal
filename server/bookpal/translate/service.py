@@ -143,6 +143,35 @@ def _record(
     return row
 
 
+def record_external(
+    session: Session,
+    book: Book,
+    page_index: int,
+    *,
+    target_lang: str,
+    provider: str,
+) -> None:
+    """Aantekenen dat deze pagina elders gemaakt is en hier binnenkwam.
+
+    De telefoon mag onderweg zelf vertalen, en wat daar ontstaat komt via
+    ``/api/sidecars`` binnen. Het bestand is dan de waarheid, maar de planner
+    kijkt in de index — en zonder deze rij zou hij de pagina nog als werk
+    tellen en er een tweede keer voor laten betalen.
+
+    ``herkomst`` erbij zodat je later kunt zien wat waar vandaan kwam; het is
+    de enige plek waar werk de collectie binnenkomt zonder dat deze server het
+    zelf besteld heeft.
+    """
+    _record(
+        session,
+        book,
+        page_index,
+        target_lang,
+        provider,
+        {"herkomst": "client"},
+    )
+
+
 def translate_page_as_image(
     session: Session,
     translator: GeminiPageTranslator,

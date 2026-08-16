@@ -13,6 +13,7 @@ from bookpal.api import (
     opds,
     progress,
     series,
+    sidecars,
     sources,
     system,
     tabs,
@@ -32,6 +33,7 @@ router.include_router(collections.router)
 router.include_router(home.router)
 router.include_router(intake.router)
 router.include_router(kobo.router)
+router.include_router(sidecars.router)
 router.include_router(sources.router)
 router.include_router(trackers.router)
 router.include_router(translate.router)

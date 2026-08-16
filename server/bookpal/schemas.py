@@ -1039,3 +1039,29 @@ class Paginated(BaseModel, Generic[T]):
 
 
 SortField = Literal["title", "added", "number"]
+
+
+class SidecarOut(BaseModel):
+    """Eén bewaard stuk betaald werk, zoals het op schijf staat."""
+
+    book_id: int
+    page_index: int
+    name: str
+    # tekst, hertekend, kleuren of kleur-ruw — dezelfde woorden als bij de
+    # batches, zodat er niet halverwege een tweede woordenlijst ontstaat.
+    kind: str
+    bytes: int
+    changed_at: datetime
+
+
+class SidecarManifestOut(BaseModel):
+    """Alles wat er ligt, zodat een client kan zien wat hij mist.
+
+    Bewust plat en zonder paginering: het gaat om honderden regels van een paar
+    tientallen bytes, en een client die hem in stukken moet ophalen kan niet in
+    één keer bepalen wat er weg is aan zijn kant.
+    """
+
+    items: list[SidecarOut] = Field(default_factory=list)
+    total: int = 0
+    total_bytes: int = 0
