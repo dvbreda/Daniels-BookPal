@@ -158,6 +158,18 @@ class TestTerugzetten:
         assert antwoord.status_code == 201
         assert scanned.get(f"/api/sidecars/{boek}/p0004-kleur.webp").content == b"oud" * 10
 
+    def test_the_client_can_tell_it_was_not_the_one_who_stored_it(self, scanned: TestClient):
+        """Met drie of vier apparaten is dit het normale geval: iemand was je
+        voor. Dat is iets anders dan "ik heb bijgedragen", en een client die
+        het verschil niet ziet meldt onzin."""
+        boek = _eerste_boek(scanned)
+
+        eerste = scanned.put(f"/api/sidecars/{boek}/p0007-kleur.webp", content=b"eerste")
+        assert eerste.json()["stored"] is True
+
+        tweede = scanned.put(f"/api/sidecars/{boek}/p0007-kleur.webp", content=b"tweede")
+        assert tweede.json()["stored"] is False
+
     def test_force_does_overwrite(self, scanned: TestClient):
         boek = _eerste_boek(scanned)
         _leg_neer(boek, "p0004-kleur.webp", b"oud" * 10)

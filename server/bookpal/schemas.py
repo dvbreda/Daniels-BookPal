@@ -1052,6 +1052,11 @@ class SidecarOut(BaseModel):
     kind: str
     bytes: int
     changed_at: datetime
+    # Bij een upload: is dít wat er nu ligt, of lag er al iets van een ander
+    # apparaat? Met drie of vier apparaten (telefoon, iPad, Kobo) is dat een
+    # echt verschil — "ik heb bijgedragen" tegenover "iemand was me voor" —
+    # en zonder dit veld ziet een client die twee gevallen als hetzelfde 201.
+    stored: bool = True
 
 
 class SidecarManifestOut(BaseModel):

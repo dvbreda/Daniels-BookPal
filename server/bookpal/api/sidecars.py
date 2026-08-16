@@ -110,7 +110,9 @@ async def upload(
 
     if pad.exists() and not force:
         # Niet als fout: de client die dit stuurt heeft gelijk gedaan wat hij
-        # moest doen, en overslaan is precies de bedoeling.
+        # moest doen, en overslaan is precies de bedoeling. Met meerdere
+        # apparaten is dit het normale geval zodra er twee hetzelfde hebben
+        # gemaakt — `stored=False` zegt de client dat hij niet degene was.
         info = pad.stat()
         return SidecarOut(
             book_id=book.id,
@@ -119,6 +121,7 @@ async def upload(
             kind=inventory.soort_van(name) or "",
             bytes=info.st_size,
             changed_at=_tijd(pad),
+            stored=False,
         )
 
     data = await request.body()
