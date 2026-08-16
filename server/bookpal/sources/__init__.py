@@ -9,12 +9,14 @@ from bookpal.ratelimit import RateLimiter
 from bookpal.sources.archiveorg import ArchiveOrgSource
 from bookpal.sources.base import ChapterInfo, SearchResult, Source, SourceError
 from bookpal.sources.mangadex import MangaDexSource
+from bookpal.sources.mangakakalot import MangaKakalotSource
 from bookpal.sources.opds import OpdsSource
 
 #: Bron-implementaties op ``Source.type``. Een nieuwe bron is een regel erbij.
 REGISTRY: dict[str, type[Source]] = {
     MangaDexSource.type: MangaDexSource,
     ArchiveOrgSource.type: ArchiveOrgSource,
+    MangaKakalotSource.type: MangaKakalotSource,
     OpdsSource.type: OpdsSource,
 }
 
@@ -46,6 +48,7 @@ __all__ = [
     "ArchiveOrgSource",
     "ChapterInfo",
     "MangaDexSource",
+    "MangaKakalotSource",
     "OpdsSource",
     "RateLimiter",
     "SearchResult",
