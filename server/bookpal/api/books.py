@@ -11,7 +11,9 @@ from bookpal.db import current_user, get_session
 from bookpal.formats.base import UnsupportedOperation
 from bookpal.images import (
     ImageProfile,
+    get_profile,
     open_source,
+    panels,
     render_cover,
     render_page,
     render_remote_cover,
@@ -25,6 +27,8 @@ from bookpal.schemas import (
     BookOut,
     NextChapterOut,
     Paginated,
+    PanelOut,
+    PanelsOut,
     ReadStateIn,
     ReadStateOut,
     TocEntryOut,
@@ -218,6 +222,52 @@ def get_page(
             "X-BookPal-Cache": "hit" if rendered.from_cache else "miss",
             "X-BookPal-Profile": profile.name,
         },
+    )
+
+
+@router.get("/{book_id}/pages/{index}/panels", response_model=PanelsOut)
+def get_page_panels(
+    book_id: int,
+    index: int,
+    session: Session = Depends(get_session),
+) -> PanelsOut:
+    """Waar de panelen op deze pagina zitten.
+
+    Zonder model: een stripbladzijde heeft goten tussen de panelen, en die zijn
+    met rekenwerk te vinden (recursieve XY-cut, zie `images/panels.py`). Dat
+    kost milliseconden in plaats van honderden megabytes aan gewichten —
+    dezelfde afweging als bij M8.
+
+    Server-side en niet per client, om dezelfde reden als de beeldprofielen: het
+    antwoord is voor iedereen gelijk, het is te cachen, en web, iOS en Kobo
+    hoeven het niet ieder apart na te bouwen.
+    """
+    book = deps.get_book(session, book_id)
+    if book.kind is BookKind.EPUB:
+        raise HTTPException(
+            status_code=409, detail="een epub heeft geen vaste pagina's"
+        )
+    if index < 0:
+        raise HTTPException(status_code=400, detail="paginanummer moet 0 of hoger zijn")
+
+    path = deps.book_file_path(session, book)
+    source = open_source(path)
+    try:
+        rendered = render_page(
+            source, index, get_profile("web"), source_id=source_id_for(path)
+        )
+    except IndexError as exc:
+        raise HTTPException(status_code=404, detail="pagina bestaat niet") from exc
+    finally:
+        source.close()
+
+    gevonden = panels.detect(rendered.data, right_to_left=book.right_to_left)
+    heel = len(gevonden) == 1 and gevonden[0].oppervlak > 0.98
+    return PanelsOut(
+        book_id=book.id,
+        page_index=index,
+        panels=[PanelOut(box=paneel.as_list()) for paneel in gevonden],
+        whole_page=heel,
     )
 
 

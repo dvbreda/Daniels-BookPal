@@ -188,6 +188,10 @@ class HomeItemOut(BaseModel):
     number: str | None = None
     volume: str | None = None
     kind: BookKind
+    # De herkomst van de serie, zodat een client "strips" en "manga" uit elkaar
+    # kan houden zonder per tegel de serie op te vragen. Soort alleen is niet
+    # genoeg: allebei zijn het `comic`.
+    origin_region: OriginRegion = OriginRegion.UNKNOWN
     has_file: bool = True
     extension: str | None = None
     page_count: int | None = None
@@ -926,6 +930,25 @@ class PageColourInfoOut(BaseModel):
     # zien als kleur en vertaling allebei aanstaan — anders wint de hertekende
     # pagina en zie je de kleur nooit.
     translated: bool = False
+
+
+class PanelOut(BaseModel):
+    """Eén paneel, genormaliseerd op 0..1 — net als de tekstvlakken van een
+    vertaling, zodat het over elk beeldprofiel past."""
+
+    box: list[float]
+
+
+class PanelsOut(BaseModel):
+    book_id: int
+    page_index: int
+    # In leesvolgorde: van boven naar beneden, binnen een rij mee met de
+    # leesrichting van het boek.
+    panels: list[PanelOut] = Field(default_factory=list)
+    # Eén paneel dat de hele pagina beslaat betekent: hier viel niets te
+    # snijden. Dat is bij een splash het juiste antwoord, maar een client wil
+    # het verschil kunnen zien met een pagina die netjes opgedeeld is.
+    whole_page: bool = False
 
 
 class BatchPlanOut(BaseModel):

@@ -41,6 +41,7 @@ def _item(
         number=book.number,
         volume=book.volume,
         kind=book.kind,
+        origin_region=series.origin_region,
         has_file=book.file_id is not None,
         extension=extension,
         page_count=book.page_count,
