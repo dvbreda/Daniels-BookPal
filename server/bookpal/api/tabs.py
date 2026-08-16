@@ -6,10 +6,11 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from bookpal.db import current_user, get_session
+from bookpal.library import groups
 from bookpal.models import Series, Tab
 from bookpal.schemas import Paginated, SeriesOut, TabIn, TabOut
 from bookpal.tabs import RuleError, compile_rule
@@ -74,18 +75,27 @@ def delete_tab(tab_id: int, session: Session = Depends(get_session)) -> None:
 def tab_series(
     tab_id: int,
     search: str | None = Query(default=None, max_length=200),
+    group: groups.SeriesGroup | None = None,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=60, ge=1, le=500),
     session: Session = Depends(get_session),
 ) -> Paginated[SeriesOut]:
     """De series die deze tab toont — dezelfde where-clausule die /api/series
-    tot M3 met losse querystring-parameters bouwde, nu uit de regel."""
+    tot M3 met losse querystring-parameters bouwde, nu uit de regel.
+
+    ``group`` snijdt daar de grove indeling (boeken/strips/manga) nog doorheen.
+    Die staat als balk boven de tabs en hoort dus te combineren in plaats van te
+    concurreren: eerst kies je waar je in leest, dan welke tab.
+    """
     tab = _get_tab(session, tab_id)
     user = current_user(session)
     try:
         condition = compile_rule(tab.rule, user=user)
     except RuleError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if group is not None:
+        condition = and_(condition, groups.condition(group))
 
     statement = select(Series).where(condition)
     counter = select(func.count(Series.id)).where(condition)

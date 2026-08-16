@@ -119,3 +119,47 @@ class TestCollectionSeries:
         ).json()["id"]
         result = scanned.get(f"/api/collections/{collection_id}/series").json()
         assert [item["title"] for item in result["items"]] == ["Storm"]
+
+
+class TestGroups:
+    """De grove indeling boeken/strips/manga, als balk boven de bibliotheek.
+
+    De `scanned`-collectie heeft precies één van elk: Storm (Dupuis, dus
+    Europa), Tesuto (manga-vlag, dus Japan) en twee boeken (epub en pdf).
+    """
+
+    def _titles(self, client: TestClient, groep: str | None = None) -> list[str]:
+        query = f"?group={groep}" if groep else ""
+        return sorted(s["title"] for s in client.get(f"/api/series{query}").json()["items"])
+
+    def test_without_a_group_you_get_everything(self, scanned: TestClient):
+        assert len(self._titles(scanned)) == 4
+
+    def test_comics_exclude_manga(self, scanned: TestClient):
+        assert self._titles(scanned, "strips") == ["Storm"]
+
+    def test_manga_is_the_japanese_half(self, scanned: TestClient):
+        assert self._titles(scanned, "manga") == ["Tesuto"]
+
+    def test_books_are_everything_that_is_not_a_comic(self, scanned: TestClient):
+        assert self._titles(scanned, "boeken") == ["Een Testboek", "Een Testdocument"]
+
+    def test_the_total_counts_the_group_and_not_the_library(self, scanned: TestClient):
+        # Anders klopt het paginanummer niet zodra de collectie groter is dan
+        # één pagina — precies het geval waarin naschiften in de client stukgaat.
+        assert scanned.get("/api/series?group=manga").json()["total"] == 1
+
+    def test_an_unknown_group_is_a_bad_request(self, scanned: TestClient):
+        assert scanned.get("/api/series?group=onzin").status_code == 422
+
+    def test_a_tab_and_a_group_narrow_each_other(self, scanned: TestClient):
+        """De balk staat bóven de tabs, dus hij hoort te combineren."""
+        tab = scanned.post(
+            "/api/tabs", json={"name": "Alle strips", "rule": {"extension": {"in": ["cbz", "cbr"]}}}
+        ).json()["id"]
+        beide = scanned.get(f"/api/tabs/{tab}/series").json()
+        assert sorted(s["title"] for s in beide["items"]) == ["Storm", "Tesuto"]
+
+        alleen_manga = scanned.get(f"/api/tabs/{tab}/series?group=manga").json()
+        assert [s["title"] for s in alleen_manga["items"]] == ["Tesuto"]
+        assert alleen_manga["total"] == 1

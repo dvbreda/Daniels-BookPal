@@ -20,7 +20,7 @@ from bookpal.images import (
     render_remote_cover,
     source_id_for,
 )
-from bookpal.library import editions, sidecars
+from bookpal.library import editions, groups, sidecars
 from bookpal.library import merge as merge_module
 from bookpal.metadata.filename import normalise_number as _sort_number
 from bookpal.metadata.filename import sort_title as sort_title_for
@@ -80,6 +80,7 @@ def _apply_filters(
     root_id: int | None,
     region: OriginRegion | None,
     kind: BookKind | None,
+    group: groups.SeriesGroup | None,
     search: str | None,
 ) -> SelectT:
     if root_id is not None:
@@ -88,6 +89,8 @@ def _apply_filters(
         statement = statement.where(Series.origin_region == region)
     if kind is not None:
         statement = statement.where(Series.books.any(Book.kind == kind))
+    if group is not None:
+        statement = statement.where(groups.condition(group))
     if search:
         statement = statement.where(Series.title.ilike(f"%{search}%"))
     return statement
@@ -98,6 +101,7 @@ def list_series(
     root_id: int | None = None,
     region: OriginRegion | None = None,
     kind: BookKind | None = None,
+    group: groups.SeriesGroup | None = None,
     search: str | None = Query(default=None, max_length=200),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=60, ge=1, le=500),
@@ -106,15 +110,19 @@ def list_series(
     """Bladeren met de filters die M3 straks als regelboom automatiseert.
 
     Nu nog losse query-parameters; de tab-regels compileren later naar precies
-    deze where-clausules.
+    deze where-clausules. ``group`` is de grove indeling van de startpagina —
+    zie `bookpal.library.groups` waarom die niet in de client kan.
     """
-    base = _apply_filters(select(Series), root_id=root_id, region=region, kind=kind, search=search)
+    base = _apply_filters(
+        select(Series), root_id=root_id, region=region, kind=kind, group=group, search=search
+    )
     total = session.scalar(
         _apply_filters(
             select(func.count(Series.id)),
             root_id=root_id,
             region=region,
             kind=kind,
+            group=group,
             search=search,
         )
     )
