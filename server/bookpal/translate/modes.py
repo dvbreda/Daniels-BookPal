@@ -1,7 +1,7 @@
 """De drie vertaalstanden (M8).
 
 De keuze is een echte afweging, geen voorkeur, en de gemeten verschillen staan
-in `docs/architectuur.md`. Kort:
+in `docs/architectuur.md` onder "De drie vertaalstanden". Kort:
 
 * ``TEXT`` — het taalmodel leest de pagina en geeft tekst + coördinaten terug;
   wij tekenen die zelf met Comic Neue. Voorspelbaar correct, raakt de tekening

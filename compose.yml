@@ -33,11 +33,11 @@ services:
       BOOKPAL_SIDECAR_DIR: /data/vertalingen
     volumes:
       - bookpal-data:/data
-      # Vertalingen kosten geld, dus ze staan buiten de database: in mappen op
-      # naam van serie en hoofdstuk, zodat ze een herbouwde database overleven.
-      # Standaard in het data-volume. Wil je er zelf in kunnen bladeren, zet dan
-      # een absoluut NAS-pad in .env — bijvoorbeeld:
-      #   BOOKPAL_VERTALINGEN=/volume1/_vertalingen
+      # Vertalingen en ingekleurde pagina's kosten geld, dus ze staan buiten de
+      # database — tegenwoordig in een verborgen `.sidecars`-map naast de serie
+      # zelf, waar je ze in je bestandsbeheer vindt. Deze map is nog maar het
+      # vangnet: hij vangt series op die (nog) nergens op schijf staan, zoals
+      # een reeks die je alleen online volgt zonder eigen bibliotheekmap.
       - "${BOOKPAL_VERTALINGEN:-bookpal-vertalingen}:/data/vertalingen"
       # Links het pad op de NAS, rechts het pad in de container. Die rechterkant
       # vul je in bij Instellingen — dus /library/strips, niet /volume1/_strips.

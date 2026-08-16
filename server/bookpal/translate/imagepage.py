@@ -21,8 +21,8 @@ Wat we er *niet* tegen kunnen doen: controleren of de vertaling klopt. In onze
 tests liet het snelle model op drie van de vier pagina's iets liggen (een
 onvertaalde ballon, een verzonnen regel, en één keer een gewijzigd bedrag op een
 menukaart). Dat laatste is het gevaarlijkst omdat het er correct uitziet. Het
-zware model kwam er in alle vier de tests goed doorheen. Zie
-`docs/architectuur.md` voor de metingen.
+zware model kwam er in alle vier de tests goed doorheen. De metingen staan in
+`docs/architectuur.md` onder "De drie vertaalstanden".
 """
 
 from __future__ import annotations

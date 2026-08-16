@@ -6,7 +6,7 @@ is.
 
 De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/architectuur.md).
 
-## Wat er nu werkt (M0 + M1 + M3 + M5 + M6 + M7 + M8 + deels M2)
+## Wat er nu werkt (M0 t/m M3 en M5 t/m M8)
 
 - **Scannen** van cbz, cbr, cb7, epub en pdf, incrementeel: een bestand dat niet
   veranderd is wordt niet opnieuw geopend.
@@ -23,7 +23,15 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   rechts én rechts-naar-links, zoom, fit-modi en vooruitladen.
 - **BookPal Lite** (`/lite`): server-rendered lezer zonder JavaScript voor de
   Kobo-browser. Een pagina omslaan is een gewone link, dus de voortgang wordt
-  bijgewerkt zonder dat het apparaat iets hoeft uit te voeren.
+  bijgewerkt zonder dat het apparaat iets hoeft uit te voeren. Met een
+  schakelaar om gelezen hoofdstukken en uitgelezen series te verbergen — die
+  stand woont in de URL, want zonder JavaScript is er geen andere plek.
+- **Kobo-integratie** (Nickel, in de instellingen): boeken wegzetten naar een
+  doelmap rond waar je bent, je series als planken in `KoboReader.sqlite`, en
+  voortgang uit Kobo's eigen lezer alleen-vooruit teruglezen. Per onderdeel aan
+  te zetten, proefstand standaard aan, en er gaat altijd eerst een kopie van de
+  database naast. Let op: dit is gebouwd en getest tegen een nagebootst
+  apparaat, nog niet tegen een echte Kobo.
 - **OPDS** (`/opds`): catalogfeed voor apps die dat al spreken, zoals Chunky of
   KyBook.
 - **Tabs en slimme collecties** (`/tabs` en `/collecties` in de web-app):
@@ -32,12 +40,24 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   Eén engine voor allebei; collecties groeperen hun uitkomst bovendien op
   uitgever of map.
 
-- **Bronnen** (`/bronnen` in de web-app): MangaDex zoeken, volgen en
-  hoofdstukken ophalen. Een gevolgd hoofdstuk is eerst een boek zonder bestand;
+- **Bronnen** (`/bronnen` in de web-app): MangaDex, het Internet Archive en elke
+  OPDS-catalogus waarvan je het adres invult — zoeken, volgen en hoofdstukken
+  ophalen. Een gevolgd hoofdstuk is eerst een boek zonder bestand;
   ophalen hangt er een cbz aan die daarna door dezelfde scanner, lezer en
   beeldprofielen loopt als je eigen bestanden. Kaartjes tonen waar iets vandaan
   komt: geen badge voor je eigen bestanden, ☁ voor wat nog online staat, ✓ voor
   opgehaald en ⏳ met het aantal dagen voor een tijdelijke download.
+- **Uitgaven binnen een serie**: van dezelfde reeks bestaan vaak meerdere
+  versies naast elkaar — de gekleurde uitgave die achterloopt, het zwart-witte
+  origineel dat compleet is, je eigen bestanden. Elke aflevering wordt gevuld
+  door de best gerangschikte uitgave die hem heeft, dus Dragon Ball Super leest
+  1 t/m 9 in kleur en vanaf 10 vanzelf zwart-wit. Voortgang hangt aan de
+  aflevering en niet aan de uitgave, zodat het omzetten van je voorkeur geen
+  halve serie weer ongelezen maakt.
+- **Zelf bestanden binnenhalen**: uploaden vanuit de browser (ook vanaf je
+  telefoon), of een deellink plakken die de NAS zelf ophaalt — met een
+  voortgangsbalk, want 882 MB die stil binnenkomt is niet te onderscheiden van
+  niets.
 - **Vooruitlezen**: een achtergrond-worker haalt periodiek nieuwe hoofdstukken
   op en downloadt er `readahead_n` vooruit vanaf waar je gebleven bent.
   Tijdelijke downloads verlopen na hun TTL — dan gaat alleen het bestand weg,
@@ -67,8 +87,38 @@ De volledige architectuur en routekaart staat in [`docs/architectuur.md`](docs/a
   ook was — Gemini kan geen font namaken, maar wel zien hoe de lettering
   eruitziet.
 
-Nog niet: Nickel-integratie in de instellingen (rest van M2), iOS (M4)
-en de Kobo-app (M9/M10).
+  Er zijn drie standen: het taalmodel de tekst laten uitlezen en zelf tekenen
+  (~$0,002 per pagina), of een beeldmodel de hele pagina laten hertekenen mét
+  vertaling (~$0,067 of ~$0,134). Wat er vanzelf gebeurt, wat de knop doet en
+  waarmee er wordt ingekleurd zijn drie aparte schakelaars. **Let op de eerste:**
+  staat "vanzelf" op een beeldstand, dan kost elke paginawissel drie pagina's
+  vooruit. Dat is de enige plek waar geld loopt zonder dat je op een knop drukt,
+  dus hij staat standaard op tekst.
+
+- **Pagina's laten inkleuren** (in de stripleer): een beeldmodel schildert er
+  aquarel in, maar we nemen daar alleen de kleur van over — het lijnwerk en de
+  letters blijven van ons, anders verweekt de inkt zichtbaar. Eén keer per
+  pagina, van het origineel; de combinatie met een vertaling is daarna
+  rekenwerk in plaats van een tweede aanroep. Een pagina die de tekenaar zelf
+  al kleurde vraagt eerst om bevestiging, want daar wordt niet ingekleurd maar
+  overgeschilderd.
+
+- **Een heel hoofdstuk in één keer**: drie knoppen bij het begin van een
+  hoofdstuk — tekst, ingetekend, inkleuren — via de batch-API van Gemini, die
+  de helft kost en er minuten over doet. Je krijgt eerst een plan te zien
+  (hoeveel pagina's staan er nog open, wat kost dat) en pas daarna de vraag of
+  het mag starten.
+
+- **Betaald werk staat naast je serie**, in een verborgen `.sidecars`-map:
+  vertalingen, ingekleurde pagina's en de ruwe plaat van het model. De schijf
+  is de waarheid en de database is de index, dus een database die opnieuw
+  opgebouwd wordt kost je niets van wat je al betaald hebt.
+
+- **Achtergrond bij een serie** uit Wikipedia, te lezen als epub in dezelfde
+  lezer.
+
+Nog niet: iOS (M4) en de eigen Kobo-app (M9/M10). De Nickel-integratie is
+gebouwd maar nog niet tegen een echte Kobo getest.
 
 ## Draaien op de NAS
 
@@ -107,8 +157,14 @@ Zet per map de standaard-herkomst goed (`/library/manga` → Japan): dat is het
 vangnet voor bestanden zonder ComicInfo.xml, en het is een instelling per map.
 Daarom zijn aparte mappen per soort handiger dan één grote map.
 
-De collectie wordt alleen gelezen (`:ro` in de compose); BookPal schrijft
-uitsluitend in zijn eigen `/data`-volume.
+De collectie is **schrijfbaar** aangekoppeld, en dat is bewust: importeren zet
+gevolgde series als gewone bestanden in je eigen mappen, en het betaalde werk
+(vertalingen, ingekleurde pagina's) hoort naast de serie te staan in plaats van
+weggestopt in een Docker-volume. BookPal schrijft alleen in een submap op
+serienaam en in de verborgen `.sidecars`-map daarbinnen, en verwijdert nooit iets
+wat het niet zelf heeft neergezet. Wil je dat toch niet, zet dan `:ro` achter de
+regels in `compose.yml` — alles behalve importeren en het bewaren van
+vertalingen werkt dan nog.
 
 Wil je Claude Code op de NAS zelf laten draaien, zie
 [`docker/claude-code.md`](docker/claude-code.md).

@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     translate_readahead_pages: int = 3
 
     # De twee beeldmodellen die een hele pagina hertekenen mét vertaling. Duur
-    # per pagina, dus nooit vanzelf: alleen via de knop of een bewuste keuze in
-    # de instellingen. Zie docs/architectuur.md voor de gemeten kwaliteit.
+    # per pagina, dus nooit vanzelf — tenzij je de stand "vanzelf" bewust op een
+    # beeldstand zet, en dan kost elke paginawissel translate_readahead_pages
+    # pagina's. Zie docs/architectuur.md onder "De drie vertaalstanden" voor de
+    # gemeten kwaliteit.
     gemini_image_model_fast: str = "gemini-3.1-flash-image"
     gemini_image_model_pro: str = "gemini-3-pro-image"
 
