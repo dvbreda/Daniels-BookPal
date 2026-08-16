@@ -415,6 +415,44 @@ struct Client: Sendable {
         _ = try await stuur(verzoek)
     }
 
+    // MARK: - Sidecars zonder NAS (M10)
+    //
+    // Voor het synchroniseren van sidecars die de telefoon zelf maakte terwijl
+    // er geen NAS was, en voor het binnenhalen van wat er al op de NAS ligt.
+    // Zie `bookpal.api.sidecars` op de server — precies deze drie routes.
+
+    func sidecarManifest(boek: Int? = nil) async throws -> SidecarManifest {
+        var query: [URLQueryItem] = []
+        if let boek { query.append(URLQueryItem(name: "book_id", value: String(boek))) }
+        return try await haal("api/sidecars", query: query)
+    }
+
+    func sidecarOphalen(boek: Int, naam: String) async throws -> Data {
+        try await stuur(URLRequest(url: basis.appending(path: "api/sidecars/\(boek)/\(naam)")))
+    }
+
+    /// Overschrijft nooit stilzwijgend: een botsing laat staan wat er al ligt,
+    /// tenzij je `force` meegeeft. Zie de server-kant voor waarom dat de
+    /// goede kant is om op te vallen.
+    @discardableResult
+    func sidecarPlaatsen(
+        boek: Int, naam: String, data: Data, force: Bool = false
+    ) async throws -> SidecarRegel {
+        var onderdelen = URLComponents(
+            url: basis.appending(path: "api/sidecars/\(boek)/\(naam)"), resolvingAgainstBaseURL: false
+        )
+        if force { onderdelen?.queryItems = [URLQueryItem(name: "force", value: "true")] }
+        guard let url = onderdelen?.url else { throw ClientFout.ongeldigAdres(naam) }
+        var verzoek = URLRequest(url: url)
+        verzoek.httpMethod = "PUT"
+        verzoek.httpBody = data
+        verzoek.setValue(
+            naam.hasSuffix(".json") ? "application/json" : "application/octet-stream",
+            forHTTPHeaderField: "Content-Type"
+        )
+        return try Client.decoder.decode(SidecarRegel.self, from: try await stuur(verzoek))
+    }
+
     // MARK: - Onderwater
 
     private func stuurJSON<T: Decodable>(

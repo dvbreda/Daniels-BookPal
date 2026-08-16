@@ -12,12 +12,15 @@ struct BibliotheekView: View {
     @State private var fout: String?
     @State private var toontInstellingen = false
     @State private var toontFilter = false
+    /// Zie `HomeView` — dezelfde terugval, dezelfde balk.
+    @State private var vanCache = false
 
     private let kolommen = [GridItem(.adaptive(minimum: 110), spacing: 12)]
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                if vanCache { Offlinebanner() }
                 soortbalk
                 if !tabs.isEmpty { tabbalk }
                 inhoud
@@ -193,15 +196,27 @@ struct BibliotheekView: View {
         }
         laadt = true
         defer { laadt = false }
-        do {
-            if let tab = filter.tabID {
-                series = try await client.tabSeries(tab, groep: filter.groep, zoek: zoek).items
-            } else {
-                series = try await client.series(filter: filter, zoek: zoek).items
+        // Een tab compileert op de server naar een query; die kunnen we
+        // zonder NAS niet nabouwen, dus de terugval geldt alleen als er geen
+        // tab gekozen is. Een gekozen tab zonder NAS toont dan niet ten
+        // onrechte de vorige "Alles"-lijst alsof hij bij de tab hoort.
+        let resultaat: Paginated<Series>?
+        let terugval: Bool
+        if let tab = filter.tabID {
+            resultaat = try? await client.tabSeries(tab, groep: filter.groep, zoek: zoek)
+            terugval = false
+        } else {
+            let sleutel = "series-\(filter.groep.rawValue)-\(zoek)"
+            (resultaat, terugval) = await Bibliotheekcache.metTerugval(sleutel: sleutel) {
+                try await client.series(filter: filter, zoek: zoek)
             }
+        }
+        vanCache = terugval
+        if let resultaat {
+            series = resultaat.items
             fout = nil
-        } catch {
-            fout = error.localizedDescription
+        } else if series.isEmpty {
+            fout = ClientFout.netwerk(URLError(.notConnectedToInternet)).localizedDescription
         }
     }
 }

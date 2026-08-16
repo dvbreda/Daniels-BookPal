@@ -12,11 +12,17 @@ import UIKit
 /// De cachesleutel bevat de gekozen bron, want dezelfde pagina heeft in kleur
 /// een ander beeld dan in zwart-wit. Zonder dat zou omschakelen het oude beeld
 /// blijven tonen.
+///
+/// Onder het geheugen zit een tweede, langzamere laag op schijf
+/// (`Paginacache`): wat hier ooit is opgehaald, blijft ook staan zodra iOS het
+/// geheugen terugvraagt of de app opnieuw opstart, en is wat je zonder NAS
+/// terugziet.
 @MainActor
 @Observable
 final class Beeldlader {
     private let client: Client
     private let boek: Int
+    private let serieID: Int
     private let cache = NSCache<NSString, UIImage>()
     private var lopend: [String: Task<UIImage?, Never>] = [:]
 
@@ -24,9 +30,11 @@ final class Beeldlader {
     /// liggende pagina hoort het scherm alleen te vullen.
     private(set) var verhoudingen: [Int: Double] = [:]
 
-    init(client: Client, boek: Int) {
+    init(client: Client, boek: Int, serieID: Int, vanAbonnement: Bool = false) {
         self.client = client
         self.boek = boek
+        self.serieID = serieID
+        if vanAbonnement { Prioriteiten.gedeeld.markeerAltijdBewaren(boek: boek) }
         cache.countLimit = 24
     }
 
@@ -77,6 +85,11 @@ final class Beeldlader {
     /// Twee keer tegelijk om dezelfde pagina vragen gebeurt zodra vooruitladen
     /// en de weergave elkaar overlappen; die tweede vraag hangt aan dezelfde
     /// taak in plaats van een tweede verzoek te sturen.
+    ///
+    /// Lukt het netwerk niet — geen NAS, geen wifi — dan valt dit terug op wat
+    /// er op schijf staat van een eerdere keer. Lukt het wél, dan wordt de
+    /// schijf meteen bijgewerkt, zodat de volgende keer zonder NAS ook deze
+    /// pagina meetelt.
     @discardableResult
     func laad(_ index: Int, keuze: Paginakeuze = .origineel) async -> UIImage? {
         let sleutel = sleutel(index, keuze)
@@ -84,17 +97,26 @@ final class Beeldlader {
         if let bezig = lopend[sleutel] { return await bezig.value }
 
         let adres = adres(index, keuze)
+        let serieID = serieID
+        let boek = boek
         let taak = Task<UIImage?, Never> {
-            guard let adres else { return nil }
-            do {
-                let (data, antwoord) = try await URLSession.shared.data(from: adres)
-                if let http = antwoord as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
-                    return nil
+            if let adres {
+                do {
+                    let (data, antwoord) = try await URLSession.shared.data(from: adres)
+                    if let http = antwoord as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+                        await Paginacache.gedeeld.schrijf(
+                            data, serieID: serieID, boek: boek, sleutel: sleutel
+                        )
+                        return UIImage(data: data)
+                    }
+                } catch {
+                    // Geen verbinding: hieronder terugvallen op schijf.
                 }
-                return UIImage(data: data)
-            } catch {
-                return nil
             }
+            guard let bewaard = await Paginacache.gedeeld.lees(
+                serieID: serieID, boek: boek, sleutel: sleutel
+            ) else { return nil }
+            return UIImage(data: bewaard)
         }
         lopend[sleutel] = taak
         let beeld = await taak.value

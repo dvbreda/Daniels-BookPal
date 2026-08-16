@@ -14,6 +14,10 @@ struct HomeView: View {
     @State private var laadt = false
     @State private var fout: String?
     @State private var teOpenen: Book?
+    /// Toont dit de laatst bekende stand, en niet een verse? Zie
+    /// `Bibliotheekcache` — dat is zo bij geen netwerk of een NAS die niet
+    /// reageert.
+    @State private var vanCache = false
     @AppStorage("home.soort") private var soortRuw = Soortfilter.alles.rawValue
 
     private var soort: Soortfilter { Soortfilter(rawValue: soortRuw) ?? .alles }
@@ -41,6 +45,7 @@ struct HomeView: View {
                 ProgressView("Ophalen…")
             } else {
                 VStack(spacing: 0) {
+                    if vanCache { Offlinebanner() }
                     soortbalk
                     if zichtbaar.isEmpty {
                         ContentUnavailableView(
@@ -167,18 +172,33 @@ struct HomeView: View {
         }
         laadt = true
         defer { laadt = false }
-        do {
-            rails = try await client.home().rails
+        let (resultaat, terugval) = await Bibliotheekcache.metTerugval(sleutel: "home") {
+            try await client.home()
+        }
+        vanCache = terugval
+        if let resultaat {
+            rails = resultaat.rails
             fout = nil
-        } catch {
-            fout = error.localizedDescription
+            // Verse verbinding met de NAS is precies het moment om te kijken
+            // of er onderweg iets is gemaakt dat nog niet is aangekomen, en
+            // of er iets op de NAS ligt wat de telefoon nog niet heeft.
+            Task { await SidecarSync.gedeeld.synchroniseerIndienNodig(client) }
+        } else if rails.isEmpty {
+            fout = ClientFout.netwerk(URLError(.notConnectedToInternet)).localizedDescription
         }
     }
 
     /// De tegel geeft alleen een boek-id; de lezer heeft het hele boek nodig
-    /// (leesrichting, paginacount, voortgang). Dus eerst ophalen, dan openen.
+    /// (leesrichting, paginacount, voortgang). Dus eerst ophalen, dan openen —
+    /// en zonder NAS valt dat terug op de laatste keer dat dit boek wél
+    /// opgehaald is (`Bibliotheekcache`), meestal het moment dat je 'm voor het
+    /// laatst las.
     private func open(_ item: HomeItem) async {
         guard let client = instellingen.client, item.hasFile else { return }
-        teOpenen = try? await client.boek(item.bookID)
+        let sleutel = "boek-\(item.bookID)"
+        let (boek, _) = await Bibliotheekcache.metTerugval(sleutel: sleutel) {
+            try await client.boek(item.bookID)
+        }
+        teOpenen = boek
     }
 }

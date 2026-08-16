@@ -1,7 +1,7 @@
 import Foundation
 
 /// De vorm waarin de server lijsten teruggeeft.
-struct Paginated<T: Decodable & Sendable>: Decodable, Sendable {
+struct Paginated<T: Codable & Sendable>: Codable, Sendable {
     let items: [T]
     let total: Int
     let offset: Int
@@ -10,7 +10,7 @@ struct Paginated<T: Decodable & Sendable>: Decodable, Sendable {
 
 /// Hoe een boek gelezen wordt — niet per se de bestandsextensie. Deze drie zijn
 /// wat `BookKind` op de server kent; manga valt onder `comic`.
-enum BookKind: String, Decodable, Sendable {
+enum BookKind: String, Codable, Sendable {
     case comic
     case epub
     case pdf
@@ -32,7 +32,7 @@ enum BookKind: String, Decodable, Sendable {
 /// getallen aankan liet daardoor élke serie met een epub erin op een foutmelding
 /// stuklopen — één onleesbaar veld gooit in Swift de hele decode om, niet alleen
 /// dat ene boek.
-enum JSONWaarde: Decodable, Sendable {
+enum JSONWaarde: Codable, Sendable {
     case getal(Int)
     case tekst(String)
     case anders
@@ -47,9 +47,21 @@ enum JSONWaarde: Decodable, Sendable {
             self = .anders
         }
     }
+
+    /// Alleen nodig om de offline-momentopname terug te kunnen schrijven
+    /// (`Bibliotheekcache`); de server krijgt deze waarde nooit terug — die
+    /// route stuurt altijd een verse positie, geen oude uit deze enum.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case let .getal(getal): try container.encode(getal)
+        case let .tekst(tekst): try container.encode(tekst)
+        case .anders: try container.encodeNil()
+        }
+    }
 }
 
-struct Progress: Decodable, Sendable {
+struct Progress: Codable, Sendable {
     let position: [String: JSONWaarde]
     let percent: Double
     let finished: Bool
@@ -70,7 +82,7 @@ struct Progress: Decodable, Sendable {
     }
 }
 
-struct Series: Decodable, Sendable, Identifiable {
+struct Series: Codable, Sendable, Identifiable {
     let id: Int
     let title: String
     let sortTitle: String
@@ -93,7 +105,7 @@ struct Series: Decodable, Sendable, Identifiable {
     }
 }
 
-struct Book: Decodable, Sendable, Identifiable, Hashable {
+struct Book: Codable, Sendable, Identifiable, Hashable {
     let id: Int
     let seriesID: Int
     let kind: BookKind
@@ -410,7 +422,7 @@ struct VerderLezen: Decodable, Sendable {
 }
 
 /// Eén tegel op de startpagina: genoeg om te tonen en te openen.
-struct HomeItem: Decodable, Sendable, Identifiable {
+struct HomeItem: Codable, Sendable, Identifiable {
     let bookID: Int
     let seriesID: Int
     let seriesTitle: String
@@ -494,7 +506,7 @@ enum Soortfilter: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-struct HomeRail: Decodable, Sendable, Identifiable {
+struct HomeRail: Codable, Sendable, Identifiable {
     let key: String
     let title: String
     let items: [HomeItem]
@@ -502,7 +514,7 @@ struct HomeRail: Decodable, Sendable, Identifiable {
     var id: String { key }
 }
 
-struct Home: Decodable, Sendable {
+struct Home: Codable, Sendable {
     /// Lege rails komen niet mee: een kop zonder inhoud is ruis.
     let rails: [HomeRail]
 }
@@ -553,5 +565,49 @@ struct VolgendHoofdstuk: Decodable, Sendable {
         case title, number, volume
         case bookID = "book_id"
         case hasFile = "has_file"
+    }
+}
+
+/// Eén bewaard stuk betaald werk, zoals het op de NAS op schijf staat.
+/// Zie `bookpal.api.sidecars` — dezelfde vorm, voor het synchroniseren.
+struct SidecarRegel: Codable, Sendable {
+    let bookID: Int
+    let pageIndex: Int
+    let name: String
+    let kind: String
+    let bytes: Int
+    let changedAt: Date
+    /// Bij een upload: was jij degene die dit neerzette, of lag er al iets van
+    /// een ander apparaat? Ontbreekt bij het manifest — dan is het niet van
+    /// toepassing en staat hij op `true`.
+    let stored: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case name, kind, bytes, stored
+        case bookID = "book_id"
+        case pageIndex = "page_index"
+        case changedAt = "changed_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let waarden = try decoder.container(keyedBy: CodingKeys.self)
+        bookID = try waarden.decode(Int.self, forKey: .bookID)
+        pageIndex = try waarden.decode(Int.self, forKey: .pageIndex)
+        name = try waarden.decode(String.self, forKey: .name)
+        kind = try waarden.decode(String.self, forKey: .kind)
+        bytes = try waarden.decode(Int.self, forKey: .bytes)
+        changedAt = try waarden.decode(Date.self, forKey: .changedAt)
+        stored = try waarden.decodeIfPresent(Bool.self, forKey: .stored) ?? true
+    }
+}
+
+struct SidecarManifest: Codable, Sendable {
+    let items: [SidecarRegel]
+    let total: Int
+    let totalBytes: Int
+
+    enum CodingKeys: String, CodingKey {
+        case items, total
+        case totalBytes = "total_bytes"
     }
 }

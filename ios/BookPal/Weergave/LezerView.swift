@@ -188,6 +188,16 @@ struct LezerView: View {
             let pagina = huidigePagina
             let percent = Spreads.percentVoor(spreads, spreadIndex: spreadIndex, paginas: paginas)
             Task { await bewaar(pagina: pagina, percent: percent) }
+            // Hier en niet bij elke pagina: dit is bestandswerk, en je sluit
+            // een boek veel minder vaak dan je bladert.
+            let prioriteiten = Prioriteiten.gedeeld
+            Task {
+                await Paginacache.gedeeld.ruimOpIndienNodig(
+                    limiet: prioriteiten.limietBytes,
+                    prioriteitSeries: prioriteiten.eigenGekozen,
+                    beschermdeBoeken: prioriteiten.beschermdeBoeken
+                )
+            }
         }
     }
 
@@ -620,7 +630,9 @@ struct LezerView: View {
 
     private func start() {
         guard lader == nil, let client = instellingen.client else { return }
-        let nieuwe = Beeldlader(client: client, boek: boek.id)
+        let nieuwe = Beeldlader(
+            client: client, boek: boek.id, serieID: boek.seriesID, vanAbonnement: boek.fromSource
+        )
         nieuwe.bewerking = Beeldbewerking(bijsnijden: bijsnijden, contrast: contrast)
         nieuwe.profiel = instellingen.profiel
         lader = nieuwe

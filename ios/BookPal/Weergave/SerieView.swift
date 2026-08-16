@@ -8,6 +8,7 @@ struct SerieView: View {
     @State private var verder: VerderLezen?
     @State private var fout: String?
     @State private var bezig = false
+    private var prioriteiten: Prioriteiten { Prioriteiten.gedeeld }
 
     /// Dezelfde sleutel als de web-app: wie daar gelezen hoofdstukken verbergt,
     /// wil dat hier ook.
@@ -50,6 +51,32 @@ struct SerieView: View {
         .refreshable { await haal() }
     }
 
+    /// Het vinkje dat deze serie beschermt tegen opruimen.
+    ///
+    /// Zonder vinkje verdwijnt een gelezen hoofdstuk vanzelf zodra de
+    /// offline-opslag vol raakt — dat is precies de bedoeling voor wat je één
+    /// keer leest. Aanvinken is voor wat je herleest of zeker wilt hebben
+    /// zonder NAS. Wat van een abonnement komt is al beschermd zodra je het
+    /// opent, dus daar hoef je niets voor te doen.
+    private var offlineSectie: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { prioriteiten.isPrioriteit(serieID: serieID) },
+                set: { prioriteiten.zet(serieID: serieID, prioriteit: $0) }
+            )) {
+                Label("Offline bewaren", systemImage: "arrow.down.circle")
+            }
+        } footer: {
+            Text(
+                prioriteiten.isPrioriteit(serieID: serieID)
+                    ? "Wat je van deze serie leest blijft op je toestel staan, ook als de "
+                        + "opslag vol raakt."
+                    : "Uit: pagina's van deze serie mogen weg zodra de offline-opslag vol is. "
+                        + "Wat van een abonnement komt blijft sowieso staan."
+            )
+        }
+    }
+
     @ViewBuilder
     private func lijst(_ detail: SeriesDetail) -> some View {
         List {
@@ -60,6 +87,8 @@ struct SerieView: View {
                     Text(samenvatting).font(.callout).foregroundStyle(.secondary)
                 }
             }
+
+            offlineSectie
 
             if boeken.isEmpty && verbergGelezen {
                 Section {

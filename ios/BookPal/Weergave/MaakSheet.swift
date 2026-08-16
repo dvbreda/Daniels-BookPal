@@ -380,6 +380,38 @@ struct MaakSheet: View {
             melding = "Klaar — pagina \(pagina + 1) is bijgewerkt."
             opVernieuwd()
             await haalOverzicht()
+        } catch ClientFout.netwerk where stand != "text" {
+            // Geen NAS, maar mogelijk wel internet: dan kan de telefoon het
+            // zelf. Alleen voor de beeldstanden — de tekststand levert vlakken
+            // op die de server voor ons zet, en dat bouwen we hier niet na.
+            await vertaalZelf(zwaar: stand == "image_pro")
+        } catch {
+            fout = error.localizedDescription
+        }
+    }
+
+    /// Vertalen zonder NAS: rechtstreeks bij Gemini, met je eigen sleutel.
+    ///
+    /// Het resultaat gaat naar de lokale sidecarmap en wacht daar op de
+    /// eerstvolgende synchronisatie. Betaald werk raakt dus niet zoek als je
+    /// pas dagen later weer thuis bent.
+    private func vertaalZelf(zwaar: Bool) async {
+        guard let client = instellingen.client,
+              let adres = client.paginaURL(boek: boek.id, index: pagina)
+        else { return }
+        do {
+            // De originele pagina komt uit de offline-cache als de NAS weg is;
+            // zonder die pagina valt er niets te vertalen.
+            let (bron, _) = try await URLSession.shared.data(from: adres)
+            let plaat = try await LokaalVertaler.hertekenPagina(
+                data: bron, mediaType: "image/webp", taal: taal, zwaar: zwaar
+            )
+            let naam = Lokaalsidecar.hertekendNaam(pagina: pagina, taal: taal, zwaar: zwaar)
+            Lokaalsidecar.bewaar(plaat, naam: naam, boek: boek.id)
+            melding =
+                "Klaar op dit toestel — pagina \(pagina + 1). Hij gaat naar de NAS "
+                + "zodra je weer verbinding hebt."
+            opVernieuwd()
         } catch {
             fout = error.localizedDescription
         }
@@ -400,6 +432,29 @@ struct MaakSheet: View {
             await haalOverzicht()
         } catch ClientFout.alInKleur {
             vraagOverschilderen = true
+        } catch ClientFout.netwerk {
+            await kleurZelf()
+        } catch {
+            fout = error.localizedDescription
+        }
+    }
+
+    /// Inkleuren zonder NAS. Anders dan op de server blijft dit de ruwe plaat
+    /// van het model: het samenstellen met het originele lijnwerk
+    /// (`recolour.recompose`) gebeurt daar, zodra deze sidecar aankomt.
+    private func kleurZelf() async {
+        guard let client = instellingen.client,
+              let adres = client.paginaURL(boek: boek.id, index: pagina)
+        else { return }
+        do {
+            let (bron, _) = try await URLSession.shared.data(from: adres)
+            let plaat = try await LokaalVertaler.kleurPagina(data: bron, mediaType: "image/webp")
+            let naam = Lokaalsidecar.kleurNaam(pagina: pagina)
+            Lokaalsidecar.bewaar(plaat, naam: naam, boek: boek.id)
+            melding =
+                "Ingekleurd op dit toestel — pagina \(pagina + 1). Hij gaat naar de NAS "
+                + "zodra je weer verbinding hebt."
+            opVernieuwd()
         } catch {
             fout = error.localizedDescription
         }

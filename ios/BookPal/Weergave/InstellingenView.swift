@@ -11,6 +11,11 @@ struct InstellingenView: View {
     @State private var vertaal: Vertaalinstellingen?
     @State private var roots: [LibraryRoot] = []
     @State private var opslag: String = "…"
+    @State private var paginaOpslag: String = "…"
+    @State private var eigenSleutel: String = ""
+    @State private var sleutelBewaard = false
+    private var prioriteiten: Prioriteiten { Prioriteiten.gedeeld }
+    private var sync: SidecarSync { SidecarSync.gedeeld }
 
     // De leesstanden staan ook in de lezer zelf; hier voor wie ze vooraf wil
     // zetten in plaats van tijdens het lezen te zoeken.
@@ -29,6 +34,8 @@ struct InstellingenView: View {
                 beeldSectie
                 lezenSectie
                 vertaalSectie
+                offlineSectie
+                sleutelSectie
                 opslagSectie
                 bronnenSectie
             }
@@ -154,6 +161,83 @@ struct InstellingenView: View {
         }
     }
 
+    /// Hoeveel ruimte offline lezen mag innemen, en wat er nu in zit.
+    private var offlineSectie: some View {
+        Section {
+            LabeledContent("Pagina's op dit toestel", value: paginaOpslag)
+            VStack(alignment: .leading) {
+                Text("Ruimte: \(prioriteiten.limietMB) MB")
+                Slider(
+                    value: Binding(
+                        get: { Double(prioriteiten.limietMB) },
+                        set: { prioriteiten.limietMB = Int($0) }
+                    ),
+                    in: 250...10000,
+                    step: 250
+                )
+            }
+            Button("Offline pagina's wissen", role: .destructive) {
+                Task {
+                    await Paginacache.gedeeld.maakLeeg()
+                    paginaOpslag = await omvangTekst()
+                }
+            }
+
+            Button {
+                Task {
+                    if let client = instellingen.client { await sync.synchroniseer(client) }
+                }
+            } label: {
+                HStack {
+                    Label("Nu synchroniseren", systemImage: "arrow.triangle.2.circlepath")
+                    if sync.bezig { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(sync.bezig)
+            if let verslag = sync.laatsteVerslag {
+                Text(verslag).font(.caption).foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Offline lezen")
+        } footer: {
+            Text(
+                "Wat je leest blijft op je toestel staan, zodat het ook zonder NAS opengaat. "
+                    + "Raakt de ruimte vol, dan gaat het langst ongelezene het eerst weg — "
+                    + "behalve series met «Offline bewaren» aan en alles wat van een abonnement "
+                    + "komt. Synchroniseren haalt alle vertalingen van de NAS en stuurt terug "
+                    + "wat je onderweg zelf hebt laten maken."
+            )
+        }
+    }
+
+    /// De eigen Gemini-sleutel, voor vertalen zonder NAS.
+    private var sleutelSectie: some View {
+        Section {
+            SecureField("AIza…", text: $eigenSleutel)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button(eigenSleutel.isEmpty ? "Sleutel wissen" : "Sleutel bewaren") {
+                Sleutelketen.bewaar(eigenSleutel)
+                sleutelBewaard = !eigenSleutel.isEmpty
+            }
+            if sleutelBewaard {
+                Label("Bewaard in de sleutelhanger", systemImage: "checkmark.circle")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+        } header: {
+            Text("Eigen Gemini-sleutel")
+        } footer: {
+            Text(
+                "Alleen nodig om onderweg te vertalen of in te kleuren zonder NAS — mét "
+                    + "internet, maar buiten je netwerk. Elke pagina kost dan hetzelfde als op "
+                    + "de NAS, en wordt van je eigen Google-account afgeschreven. De sleutel "
+                    + "staat in de sleutelhanger van dit toestel en gaat niet mee in een "
+                    + "iCloud-back-up. Zonder sleutel werkt alles behalve dít gewoon door."
+            )
+        }
+    }
+
     private var opslagSectie: some View {
         Section {
             LabeledContent("Opgehaalde epubs", value: opslag)
@@ -203,8 +287,16 @@ struct InstellingenView: View {
         return "\(profiel.name) — \(profiel.format)"
     }
 
+    private func omvangTekst() async -> String {
+        let bytes = await Paginacache.gedeeld.omvang
+        guard bytes > 0 else { return "niets" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
     private func haal() async {
         opslag = EpubOpslag.omvang()
+        paginaOpslag = await omvangTekst()
+        sleutelBewaard = Sleutelketen.lees()?.isEmpty == false
         guard let client = instellingen.client else { return }
         async let g = try? client.gezondheid()
         async let p = try? client.profielen()
