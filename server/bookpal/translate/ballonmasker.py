@@ -32,6 +32,26 @@ op de ballonrand, dus er wordt geen tekening meegepakt.
 op een beige veld. De lichtste pixel is dan nog steeds wit — vandaar dat een
 percentiel dat niet zag — maar het veld eromheen niet. De papiertoon wordt nu
 per vak gelijkgetrokken op de mediaan van het papier, niet op de piek.
+
+**Wat er bewust blijft staan.** Op Crayon Shin-Chan p6 houdt de bovenmarge een
+vage tint: gemeten +5 tot +10 scheefstand in rood-min-blauw over de band
+y=5-30, weg bij y=60. Twee vakken beginnen daar op y=1 en y=4 en lopen door tot
+in de panelen, en de crème van het model is niet gelijkmatig — de marge is
+créme-er dan het wit binnen een paneel. De mediaan wordt door dat panelwit
+gedomineerd, dus één factor per vak corrigeert de marge te weinig. Eén factor
+kan geen verloop rechttrekken.
+
+Dieper ligt het hieraan: die marge is geen ballon. Hij komt in het masker omdat
+blanco papier overal licht is en dus door `BALLON_DREMPEL` valt. De nette
+oplossing is lichte gebieden uitsluiten die aan de rand van de uitsnede vast
+zitten — een ballon is een lichte plek ómsloten door een donkere rand, een
+marge loopt door tot de rand.
+
+Niet gedaan, en met opzet: een ballon die tegen de paginarand staat raakt die
+uitsnederand óók (op p6 loopt een vak tot x=728, de volle breedte). Zo'n filter
+zou daar een echte ballon wegsnijden, en dan is de tekst weer afgekapt — de
+fout die hierboven drie pogingen kostte. Een vage tint in een marge weegt niet
+op tegen dat risico. Wie het alsnog aandurft heeft hiermee de meting.
 """
 
 from __future__ import annotations
