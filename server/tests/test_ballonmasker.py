@@ -8,8 +8,12 @@ allemaal na te bouwen met een paar rechthoeken.
 
 from __future__ import annotations
 
+from fastapi.testclient import TestClient
 from PIL import Image, ImageDraw
+from sqlalchemy import select
 
+from bookpal.db import session_scope
+from bookpal.models import Book, Series
 from bookpal.translate.ballonmasker import (
     inktvloer,
     naar_webp,
@@ -147,3 +151,94 @@ class TestWegschrijven:
         assert data[:4] == b"RIFF"
         with Image.open(__import__("io").BytesIO(data)) as terug:
             assert terug.size == (BREED, HOOG)
+
+
+class TestAlsLeesstand:
+    """De samengestelde versie is wat de lezer standaard krijgt.
+
+    Op de gescande collectie en niet op een verzonnen boek: het samenstellen
+    heeft het origineel nodig, en dat komt uit een echt bestand.
+    """
+
+    def _klaarzetten(self, tekstvlakken: bool) -> int:
+        from bookpal.translate import sidecar
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import _record
+
+        with session_scope() as s:
+            reeks = s.scalar(select(Series).where(Series.title == "Storm"))
+            boek = s.scalar(select(Book).where(Book.series_id == reeks.id, Book.number == "1"))
+            sidecar.write_bytes(
+                sidecar.image_path(reeks, boek, 0, "nl", TranslateMode.IMAGE_FAST),
+                naar_webp(_pagina(tekst="")),
+            )
+            _record(s, boek, 0, "nl", TranslateMode.IMAGE_FAST.provider, {"full_page": True})
+            if tekstvlakken:
+                # Zowel op schijf als in de index: `bubbles_for` leest de rij,
+                # en met een lege payload valt er niets te maskeren.
+                vlakken = {
+                    "bubbles": [
+                        {
+                            "box": [0.1, 0.06, 0.6, 0.3],
+                            "source": "oud",
+                            "translation": "nieuw",
+                            "kind": "speech",
+                        }
+                    ]
+                }
+                sidecar.write_json(sidecar.json_path(reeks, boek, 0, "nl"), vlakken)
+                _record(s, boek, 0, "nl", TranslateMode.TEXT.provider, vlakken)
+            return boek.id
+
+    def test_without_bubbles_the_model_plate_is_served(self, scanned: TestClient):
+        """Niets te maskeren: dan is de plaat van het model beter dan een fout."""
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import read_masked_page, read_page_image
+
+        boek_id = self._klaarzetten(tekstvlakken=False)
+        with session_scope() as s:
+            boek = s.get(Book, boek_id)
+            gemaskeerd = read_masked_page(s, boek, 0, "nl", TranslateMode.IMAGE_FAST)
+            ruw = read_page_image(s, boek, 0, "nl", TranslateMode.IMAGE_FAST)
+        assert gemaskeerd == ruw
+
+    def test_the_composed_version_is_cached_on_disk(self, scanned: TestClient):
+        """Op een N100 wil je dit niet bij elke paginawissel opnieuw doen."""
+        from bookpal.translate import sidecar
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import MASKER_VARIANT, read_masked_page
+
+        boek_id = self._klaarzetten(tekstvlakken=True)
+        with session_scope() as s:
+            boek = s.get(Book, boek_id)
+            reeks = s.get(Series, boek.series_id)
+            pad = sidecar.variant_path(reeks, boek, 0, f"{MASKER_VARIANT}-nl")
+            assert not pad.is_file()
+
+            eerste = read_masked_page(s, boek, 0, "nl", TranslateMode.IMAGE_FAST)
+            assert pad.is_file()
+            assert read_masked_page(s, boek, 0, "nl", TranslateMode.IMAGE_FAST) == eerste
+
+    def test_the_paid_plate_is_never_replaced_on_disk(self, scanned: TestClient):
+        """Het masker is rekenwerk; de plaat is het geld."""
+        from bookpal.translate import sidecar
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import read_masked_page
+
+        boek_id = self._klaarzetten(tekstvlakken=True)
+        with session_scope() as s:
+            boek = s.get(Book, boek_id)
+            reeks = s.get(Series, boek.series_id)
+            plaat = sidecar.image_path(reeks, boek, 0, "nl", TranslateMode.IMAGE_FAST)
+            voor = plaat.read_bytes()
+            read_masked_page(s, boek, 0, "nl", TranslateMode.IMAGE_FAST)
+            assert plaat.read_bytes() == voor
+
+    def test_a_missing_plate_gives_nothing(self, scanned: TestClient):
+        from bookpal.translate.modes import TranslateMode
+        from bookpal.translate.service import read_masked_page
+
+        with session_scope() as s:
+            reeks = s.scalar(select(Series).where(Series.title == "Storm"))
+            boek = s.scalar(select(Book).where(Book.series_id == reeks.id, Book.number == "1"))
+            assert read_masked_page(s, boek, 0, "nl", TranslateMode.IMAGE_FAST) is None

@@ -55,6 +55,7 @@ from bookpal.translate.service import (
     has_colour_for_language,
     plan_pages,
     read_colour,
+    read_masked_page,
     read_page_image,
     render_for_translation,
     render_layer_for,
@@ -255,6 +256,7 @@ def get_full_page_translation(
     page_index: int,
     lang: str | None = Query(default=None, max_length=8),
     mode: str | None = Query(default=None, max_length=20),
+    raw: bool = Query(default=False, description="De plaat van het model zonder masker."),
     session: Session = Depends(get_session),
 ) -> Response:
     """De hertekende pagina zelf. Zonder ``mode`` wint de duurste die er ligt."""
@@ -268,7 +270,12 @@ def get_full_page_translation(
             raise HTTPException(status_code=404, detail="deze pagina is nog niet volledig vertaald")
         wanted = found[0]
 
-    data = read_page_image(session, book, page_index, target_lang, wanted)
+    # De samengestelde versie is de standaard: de tekening van de tekenaar met
+    # alleen de ballonnen van het model. Zie `ballonmasker` voor de metingen —
+    # de hele plaat hertekenen gooit de rastertoon weg en verandert gezichten.
+    # Met `raw=true` krijg je alsnog de plaat zoals het model hem gaf.
+    lezer = read_page_image if raw else read_masked_page
+    data = lezer(session, book, page_index, target_lang, wanted)
     if data is None:
         raise HTTPException(status_code=404, detail="deze pagina is nog niet volledig vertaald")
     return Response(

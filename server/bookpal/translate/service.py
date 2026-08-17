@@ -219,6 +219,76 @@ def translate_page_as_image(
     return produced
 
 
+#: De samengestelde versie: de tekening van de tekenaar met alleen de ballonnen
+#: van het model. Zie `ballonmasker` voor waarom dat beter is dan de hele plaat
+#: hertekenen — kort: die gooit de rastertoon weg en verandert gezichten.
+#:
+#: Een eigen variant en geen vervanging op schijf: de hertekende plaat is het
+#: betaalde werk en blijft staan. Dit is rekenwerk dat we altijd opnieuw kunnen
+#: doen, dus het mag ook weg zonder verlies.
+MASKER_VARIANT = "masker"
+
+
+def read_masked_page(
+    session: Session,
+    book: Book,
+    page_index: int,
+    target_lang: str,
+    mode: TranslateMode,
+) -> bytes | None:
+    """De hertekende pagina met alleen de ballonnen overgenomen.
+
+    Valt terug op de hele hertekende plaat als er geen tekstvlakken bekend zijn:
+    zonder die vlakken is er niets te maskeren, en dan is de plaat van het model
+    nog altijd beter dan een foutmelding.
+
+    Wordt één keer per pagina uitgerekend en daarna van schijf gelezen — op een
+    N100 is dit geen werk dat je bij elke paginawissel wilt doen.
+    """
+    from PIL import Image
+
+    from bookpal.translate import ballonmasker
+
+    plaat = read_page_image(session, book, page_index, target_lang, mode)
+    if plaat is None:
+        return None
+
+    series = session.get(Series, book.series_id) if book.series_id else None
+    pad = sidecar.variant_path(series, book, page_index, f"{MASKER_VARIANT}-{target_lang}")
+    bewaard = sidecar.read_bytes(pad)
+    if bewaard is not None:
+        return bewaard
+
+    vlakken = bubbles_for(session, book, page_index, target_lang).bubbles
+    if not vlakken:
+        return plaat
+
+    try:
+        origineel_bytes, _ = render_for_translation(session, book, page_index)
+        with Image.open(BytesIO(origineel_bytes)) as origineel, Image.open(BytesIO(plaat)) as model:
+            origineel.load()
+            model.load()
+            samen, meting = ballonmasker.stel_samen(
+                origineel.convert("RGB"), model.convert("RGB"), vlakken
+            )
+        data = ballonmasker.naar_webp(samen)
+    except (OSError, ValueError) as exc:
+        # Samenstellen is opsmuk bovenop betaald werk; als het misgaat hoort de
+        # lezer de plaat van het model te krijgen en geen foutmelding.
+        logger.warning("ballonmasker mislukt voor boek %s p%s: %s", book.id, page_index, exc)
+        return plaat
+
+    sidecar.write_bytes(pad, data)
+    logger.info(
+        "ballonmasker: boek %s p%s, %s vakken, inktvloer %s",
+        book.id,
+        page_index,
+        meting.vakken,
+        meting.inktvloer,
+    )
+    return data
+
+
 #: Onder welke sleutel een ingekleurde pagina wordt bewaard. Bewust geen
 #: TranslateMode: inkleuren is geen vertaling en mag er nooit voor doorgaan —
 #: anders zou "de beste die er ligt" een ingekleurde pagina boven een vertaalde
