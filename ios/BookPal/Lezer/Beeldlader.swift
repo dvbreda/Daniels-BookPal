@@ -55,12 +55,19 @@ final class Beeldlader {
         }
     }
 
+    /// Verhoog dit zodra de server bij hetzelfde adres iets anders gaat
+    /// leveren. Dat gebeurde toen de hertekende pagina het ballonmasker kreeg:
+    /// de URL bleef gelijk, de plaat niet, en zonder deze teller zou alles wat
+    /// je al gelezen had voorgoed de oude versie blijven tonen — ook van
+    /// schijf, want `Paginacache` overleeft het opnieuw opstarten.
+    private static let plaatversie = 2
+
     private func sleutel(_ index: Int, _ keuze: Paginakeuze) -> String {
         switch keuze {
         case .origineel: return "\(index)-o-\(profiel)-\(bewerking.sleutel)"
         // De hertekende en ingekleurde platen komen kant-en-klaar van de
         // sidecar; daar doet de server geen bijsnijden of contrast op.
-        case .hertekend: return "\(index)-h"
+        case .hertekend: return "\(index)-h\(Self.plaatversie)"
         case let .kleur(taal): return "\(index)-k-\(taal ?? "")"
         }
     }

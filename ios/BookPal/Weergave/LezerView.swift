@@ -25,7 +25,12 @@ struct LezerView: View {
     /// Lucht rondom een paneel, als deel van de paginabreedte. Nul betekent
     /// strak op het paneel; wat marge laat je zien waar het op de pagina staat.
     @AppStorage("reader.panelMargin") private var paneelmarge = 0.03
-    @AppStorage("reader.translated") private var vertaling = false
+    /// Standaard aan: als er voor een pagina betaald is, wil je die zien.
+    ///
+    /// Kost niets op een onvertaalde serie — `Paginakeuze.kies` valt terug op
+    /// het origineel zodra er geen hertekende pagina klaarligt, en die
+    /// wetenschap komt uit een verzoek dat de lezer toch al doet.
+    @AppStorage("reader.translated") private var vertaling = true
     @AppStorage("reader.colour") private var kleurAan = false
     @State private var rechtsNaarLinks: Bool
 
