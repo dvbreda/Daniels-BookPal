@@ -81,6 +81,10 @@ OPREK_DEEL = 0.006
 #: vertaling afgekapt.
 VAKLUCHT = 0.04
 
+#: Waarop de papiermediaan gemeten wordt. Groter maakt het antwoord niet beter
+#: — het gaat om een mediaan van een egaal vlak — en wel veel trager.
+MEETMAAT = 160
+
 #: Vult de gevonden vorm minder dan dit deel van het vak, dan is er geen ballon
 #: herkend — een bijschrift zonder getekende rand. Dan is het vak zelf beter
 #: dan een masker vol gaten.
@@ -107,11 +111,21 @@ def _papiermediaan(beeld: Image.Image) -> list[int] | None:
     lichtste pixel nog steeds wit, en juist daarom zag een percentiel het
     toonverschil drie keer niet.
     """
-    rgb = beeld.convert("RGB")
-    grijs = beeld.convert("L").getdata()
+    # Op een verkleinde versie. Een mediaan van het papier verandert niet van
+    # meer pixels, en op ware grootte was dit het duurste stuk van de hele
+    # samenstelling: gemeten 1,6 seconde voor een pagina met negen ballonnen,
+    # ruim genoeg om de healthcheck van 4 seconden te laten omvallen zodra er
+    # drie pagina's tegelijk vooruitgelezen werden. De container werd dan door
+    # autoheal herstart, en de telefoon zag een netwerkfout.
+    klein = beeld.convert("RGB")
+    if max(klein.size) > MEETMAAT:
+        klein = klein.copy()
+        klein.thumbnail((MEETMAAT, MEETMAAT), Image.Resampling.NEAREST)
+
+    grijs = klein.convert("L").getdata()
     banden = list(
         zip(
-            *[p for p, g in zip(rgb.getdata(), grijs, strict=False) if g > BALLON_DREMPEL],
+            *[p for p, g in zip(klein.getdata(), grijs, strict=False) if g > BALLON_DREMPEL],
             strict=False,
         )
     )

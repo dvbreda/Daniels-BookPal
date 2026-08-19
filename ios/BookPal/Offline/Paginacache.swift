@@ -34,7 +34,8 @@ actor Paginacache {
     /// De cachesleutel van `Beeldlader` kan leestekens bevatten (een dubbele
     /// punt achter een taalcode); een hash is altijd een geldige bestandsnaam.
     private func bestand(serieID: Int, boek: Int, sleutel: String) -> URL {
-        boekMap(serieID: serieID, boek: boek).appendingPathComponent("\(abs(sleutel.hashValue)).dat")
+        boekMap(serieID: serieID, boek: boek)
+            .appendingPathComponent("\(Stabielesleutel.naam(sleutel)).dat")
     }
 
     func lees(serieID: Int, boek: Int, sleutel: String) -> Data? {

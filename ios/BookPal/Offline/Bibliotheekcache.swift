@@ -17,7 +17,7 @@ enum Bibliotheekcache {
     }()
 
     private static func bestand(_ sleutel: String) -> URL {
-        map.appendingPathComponent("\(abs(sleutel.hashValue)).json")
+        map.appendingPathComponent("\(Stabielesleutel.naam(sleutel)).json")
     }
 
     static func bewaar<T: Encodable>(_ waarde: T, sleutel: String) {

@@ -66,15 +66,26 @@ services:
       # Aparte roots per soort is hoe dan ook de betere keuze: de standaard-
       # herkomst is een instelling *per root*, en dat is precies wat "manga uit
       # Japan" laat werken bij bestanden zonder ComicInfo.xml.
+    # Ruim, want deze server doet beeldwerk. Het samenstellen van een
+    # gemaskeerde pagina kost gemeten ~1,5 seconde op de N100, en bij
+    # vooruitlezen draaien er drie tegelijk — dan haalde de oude timeout van 4
+    # seconden het niet, zag autoheal een zieke container en herstartte hem
+    # middenin het lezen. Zes keer op één dag. Niet de healthcheck was stuk maar
+    # de marge: hij mat "reageert binnen 4s onder volle belasting" terwijl hij
+    # "leeft nog" hoort te meten.
+    #
+    # `retries: 3` erbij zodat één trage meting niets doet; pas drie op rij
+    # betekent er echt iets.
     healthcheck:
       test:
         - CMD
         - python
         - -c
-        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).status == 200 else 1)"
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=20).status == 200 else 1)"
       interval: 30s
-      timeout: 5s
-      start_period: 20s
+      timeout: 25s
+      retries: 3
+      start_period: 60s
 
 volumes:
   bookpal-data:
