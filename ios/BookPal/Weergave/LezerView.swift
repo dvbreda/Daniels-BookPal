@@ -193,6 +193,14 @@ struct LezerView: View {
             let pagina = huidigePagina
             let percent = Spreads.percentVoor(spreads, spreadIndex: spreadIndex, paginas: paginas)
             Task { await bewaar(pagina: pagina, percent: percent) }
+            // Een hoofdstuk uit is een logisch moment om bij te werken: wat
+            // je onderweg zelf vertaalde gaat naar de NAS, en wat daar
+            // bijgekomen is komt hierheen. De voortgang zelf is al weggeschreven
+            // hierboven; de tracker-push doet de server daarna vanzelf,
+            // gedebounced per serie.
+            if let client = instellingen.client {
+                Task { await SidecarSync.gedeeld.synchroniseerIndienNodig(client) }
+            }
             // Hier en niet bij elke pagina: dit is bestandswerk, en je sluit
             // een boek veel minder vaak dan je bladert.
             let prioriteiten = Prioriteiten.gedeeld

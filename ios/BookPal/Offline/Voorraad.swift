@@ -36,13 +36,31 @@ final class Voorraad {
 
     private(set) var stand: Stand = .stil
     private var taak: Task<Void, Never>?
+    private var laatsteRonde: Date?
+
+    /// Hoe vaak een ronde vanzelf mag starten. Kort genoeg dat je nieuwe
+    /// vertalingen snel op je toestel hebt, lang genoeg dat het heen en weer
+    /// schakelen tussen apps geen tien rondes tegelijk oplevert. De knop in
+    /// Instellingen negeert dit — die vraag je expliciet.
+    private static let vanzelfInterval: TimeInterval = 120
 
     var loopt: Bool { taak != nil }
 
     private init() {}
 
+    /// Voor de automatische momenten: bij het openen van de app en zodra de
+    /// NAS weer bereikbaar is. Doet niets als er net een ronde geweest is of er
+    /// al één loopt.
+    func startIndienNodig(_ client: Client) {
+        guard taak == nil else { return }
+        if let laatste = laatsteRonde,
+           Date().timeIntervalSince(laatste) < Self.vanzelfInterval { return }
+        start(client)
+    }
+
     func start(_ client: Client) {
         guard taak == nil else { return }
+        laatsteRonde = Date()
         taak = Task { [weak self] in
             await self?.vul(client)
             self?.taak = nil
