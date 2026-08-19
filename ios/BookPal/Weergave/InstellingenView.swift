@@ -267,6 +267,11 @@ struct InstellingenView: View {
             } label: {
                 Label("Trackers", systemImage: "list.bullet.rectangle")
             }
+            NavigationLink {
+                OfflineView()
+            } label: {
+                Label("Offline", systemImage: "arrow.down.circle")
+            }
         } header: {
             Text("Volgen en bijhouden")
         } footer: {
