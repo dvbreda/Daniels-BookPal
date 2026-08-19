@@ -34,6 +34,9 @@ struct BookPalApp: App {
 /// is negen van de tien keer waarvoor je de app opent. Hetzelfde onderscheid dat
 /// de web-app maakt sinds de rails er zijn.
 struct Hoofdscherm: View {
+    @Environment(Instellingen.self) private var instellingen
+    private var bieb: Bieb { Bieb.gedeeld }
+
     var body: some View {
         TabView {
             Tab("Verder", systemImage: "book") {
@@ -42,6 +45,14 @@ struct Hoofdscherm: View {
             Tab("Bibliotheek", systemImage: "books.vertical") {
                 BibliotheekView()
             }
+            // Alleen als de bieb antwoordt: een tab naar een dode poort is
+            // erger dan geen tab.
+            if let adres = bieb.adres {
+                Tab("Bieb", systemImage: "sparkles") {
+                    NavigationStack { BiebView(adres: adres) }
+                }
+            }
         }
+        .task { await bieb.zoek(bij: instellingen.client?.basis) }
     }
 }
