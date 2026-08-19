@@ -116,6 +116,7 @@ struct OfflineView: View {
         case .sidecars: return "Vertalingen ophalen…"
         case let .paginas(klaar, van): return "\(klaar) pagina's opgehaald — nu «\(van)»"
         case .vol: return "De limiet is bereikt. Verhoog hem of vink minder series aan."
+        case .wacht: return "De NAS had het druk — later gaat hij verder."
         case let .klaar(paginas):
             return paginas == 0 ? "Alles stond er al." : "Klaar: \(paginas) pagina's opgehaald."
         case let .mislukt(waarom): return waarom

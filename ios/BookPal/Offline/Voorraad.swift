@@ -30,6 +30,8 @@ final class Voorraad {
         case sidecars(klaar: Int, totaal: Int)
         case paginas(klaar: Int, van: String)
         case vol
+        /// De server had het te druk; we proberen het later nog eens.
+        case wacht
         case klaar(paginas: Int)
         case mislukt(String)
     }
@@ -37,6 +39,21 @@ final class Voorraad {
     private(set) var stand: Stand = .stil
     private var taak: Task<Void, Never>?
     private var laatsteRonde: Date?
+
+    /// Rustpauze tussen twee paginaverzoeken. Zonder dit vroeg de vooruitlader
+    /// onafgebroken pagina's op — gemeten 547 verzoeken in één ronde — en dan
+    /// komt de NAS niet meer toe aan de healthcheck. Autoheal zag een zieke
+    /// container en herstartte hem elke vier minuten, precies het ritme van
+    /// deze ronde. De telefoon kon dan geen verbinding maken.
+    ///
+    /// Dit is voorraad aanleggen, geen race: een kwart seconde per pagina vult
+    /// in een half uur ruim duizend pagina's, en dat is snel zat.
+    private static let pauze: Duration = .milliseconds(250)
+
+    /// Duurt een verzoek langer dan dit, dan heeft de server het te druk —
+    /// waarschijnlijk omdat jij aan het lezen bent. Dan stoppen we deze ronde;
+    /// bij het volgende logische moment gaat hij gewoon verder.
+    private static let teTraag: TimeInterval = 5.0
 
     /// Hoe vaak een ronde vanzelf mag starten. Kort genoeg dat je nieuwe
     /// vertalingen snel op je toestel hebt, lang genoeg dat het heen en weer
@@ -108,6 +125,7 @@ final class Voorraad {
                 if Task.isCancelled { return }
                 let gedaan = await haalBoek(boek, serie: serie, client: client, limiet: limiet)
                 opgehaald += gedaan
+                if case .wacht = stand { return }
                 stand = .paginas(klaar: opgehaald, van: serie.title)
                 guard await Paginacache.gedeeld.omvang < limiet else {
                     stand = .vol
@@ -135,14 +153,25 @@ final class Voorraad {
                 continue
             }
             guard let adres = client.paginaURL(boek: boek.id, index: index) else { continue }
+            let begin = Date()
             guard let (data, antwoord) = try? await URLSession.shared.data(from: adres),
                   let http = antwoord as? HTTPURLResponse, (200..<300).contains(http.statusCode)
             else { continue }
+            let duur = Date().timeIntervalSince(begin)
             await Paginacache.gedeeld.schrijf(
                 data, serieID: serie.id, boek: boek.id, sleutel: sleutel
             )
             nieuw += 1
             if await Paginacache.gedeeld.omvang >= limiet { return nieuw }
+
+            // De server voorrang geven boven onze voorraad: hij bedient ook
+            // jouw lezer, en een healthcheck die geen beurt krijgt kost een
+            // herstart middenin het lezen.
+            if duur > Self.teTraag {
+                stand = .wacht
+                return nieuw
+            }
+            try? await Task.sleep(for: Self.pauze)
         }
         return nieuw
     }
