@@ -199,8 +199,7 @@ struct LezerView: View {
             Task {
                 await Paginacache.gedeeld.ruimOpIndienNodig(
                     limiet: prioriteiten.limietBytes,
-                    prioriteitSeries: prioriteiten.eigenGekozen,
-                    beschermdeBoeken: prioriteiten.beschermdeBoeken
+                    prioriteitSeries: prioriteiten.eigenGekozen
                 )
             }
         }
@@ -647,9 +646,7 @@ struct LezerView: View {
 
     private func start() {
         guard lader == nil, let client = instellingen.client else { return }
-        let nieuwe = Beeldlader(
-            client: client, boek: boek.id, serieID: boek.seriesID, vanAbonnement: boek.fromSource
-        )
+        let nieuwe = Beeldlader(client: client, boek: boek.id, serieID: boek.seriesID)
         nieuwe.bewerking = Beeldbewerking(bijsnijden: bijsnijden, contrast: contrast)
         nieuwe.profiel = instellingen.profiel
         lader = nieuwe

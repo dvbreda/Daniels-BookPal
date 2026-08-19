@@ -19,6 +19,7 @@ struct OfflineView: View {
     @State private var zoek = ""
 
     private var prioriteiten: Prioriteiten { Prioriteiten.gedeeld }
+    private var voorraad: Voorraad { Voorraad.gedeeld }
 
     private var zichtbaar: [Series] {
         guard !zoek.isEmpty else { return series }
@@ -28,6 +29,7 @@ struct OfflineView: View {
     var body: some View {
         List {
             ruimteSectie
+            vullenSectie
             if let fout {
                 Section { Text(fout).font(.callout).foregroundStyle(.red) }
             }
@@ -37,6 +39,9 @@ struct OfflineView: View {
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $zoek, prompt: "Zoek een serie")
         .task { await haal() }
+        .onChange(of: voorraad.stand) { _, _ in
+            Task { gebruikt = await Paginacache.gedeeld.omvang }
+        }
     }
 
     private var ruimteSectie: some View {
@@ -69,6 +74,51 @@ struct OfflineView: View {
                 "Eén pot voor je hele bibliotheek. Raakt hij vol, dan gaat de langst niet "
                     + "bekeken pagina het eerst — behalve van de series die je hieronder aanvinkt."
             )
+        }
+    }
+
+    /// Vooruit inladen, zodat je ook kunt lezen wat je nog niet geopend hebt.
+    private var vullenSectie: some View {
+        Section {
+            Button {
+                if voorraad.loopt {
+                    voorraad.stop()
+                } else if let client = instellingen.client {
+                    voorraad.start(client)
+                }
+            } label: {
+                HStack {
+                    Label(
+                        voorraad.loopt ? "Stoppen" : "Nu vooruit inladen",
+                        systemImage: voorraad.loopt ? "stop.circle" : "arrow.down.circle.fill"
+                    )
+                    if voorraad.loopt { Spacer(); ProgressView() }
+                }
+            }
+            .disabled(instellingen.client == nil)
+
+            if let melding = standtekst {
+                Text(melding).font(.caption).foregroundStyle(.secondary)
+            }
+        } footer: {
+            Text(
+                "Eerst alle vertalingen en ingekleurde pagina's — die zijn klein en duur "
+                    + "betaald, dus die komen altijd mee. Daarna gewone pagina's tot de limiet "
+                    + "vol is: aangevinkte series eerst, abonnementen als laatste omdat die toch "
+                    + "opnieuw op te halen zijn."
+            )
+        }
+    }
+
+    private var standtekst: String? {
+        switch voorraad.stand {
+        case .stil: return nil
+        case .sidecars: return "Vertalingen ophalen…"
+        case let .paginas(klaar, van): return "\(klaar) pagina's opgehaald — nu «\(van)»"
+        case .vol: return "De limiet is bereikt. Verhoog hem of vink minder series aan."
+        case let .klaar(paginas):
+            return paginas == 0 ? "Alles stond er al." : "Klaar: \(paginas) pagina's opgehaald."
+        case let .mislukt(waarom): return waarom
         }
     }
 

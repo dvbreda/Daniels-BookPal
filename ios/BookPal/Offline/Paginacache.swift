@@ -38,6 +38,14 @@ actor Paginacache {
             .appendingPathComponent("\(Stabielesleutel.naam(sleutel)).dat")
     }
 
+    /// Staat deze pagina er al? Voor `Voorraad`, die niet wil downloaden wat
+    /// er al ligt.
+    func heeft(serieID: Int, boek: Int, sleutel: String) -> Bool {
+        FileManager.default.fileExists(
+            atPath: bestand(serieID: serieID, boek: boek, sleutel: sleutel).path
+        )
+    }
+
     func lees(serieID: Int, boek: Int, sleutel: String) -> Data? {
         let pad = bestand(serieID: serieID, boek: boek, sleutel: sleutel)
         guard let data = try? Data(contentsOf: pad) else { return nil }
@@ -69,13 +77,11 @@ actor Paginacache {
     }
 
     /// Ruimt op tot onder de limiet als dat nodig is. Series in
-    /// `prioriteitSeries` en boeken in `beschermdeBoeken` blijven altijd staan
-    /// — die twee zijn de enige twee dingen die deze functie hoeft te weten
-    /// over de rest van de app, en ze komen als waarden binnen zodat deze
-    /// actor niet naar `Prioriteiten` op de hoofdthread hoeft te wachten.
-    func ruimOpIndienNodig(
-        limiet: Int64, prioriteitSeries: Set<Int>, beschermdeBoeken: Set<Int>
-    ) {
+    /// `prioriteitSeries` blijven staan — dat is het enige dat deze functie
+    /// hoeft te weten over de rest van de app, en het komt als waarde binnen
+    /// zodat deze actor niet naar `Prioriteiten` op de hoofdthread hoeft te
+    /// wachten.
+    func ruimOpIndienNodig(limiet: Int64, prioriteitSeries: Set<Int>) {
         guard gebruikteBytes > limiet else { return }
         let fm = FileManager.default
         guard let serieMappen = try? fm.contentsOfDirectory(at: basis, includingPropertiesForKeys: nil)
@@ -90,8 +96,6 @@ actor Paginacache {
                   )
             else { continue }
             for boekMap in boekMappen {
-                guard let boekID = Int(boekMap.lastPathComponent), !beschermdeBoeken.contains(boekID)
-                else { continue }
                 kandidaten.append(contentsOf: bestanden(in: boekMap))
             }
         }

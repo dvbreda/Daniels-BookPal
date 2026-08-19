@@ -30,11 +30,10 @@ final class Beeldlader {
     /// liggende pagina hoort het scherm alleen te vullen.
     private(set) var verhoudingen: [Int: Double] = [:]
 
-    init(client: Client, boek: Int, serieID: Int, vanAbonnement: Bool = false) {
+    init(client: Client, boek: Int, serieID: Int) {
         self.client = client
         self.boek = boek
         self.serieID = serieID
-        if vanAbonnement { Prioriteiten.gedeeld.markeerAltijdBewaren(boek: boek) }
         cache.countLimit = 24
     }
 
@@ -60,16 +59,28 @@ final class Beeldlader {
     /// de URL bleef gelijk, de plaat niet, en zonder deze teller zou alles wat
     /// je al gelezen had voorgoed de oude versie blijven tonen — ook van
     /// schijf, want `Paginacache` overleeft het opnieuw opstarten.
-    private static let plaatversie = 2
+    static let plaatversie = 2
 
-    private func sleutel(_ index: Int, _ keuze: Paginakeuze) -> String {
+    /// De cachesleutel, als één definitie.
+    ///
+    /// Statisch omdat `Voorraad` vooruit inlaadt en exact dezelfde sleutel moet
+    /// gebruiken. Zou die zelf een variant verzinnen, dan vult hij de schijf met
+    /// bestanden die de lezer nooit opzoekt — en dat merk je pas als je zonder
+    /// NAS zit.
+    static func sleutelVoor(
+        _ index: Int, _ keuze: Paginakeuze, profiel: String, bewerking: Beeldbewerking
+    ) -> String {
         switch keuze {
         case .origineel: return "\(index)-o-\(profiel)-\(bewerking.sleutel)"
         // De hertekende en ingekleurde platen komen kant-en-klaar van de
         // sidecar; daar doet de server geen bijsnijden of contrast op.
-        case .hertekend: return "\(index)-h\(Self.plaatversie)"
+        case .hertekend: return "\(index)-h\(plaatversie)"
         case let .kleur(taal): return "\(index)-k-\(taal ?? "")"
         }
+    }
+
+    private func sleutel(_ index: Int, _ keuze: Paginakeuze) -> String {
+        Self.sleutelVoor(index, keuze, profiel: profiel, bewerking: bewerking)
     }
 
     private func adres(_ index: Int, _ keuze: Paginakeuze) -> URL? {
