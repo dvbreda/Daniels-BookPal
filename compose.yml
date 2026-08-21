@@ -49,6 +49,11 @@ services:
       - "${BOOKPAL_BOEKEN:-/volume1/_boeken}:/library/boeken"
       - "${BOOKPAL_STRIPS:-/volume1/_strips}:/library/strips"
       - "${BOOKPAL_MANGA:-/volume1/_manga}:/library/manga"
+      # Tijdschriften en overig drukwerk (catalogi en zo). Anders van vorm dan
+      # de rest: daar is de mapnaam de reeks en het bestand een nummer, in
+      # plaats van een bestandsnaam die alles zelf zegt.
+      - "${BOOKPAL_TIJDSCHRIFTEN:-/volume1/media/_tijdschriften}:/library/tijdschriften"
+      - "${BOOKPAL_PRINT:-/volume1/media/_print}:/library/print"
       # Losse bestanden die je erin wilt zetten: downloads, een Dropbox-map,
       # wat iemand je stuurt. Importeren verplaatst ze naar een van je mappen
       # hierboven, dus deze mag niet read-only.
