@@ -91,3 +91,42 @@ class TestDrukwerk:
         gevonden = parse_filename("Dirk Jan 06", folder="Van alles")
         assert gevonden.series == "Dirk Jan"
         assert gevonden.number == "06"
+
+
+class TestSerietitelUitDeMap:
+    """De scanner kiest de serietitel in een eigen functie (`_series_title`),
+    met een eigen aanroep van `parse_filename`. Die was ik vergeten, en toen
+    kwamen 447 tijdschriften binnen als 355 losse series die "001", "002" en
+    "003" heetten. Twee plekken die hetzelfde moeten weten is precies het soort
+    ding dat uit de pas loopt, dus hier staat het vast.
+    """
+
+    def _titel(self, tmp_path, bestand: str, submap: str | None, kind):
+        from bookpal.formats.base import BookMetadata
+        from bookpal.library.scanner import _series_title
+
+        wortel = tmp_path / "collectie"
+        map_ = wortel / submap if submap else wortel
+        map_.mkdir(parents=True, exist_ok=True)
+        pad = map_ / bestand
+        pad.write_bytes(b"x")
+        return _series_title(BookMetadata(), pad, wortel, kind)
+
+    def test_a_numbered_pdf_in_a_folder_takes_the_folder_name(self, tmp_path):
+        from bookpal.models import BookKind
+
+        titel = self._titel(tmp_path, "001.PDF", "Power Unlimited 30 jaar", BookKind.PDF)
+        assert titel == "Power Unlimited 30 jaar"
+
+    def test_a_pdf_with_a_real_name_keeps_it(self, tmp_path):
+        from bookpal.models import BookKind
+
+        titel = self._titel(tmp_path, "1989-LEGO-Catalog-1-EN-FR-NL.pdf", "Lego", BookKind.PDF)
+        assert titel != "Lego"
+        assert "LEGO" in titel
+
+    def test_a_numbered_pdf_without_a_folder_is_unchanged(self, tmp_path):
+        """Los in de wortel is er geen map om op terug te vallen."""
+        from bookpal.models import BookKind
+
+        assert self._titel(tmp_path, "001.PDF", None, BookKind.PDF) == "001"

@@ -116,7 +116,12 @@ def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKin
     # Boeken: eigen titel eerst, map als laatste redmiddel.
     if meta.title:
         return meta.title.strip()
-    parsed = parse_filename(path.stem)
+    # De map meegeven als het bestand in een submap staat. Dat is wat een
+    # tijdschrift onderscheidt van een boek: `Power Unlimited 30 jaar/001.PDF`
+    # zegt met "001" alleen welke aflevering het is, niet welke reeks. Zonder
+    # dit werd elk nummer zijn eigen serie — gemeten 355 series voor 447
+    # bestanden.
+    parsed = parse_filename(path.stem, folder=parent.name if in_subfolder else None)
     if parsed.series:
         return parsed.series
     if in_subfolder:
