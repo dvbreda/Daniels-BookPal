@@ -22,11 +22,21 @@ _WHITESPACE = re.compile(r"\s+")
 _VOLUME = re.compile(
     r"(?:^|[\s\-])(?:v|vol|volume|deel|tome|t)\.?\s*(\d{1,4})(?=$|[\s\-])", re.IGNORECASE
 )
-# "c012", "ch. 5", "chapter 7", "hoofdstuk 3", "#12"
+# "c012", "ch. 5", "chapter 7", "hoofdstuk 3", "#12", "Issue 001", "nr 4"
+#
+# `issue` en `nr` erbij voor tijdschriften: die schrijven het nummer voluit
+# ("Nintendo Power Issue 001 July-August 1988"). Zonder die twee viel het
+# terug op het jaartal aan het eind, en dan kwamen 89 nummers binnen als
+# aflevering 1988 tot 2012 — plausibel gesorteerd en volledig verkeerd.
 _CHAPTER = re.compile(
-    r"(?:^|[\s\-])(?:c|ch|chapter|chap|hoofdstuk|#)\.?\s*(\d{1,5}(?:\.\d{1,2})?)(?=$|[\s\-])",
+    r"(?:^|[\s\-])(?:c|ch|chapter|chap|hoofdstuk|issue|nr|no|#)\.?\s*"
+    r"(\d{1,5}(?:\.\d{1,2})?)(?=$|[\s\-])",
     re.IGNORECASE,
 )
+
+# Een bestandsnaam die niets anders is dan een nummer: "001.PDF". Dan zegt de
+# naam alleen welke aflevering het is en moet de map vertellen welke reeks.
+_ALLEEN_NUMMER = re.compile(r"^0*(\d{1,5}(?:\.\d{1,2})?)$")
 # Een kaal nummer aan het eind: "De Testreeks 01"
 _TRAILING_NUMBER = re.compile(r"^(?P<series>.*?)[\s\-]+(?P<number>\d{1,5}(?:\.\d{1,2})?)$")
 
@@ -61,11 +71,23 @@ def normalise_number(raw: str | None) -> float:
         return float(digits.group()) if digits else float("inf")
 
 
-def parse_filename(stem: str) -> ParsedName:
-    """Ontleed een bestandsnaam zonder extensie."""
+def parse_filename(stem: str, folder: str | None = None) -> ParsedName:
+    """Ontleed een bestandsnaam zonder extensie.
+
+    ``folder`` is de map waarin het bestand staat. Die telt alleen mee als de
+    naam zelf niets anders is dan een nummer — zoals bij tijdschriften, waar de
+    map de reeks is en het bestand de aflevering (`Power Unlimited 30 jaar/001.PDF`).
+    Zonder dat werd "001" zelf de serienaam en kreeg je net zoveel series als
+    afleveringen.
+    """
     result = ParsedName()
     text = _clean(stem)
     if not text:
+        return result
+
+    if folder and (alleen := _ALLEEN_NUMMER.fullmatch(text)):
+        result.series = _clean(folder) or None
+        result.number = alleen.group(1)
         return result
 
     volume_match = _VOLUME.search(text)

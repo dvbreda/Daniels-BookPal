@@ -179,8 +179,13 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
         meta = book_file.metadata()
         page_count = book_file.page_count()
 
-    parsed = parse_filename(path.stem)
     root_path = Path(root.path)
+    # De mapnaam meegeven als het bestand in een submap staat. Alleen dán kan
+    # `parse_filename` terugvallen op de map voor een naam die zelf niets meer
+    # is dan een nummer — `Power Unlimited 30 jaar/001.PDF`. Zonder dit werd
+    # "001" de serienaam en kreeg je net zoveel series als afleveringen.
+    map_naam = path.parent.name if path.parent != root_path else None
+    parsed = parse_filename(path.stem, folder=map_naam)
     series_title = _series_title(meta, path, root_path, FORMAT_KINDS[fmt])
     folder = path.parent.relative_to(root_path) if path.parent != root_path else None
     series = _get_or_create_series(session, root, series_title, folder)
