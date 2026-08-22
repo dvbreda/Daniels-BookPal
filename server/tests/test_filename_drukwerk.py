@@ -130,3 +130,46 @@ class TestSerietitelUitDeMap:
         from bookpal.models import BookKind
 
         assert self._titel(tmp_path, "001.PDF", None, BookKind.PDF) == "001"
+
+
+class TestJaargang:
+    """`Power Unlimited 30 jaar/jaargangen/17/188.PDF` — nummer 188 in
+    jaargang 17. Zonder dat staan achttien jaargangen door elkaar."""
+
+    def _pad(self, tmp_path, *stukken: str):
+        wortel = tmp_path / "collectie"
+        pad = wortel.joinpath(*stukken)
+        pad.parent.mkdir(parents=True, exist_ok=True)
+        pad.write_bytes(b"x")
+        return pad, wortel
+
+    def test_a_numeric_subfolder_becomes_the_volume(self, tmp_path):
+        from bookpal.library.scanner import _jaargang_uit_pad
+
+        pad, wortel = self._pad(tmp_path, "Power Unlimited 30 jaar", "jaargangen", "17", "188.PDF")
+        assert _jaargang_uit_pad(pad, wortel) == "17"
+
+    def test_leading_zeroes_are_dropped(self, tmp_path):
+        from bookpal.library.scanner import _jaargang_uit_pad
+
+        pad, wortel = self._pad(tmp_path, "Blad", "jaargangen", "07", "3.pdf")
+        assert _jaargang_uit_pad(pad, wortel) == "7"
+
+    def test_the_series_folder_itself_is_never_a_volume(self, tmp_path):
+        """Een reeks die toevallig "2000" heet geeft zichzelf niet op als deel."""
+        from bookpal.library.scanner import _jaargang_uit_pad
+
+        pad, wortel = self._pad(tmp_path, "2000", "12.pdf")
+        assert _jaargang_uit_pad(pad, wortel) is None
+
+    def test_a_named_subfolder_is_not_a_volume(self, tmp_path):
+        from bookpal.library.scanner import _jaargang_uit_pad
+
+        pad, wortel = self._pad(tmp_path, "Blad", "specials", "3.pdf")
+        assert _jaargang_uit_pad(pad, wortel) is None
+
+    def test_the_top_folder_is_the_series_even_two_levels_up(self, tmp_path):
+        from bookpal.library.scanner import _bovenste_map
+
+        pad, wortel = self._pad(tmp_path, "Power Unlimited 30 jaar", "jaargangen", "17", "188.PDF")
+        assert _bovenste_map(pad, wortel) == "Power Unlimited 30 jaar"

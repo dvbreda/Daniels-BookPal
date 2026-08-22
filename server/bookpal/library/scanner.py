@@ -84,6 +84,39 @@ def iter_book_files(root_path: Path) -> list[Path]:
     return found
 
 
+def _jaargang_uit_pad(path: Path, root_path: Path) -> str | None:
+    """Een tussenmap die alleen een nummer is: de jaargang.
+
+    Alleen de diepste, en alleen als er meer dan één maplaag is — anders zou
+    een reeks die toevallig "2000" heet zichzelf als deel opgeven.
+    """
+    try:
+        delen = path.parent.relative_to(root_path).parts
+    except ValueError:
+        return None
+    if len(delen) < 2:
+        return None
+    for stuk in reversed(delen[1:]):
+        if stuk.isdigit():
+            return str(int(stuk))
+    return None
+
+
+def _bovenste_map(path: Path, root_path: Path) -> str | None:
+    """De eerste map onder de wortel, of niets als het bestand er los in ligt.
+
+    De bóvenste en niet de directe map, want drukwerk staat vaak een laag
+    dieper: `Power Unlimited 30 jaar/jaargangen/17/188.PDF`. De directe map is
+    daar de jaargang (17) en de reeksnaam staat twee niveaus hoger — nemen we
+    de directe map, dan krijg je zeventien series die "1" tot "17" heten.
+    """
+    try:
+        deel = path.parent.relative_to(root_path)
+    except ValueError:
+        return None
+    return deel.parts[0] if deel.parts else None
+
+
 def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKind) -> str:
     """De serie waar dit bestand bij hoort, van sterk naar zwak signaal.
 
@@ -116,12 +149,7 @@ def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKin
     # Boeken: eigen titel eerst, map als laatste redmiddel.
     if meta.title:
         return meta.title.strip()
-    # De map meegeven als het bestand in een submap staat. Dat is wat een
-    # tijdschrift onderscheidt van een boek: `Power Unlimited 30 jaar/001.PDF`
-    # zegt met "001" alleen welke aflevering het is, niet welke reeks. Zonder
-    # dit werd elk nummer zijn eigen serie — gemeten 355 series voor 447
-    # bestanden.
-    parsed = parse_filename(path.stem, folder=parent.name if in_subfolder else None)
+    parsed = parse_filename(path.stem, folder=_bovenste_map(path, root_path))
     if parsed.series:
         return parsed.series
     if in_subfolder:
@@ -245,7 +273,11 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
 
     book.number = number
     book.sort_number = normalise_number(number)
-    book.volume = meta.volume or parsed.volume
+    # De jaargang uit de mapnaam als er verder geen deel bekend is. Bij
+    # drukwerk staat die als losse laag in het pad — `.../jaargangen/17/188.PDF`
+    # is nummer 188 in jaargang 17 — en dat is echte informatie: zonder deze
+    # regel staan achttien jaargangen door elkaar op alleen het nummer.
+    book.volume = meta.volume or parsed.volume or _jaargang_uit_pad(path, root_path)
     book.sort_volume = normalise_number(book.volume)
     book.page_count = page_count
     # Manga leest van rechts naar links; het ComicInfo-veld is de enige plek
