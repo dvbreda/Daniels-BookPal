@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from sqlalchemy import select
@@ -84,6 +86,43 @@ def iter_book_files(root_path: Path) -> list[Path]:
     return found
 
 
+#: Vanaf welk deel van de bestanden in een map hun mapnaam moeten dragen
+#: voordat die map de reeks is. Hoog genoeg dat een categoriemap ("boeken",
+#: "sci-fi") er niet doorheen glipt, laag genoeg dat één afwijkend bestand de
+#: herkenning niet omgooit.
+_MAPNAAM_DREMPEL = 0.6
+
+
+def _normaliseer(tekst: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", tekst.lower())
+
+
+@lru_cache(maxsize=256)
+def _map_is_reeks(map_: Path, naam: str) -> bool:
+    """Dragen de meeste bestanden in deze map de mapnaam?
+
+    Zo herken je een reeks zonder dat iemand het hoeft in te stellen: de
+    zestien Lego-catalogi heten allemaal `1989-LEGO-Catalog-...` en staan in
+    een map "Lego", dus die map ís de reeks. Een categoriemap valt er vanzelf
+    buiten — in "boeken" staan titels die niets met het woord boeken te maken
+    hebben.
+
+    Gecached per map: dit wordt voor elk bestand in dezelfde map gevraagd, en
+    dan is één keer kijken genoeg.
+    """
+    sleutel = _normaliseer(naam)
+    if len(sleutel) < 3:
+        return False
+    try:
+        bestanden = [p for p in map_.rglob("*") if p.is_file() and not p.name.startswith(".")]
+    except OSError:
+        return False
+    if len(bestanden) < 2:
+        return False
+    raak = sum(1 for p in bestanden if sleutel in _normaliseer(p.stem))
+    return raak / len(bestanden) >= _MAPNAAM_DREMPEL
+
+
 def _jaargang_uit_pad(path: Path, root_path: Path) -> str | None:
     """Een tussenmap die alleen een nummer is: de jaargang.
 
@@ -145,6 +184,14 @@ def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKin
             return parent.name
         parsed = parse_filename(path.stem)
         return parsed.series or path.stem
+
+    # Draagt vrijwel alles in de map de mapnaam, dan is die map de reeks —
+    # ook als het bestand zelf een naam heeft. Zo vallen de zestien
+    # Lego-catalogi onder één reeks in plaats van elk hun eigen, zonder dat
+    # iemand dat hoeft in te stellen.
+    bovenste = _bovenste_map(path, root_path)
+    if bovenste and _map_is_reeks(root_path / bovenste, bovenste):
+        return bovenste
 
     # Boeken: eigen titel eerst, map als laatste redmiddel.
     if meta.title:

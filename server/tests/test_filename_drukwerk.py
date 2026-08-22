@@ -173,3 +173,67 @@ class TestJaargang:
 
         pad, wortel = self._pad(tmp_path, "Power Unlimited 30 jaar", "jaargangen", "17", "188.PDF")
         assert _bovenste_map(pad, wortel) == "Power Unlimited 30 jaar"
+
+
+class TestMapAlsReeksHerkennen:
+    """Draagt vrijwel alles in een map de mapnaam, dan ís die map de reeks.
+
+    Zo hoeft niemand het in te stellen: de zestien Lego-catalogi heten
+    allemaal `1989-LEGO-Catalog-...` en staan in een map "Lego". Een
+    categoriemap valt er vanzelf buiten — in "boeken" staan titels die niets
+    met dat woord te maken hebben.
+    """
+
+    def _map(self, tmp_path, naam: str, bestanden: list[str]):
+        from bookpal.library.scanner import _map_is_reeks
+
+        map_ = tmp_path / naam
+        map_.mkdir(parents=True, exist_ok=True)
+        for bestand in bestanden:
+            (map_ / bestand).write_bytes(b"x")
+        _map_is_reeks.cache_clear()
+        return _map_is_reeks(map_, naam)
+
+    def test_the_lego_catalogues_are_one_series(self, tmp_path):
+        assert self._map(
+            tmp_path,
+            "Lego",
+            [
+                "1989-LEGO-Catalog-1-EN-FR-NL.pdf",
+                "1990-LEGO-Catalog-3-NL.pdf",
+                "1991-LEGO-Catalog-3-NL.pdf",
+            ],
+        )
+
+    def test_a_category_folder_is_not_a_series(self, tmp_path):
+        """In "boeken" staan titels die niets met dat woord te maken hebben."""
+        assert not self._map(
+            tmp_path,
+            "boeken",
+            [
+                "Harry Potter en de Vuurbeker.epub",
+                "De Avonturen Van Sherlock Holmes.epub",
+                "Down to Earth.epub",
+            ],
+        )
+
+    def test_one_odd_file_does_not_break_it(self, tmp_path):
+        assert self._map(
+            tmp_path,
+            "Lego",
+            ["LEGO-1.pdf", "LEGO-2.pdf", "LEGO-3.pdf", "Voorwoord.pdf"],
+        )
+
+    def test_a_single_file_is_not_enough_to_conclude_anything(self, tmp_path):
+        assert not self._map(tmp_path, "Lego", ["LEGO-1.pdf"])
+
+    def test_a_very_short_folder_name_is_ignored(self, tmp_path):
+        """Twee letters zitten overal in; daar valt niets uit af te leiden."""
+        assert not self._map(tmp_path, "AB", ["ABC.pdf", "ABD.pdf", "ABE.pdf"])
+
+    def test_punctuation_and_case_do_not_matter(self, tmp_path):
+        assert self._map(
+            tmp_path,
+            "Power Unlimited",
+            ["power-unlimited-01.pdf", "POWER_UNLIMITED_02.pdf", "PowerUnlimited03.pdf"],
+        )
