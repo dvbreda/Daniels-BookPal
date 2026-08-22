@@ -473,7 +473,7 @@ struct HomeItem: Codable, Sendable, Identifiable {
 /// server met `query`. Dat moet ook wel — daar zit een limiet op de pagina, en
 /// dan laat naschiften stilletjes series wegvallen.
 enum Soortfilter: String, CaseIterable, Identifiable, Sendable {
-    case alles, boeken, strips, manga
+    case alles, boeken, strips, manga, tijdschriften, print
 
     var id: String { rawValue }
 
@@ -486,6 +486,8 @@ enum Soortfilter: String, CaseIterable, Identifiable, Sendable {
         case .boeken: return "Boeken"
         case .strips: return "Strips"
         case .manga: return "Manga"
+        case .tijdschriften: return "Tijdschriften"
+        case .print: return "Drukwerk"
         }
     }
 
@@ -502,6 +504,12 @@ enum Soortfilter: String, CaseIterable, Identifiable, Sendable {
             return item.kind == .comic && item.originRegion != "japan"
         case .manga:
             return item.kind == .comic && item.originRegion == "japan"
+        case .tijdschriften, .print:
+            // Deze twee hangen aan de bibliotheekmap, en die staat niet op een
+            // starttegel. Op de startpagina schiften we dus niet: wat je aan
+            // het lezen bent hoort er sowieso te staan. In de bibliotheek doet
+            // de server het wél, met `query`.
+            return true
         }
     }
 }

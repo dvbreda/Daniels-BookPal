@@ -163,3 +163,73 @@ class TestGroups:
         alleen_manga = scanned.get(f"/api/tabs/{tab}/series?group=manga").json()
         assert [s["title"] for s in alleen_manga["items"]] == ["Tesuto"]
         assert alleen_manga["total"] == 1
+
+
+class TestDrukwerkGroepen:
+    """Tijdschriften en drukwerk zijn categorie 4 en 5.
+
+    De bibliotheekmap is het signaal en niet de inhoud: een tijdschrift is net
+    zo goed een pdf als een roman, en de herkomst zegt er niets over.
+    """
+
+    def _root(self, client: TestClient, naam: str, pad: str, bestanden: dict[str, bytes]) -> int:
+        from pathlib import Path
+
+        map_ = Path(pad)
+        map_.mkdir(parents=True, exist_ok=True)
+        for naam_, inhoud in bestanden.items():
+            (map_ / naam_).write_bytes(inhoud)
+        antwoord = client.post("/api/libraries", json={"name": naam, "path": str(map_)})
+        root_id = antwoord.json()["id"]
+        client.post(f"/api/libraries/{root_id}/scan")
+        return root_id
+
+    def _titels(self, client: TestClient, groep: str) -> list[str]:
+        return sorted(s["title"] for s in client.get(f"/api/series?group={groep}").json()["items"])
+
+    def test_a_magazine_root_is_its_own_group(self, scanned: TestClient, tmp_path, monkeypatch):
+        """Op de map en niet op de titel: hoe een blad heet doet er voor de
+        indeling niet toe, waar het staat wel."""
+        from bookpal.library import groups
+        from tests.fixtures import make_pdf
+
+        pad = str(tmp_path / "bladen")
+        monkeypatch.setitem(groups._MAP_GROEPEN, groups.SeriesGroup.TIJDSCHRIFTEN, pad)
+        map_ = tmp_path / "bladen" / "Power Unlimited"
+        map_.mkdir(parents=True)
+        for nummer in ("001", "002", "003"):
+            make_pdf(map_ / f"{nummer}.pdf", pages=1)
+        root = scanned.post("/api/libraries", json={"name": "Bladen", "path": pad}).json()["id"]
+        scanned.post(f"/api/libraries/{root}/scan")
+
+        bladen = scanned.get("/api/series?group=tijdschriften").json()["items"]
+        assert bladen, "de bladenmap levert geen enkele reeks op"
+        assert {s["id"] for s in bladen} == {
+            s["id"] for s in scanned.get(f"/api/series?root_id={root}").json()["items"]
+        }
+
+    def test_a_magazine_never_shows_up_under_books(
+        self, scanned: TestClient, tmp_path, monkeypatch
+    ):
+        """Anders staat een Lego-catalogus tussen je romans."""
+        from bookpal.library import groups
+        from tests.fixtures import make_pdf
+
+        pad = str(tmp_path / "bladen")
+        monkeypatch.setitem(groups._MAP_GROEPEN, groups.SeriesGroup.TIJDSCHRIFTEN, pad)
+        map_ = tmp_path / "bladen" / "Power Unlimited"
+        map_.mkdir(parents=True)
+        make_pdf(map_ / "001.pdf", pages=1)
+        make_pdf(map_ / "002.pdf", pages=1)
+        root = scanned.post("/api/libraries", json={"name": "Bladen", "path": pad}).json()["id"]
+        scanned.post(f"/api/libraries/{root}/scan")
+
+        assert "Power Unlimited" not in self._titels(scanned, "boeken")
+
+    def test_the_existing_groups_are_unchanged(self, scanned: TestClient):
+        assert self._titels(scanned, "strips") == ["Storm"]
+        assert self._titels(scanned, "manga") == ["Tesuto"]
+        assert self._titels(scanned, "boeken") == ["Een Testboek", "Een Testdocument"]
+
+    def test_an_unknown_group_is_still_a_bad_request(self, scanned: TestClient):
+        assert scanned.get("/api/series?group=onzin").status_code == 422

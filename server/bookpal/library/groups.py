@@ -15,15 +15,27 @@ from __future__ import annotations
 
 import enum
 
-from sqlalchemy import ColumnElement, and_
+from sqlalchemy import ColumnElement, and_, select
 
-from bookpal.models import Book, BookKind, OriginRegion, Series
+from bookpal.models import Book, BookKind, LibraryRoot, OriginRegion, Series
 
 
 class SeriesGroup(enum.StrEnum):
     BOEKEN = "boeken"
     STRIPS = "strips"
     MANGA = "manga"
+    TIJDSCHRIFTEN = "tijdschriften"
+    PRINT = "print"
+
+
+#: Welke bibliotheekmap bij welke groep hoort. Drukwerk valt niet uit de
+#: inhoud af te leiden — een tijdschrift is net zo goed een pdf als een boek,
+#: en de herkomst zegt er niets over. De map is het enige eerlijke signaal, en
+#: die heb jij zelf ingericht.
+_MAP_GROEPEN = {
+    SeriesGroup.TIJDSCHRIFTEN: "/library/tijdschriften",
+    SeriesGroup.PRINT: "/library/print",
+}
 
 
 def condition(group: SeriesGroup) -> ColumnElement[bool]:
@@ -34,14 +46,26 @@ def condition(group: SeriesGroup) -> ColumnElement[bool]:
     goede kant om op te vallen, want een niet-herkende scan is vaker een strip
     dan manga, en hij blijft zo in elk geval ergens zichtbaar.
     """
-    strip = Series.books.any(Book.kind == BookKind.COMIC)
+    # Drukwerk eerst: die mappen zijn hun eigen groep, en hun pdf's zouden
+    # anders ook onder "boeken" vallen — dan stond een Lego-catalogus tussen
+    # je romans.
+    if pad := _MAP_GROEPEN.get(group):
+        return Series.library_root_id.in_(select(LibraryRoot.id).where(LibraryRoot.path == pad))
+
+    # En andersom: wat in een drukwerkmap staat hoort nergens anders bij.
+    buiten_drukwerk = Series.library_root_id.not_in(
+        select(LibraryRoot.id).where(LibraryRoot.path.in_(list(_MAP_GROEPEN.values())))
+    )
+    strip = and_(Series.books.any(Book.kind == BookKind.COMIC), buiten_drukwerk)
     match group:
         case SeriesGroup.BOEKEN:
-            return Series.books.any(Book.kind != BookKind.COMIC)
+            return and_(Series.books.any(Book.kind != BookKind.COMIC), buiten_drukwerk)
         case SeriesGroup.STRIPS:
             return and_(strip, Series.origin_region != OriginRegion.JAPAN)
         case SeriesGroup.MANGA:
             return and_(strip, Series.origin_region == OriginRegion.JAPAN)
+        case _:  # pragma: no cover — alle leden staan hierboven
+            raise ValueError(group)
 
 
 __all__ = ["SeriesGroup", "condition"]

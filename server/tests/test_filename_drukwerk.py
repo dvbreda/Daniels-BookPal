@@ -237,3 +237,16 @@ class TestMapAlsReeksHerkennen:
             "Power Unlimited",
             ["power-unlimited-01.pdf", "POWER_UNLIMITED_02.pdf", "PowerUnlimited03.pdf"],
         )
+
+    def test_a_bracketed_qualifier_in_the_folder_is_ignored(self, tmp_path):
+        """`Gardeners World (UK)` is dezelfde reeks als wat er in de bestanden
+        staat; die "(UK)" is een aanduiding en geen deel van de naam. Zonder
+        deze uitzondering bleven de twee nummers als losse series staan."""
+        assert self._map(
+            tmp_path,
+            "Gardeners World (UK)",
+            [
+                "BBC_Gardeners'_World_09.2026_clean.pdf",
+                "BBCGardeners'World-June2026.pdf",
+            ],
+        )

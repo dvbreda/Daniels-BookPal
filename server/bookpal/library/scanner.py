@@ -93,7 +93,16 @@ def iter_book_files(root_path: Path) -> list[Path]:
 _MAPNAAM_DREMPEL = 0.6
 
 
-def _normaliseer(tekst: str) -> str:
+#: Wat tussen haakjes staat is een aanduiding en geen deel van de naam:
+#: "Gardeners World (UK)" is dezelfde reeks als wat er in de bestanden staat.
+#: Zonder dit viel die map door de drempel omdat "uk" nergens in de
+#: bestandsnamen voorkomt.
+_HAAKJES = re.compile(r"[(\[{][^)\]}]*[)\]}]")
+
+
+def _normaliseer(tekst: str, *, is_mapnaam: bool = False) -> str:
+    if is_mapnaam:
+        tekst = _HAAKJES.sub(" ", tekst)
     return re.sub(r"[^a-z0-9]", "", tekst.lower())
 
 
@@ -110,7 +119,7 @@ def _map_is_reeks(map_: Path, naam: str) -> bool:
     Gecached per map: dit wordt voor elk bestand in dezelfde map gevraagd, en
     dan is één keer kijken genoeg.
     """
-    sleutel = _normaliseer(naam)
+    sleutel = _normaliseer(naam, is_mapnaam=True)
     if len(sleutel) < 3:
         return False
     try:
