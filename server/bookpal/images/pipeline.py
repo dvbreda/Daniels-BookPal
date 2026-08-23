@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+import time
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
@@ -226,8 +227,41 @@ def _maybe_prune() -> None:
     prune_cache()
 
 
-def cache_size_bytes() -> int:
-    return sum(p.stat().st_size for p in settings.cache_dir.rglob("*") if p.is_file())
+#: Hoe lang een gemeten cachegrootte meegaat. De maat is voor een tellertje in
+#: de instellingen, niet voor een beslissing — een paar minuten oud is prima.
+_CACHEMAAT_TTL = 300.0
+#: (map, tijdstip, bytes). De map hoort erbij: hij is instelbaar, en een maat
+#: van de ene map zeggen over de andere is gewoon fout — in de tests kreeg de
+#: ene test zo de cachegrootte van de andere te zien.
+_cachemaat: tuple[Path, float, int] | None = None
+
+
+def cache_size_bytes(*, vers: bool = False) -> int:
+    """Hoe groot de paginacache is, met een korte herinnering.
+
+    Bewust niet elke keer opnieuw geteld. Dit loopt met `rglob` de hele map
+    door en doet een `stat()` per bestand; bij een cache van 591 MB zijn dat
+    duizenden schijfoperaties. Dat gebeurde bij élke healthcheck, elke dertig
+    seconden, en dat is wat de container achttien keer per dag onderuithaalde:
+    de healthcheck liep over zijn timeout van 25 seconden, autoheal zag een
+    zieke container en herstartte hem — middenin het lezen.
+
+    Een healthcheck hoort te meten of de server nog leeft, niet je schijf door
+    te lopen. `vers=True` voor wie de echte stand wil.
+    """
+    global _cachemaat
+    nu = time.monotonic()
+    map_ = settings.cache_dir
+    if (
+        not vers
+        and _cachemaat is not None
+        and _cachemaat[0] == map_
+        and nu - _cachemaat[1] < _CACHEMAAT_TTL
+    ):
+        return _cachemaat[2]
+    totaal = sum(p.stat().st_size for p in map_.rglob("*") if p.is_file())
+    _cachemaat = (map_, nu, totaal)
+    return totaal
 
 
 def prune_cache(max_bytes: int | None = None) -> int:
@@ -235,6 +269,11 @@ def prune_cache(max_bytes: int | None = None) -> int:
 
     Geeft het aantal verwijderde bestanden terug.
     """
+    global _cachemaat
+    # De onthouden maat klopt hierna niet meer; wie 'm daarna opvraagt hoort
+    # de nieuwe stand te zien en niet die van vlak voor het opruimen.
+    _cachemaat = None
+
     limit = max_bytes if max_bytes is not None else settings.cache_max_mb * 1024 * 1024
     if limit <= 0:
         return 0
