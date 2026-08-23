@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import enum
 from pathlib import Path
 from typing import Any, NamedTuple, TypeVar
 
@@ -96,6 +97,38 @@ def _apply_filters(
     return statement
 
 
+class SeriesSort(enum.StrEnum):
+    """Waarop de bibliotheek gesorteerd staat."""
+
+    NAAM = "naam"
+    VERSCHENEN = "verschenen"
+    TOEGEVOEGD = "toegevoegd"
+
+
+def _geordend(statement: SelectT, sort: SeriesSort) -> SelectT:
+    """De volgorde. Altijd met de titel als laatste sleutel, zodat twee series
+    uit hetzelfde jaar niet bij elke aanroep van plek wisselen.
+
+    Op verschijningsjaar sorteert een serie op haar nieuwste deel: dat is wat
+    "wat is hier het recentst" betekent bij een tijdschrift met dertig
+    jaargangen. Series zonder datum gaan achteraan in plaats van vooraan —
+    onbekend is geen 1900.
+    """
+    if sort is SeriesSort.NAAM:
+        return statement.order_by(Series.sort_title)
+
+    if sort is SeriesSort.TOEGEVOEGD:
+        nieuwste = (
+            select(func.max(Book.added_at)).where(Book.series_id == Series.id).scalar_subquery()
+        )
+        return statement.order_by(nieuwste.desc().nulls_last(), Series.sort_title)
+
+    jaar = (
+        select(func.max(Book.published_year)).where(Book.series_id == Series.id).scalar_subquery()
+    )
+    return statement.order_by(jaar.desc().nulls_last(), Series.sort_title)
+
+
 @router.get("", response_model=Paginated[SeriesOut])
 def list_series(
     root_id: int | None = None,
@@ -103,6 +136,7 @@ def list_series(
     kind: BookKind | None = None,
     group: groups.SeriesGroup | None = None,
     search: str | None = Query(default=None, max_length=200),
+    sort: SeriesSort = SeriesSort.NAAM,
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=60, ge=1, le=500),
     session: Session = Depends(get_session),
@@ -126,7 +160,7 @@ def list_series(
             search=search,
         )
     )
-    rows = session.scalars(base.order_by(Series.sort_title).offset(offset).limit(limit)).all()
+    rows = session.scalars(_geordend(base, sort).offset(offset).limit(limit)).all()
     items = deps.series_out_list(session, list(rows))
 
     return Paginated(items=items, total=int(total or 0), offset=offset, limit=limit)

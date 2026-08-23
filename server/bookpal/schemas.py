@@ -98,6 +98,10 @@ class BookOut(BaseModel):
     expires_at: datetime | None = None
     extension: str | None
     added_at: datetime
+    # Wanneer dit verscheen, uit de bestandsnaam. Los van `added_at`: dat is
+    # wanneer jíj het binnenhaalde, en die twee lopen jaren uiteen.
+    published_year: int | None = None
+    published_month: int | None = None
     progress: ProgressOut | None = None
     # Uit welke uitgave dit deel komt, en wat er verder voor deze aflevering
     # klaarligt. Alleen gevuld in de serie-detailweergave, want daar worden de

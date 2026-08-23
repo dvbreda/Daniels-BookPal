@@ -196,6 +196,8 @@ def to_book_out(book: Book, progress: Progress | None, extension: str | None) ->
         expires_at=book.expires_at,
         extension=extension,
         added_at=book.added_at,
+        published_year=book.published_year,
+        published_month=book.published_month,
         progress=ProgressOut.model_validate(progress) if progress is not None else None,
     )
 

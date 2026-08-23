@@ -304,6 +304,16 @@ class Book(Base):
     edition_id: Mapped[int | None] = mapped_column(
         ForeignKey("edition.id", ondelete="SET NULL"), default=None, index=True
     )
+    # Wanneer deze uitgave verscheen, uit de bestandsnaam. Bij een tijdschrift
+    # is dat wat een nummer ís — "september 2026" — en bij een catalogus het
+    # jaar. Los van `added_at`, want dat is wanneer jíj het binnenhaalde; die
+    # twee lopen jaren uiteen en horen naast elkaar te staan.
+    #
+    # Twee kolommen en geen datum: een tijdschrift heeft zelden een dag, en een
+    # verzonnen eerste van de maand zou suggereren dat we het weten.
+    published_year: Mapped[int | None] = mapped_column(Integer, default=None, index=True)
+    published_month: Mapped[int | None] = mapped_column(Integer, default=None)
+
     # Welke pagina de omslag van dít deel is, als het niet de eerste is. De
     # serie heeft dezelfde keuze; die van het deel wint, want die is
     # specifieker. Komt onder meer uit de sidecar naast het bestand.

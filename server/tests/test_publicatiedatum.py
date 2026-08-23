@@ -73,3 +73,41 @@ class TestSorteren:
         assert all(item is not None for item in gevonden)
         op_volgorde = sorted(gevonden, key=lambda p: p.sorteersleutel)
         assert [str(p) for p in op_volgorde] == ["2026", "2026-01", "2026-06", "2026-09"]
+
+
+class TestDoorDeKeten:
+    """Van bestandsnaam tot API: de datum moet er aan de andere kant uitkomen."""
+
+    def test_the_scanner_stores_what_it_finds(self, client, tmp_path):
+        from tests.fixtures import make_pdf
+
+        wortel = tmp_path / "bladen" / "Nintendo Power"
+        wortel.mkdir(parents=True)
+        make_pdf(wortel / "Nintendo Power Issue 001 July-August 1988.pdf", pages=1)
+        root = client.post(
+            "/api/libraries", json={"name": "Bladen", "path": str(tmp_path / "bladen")}
+        ).json()["id"]
+        client.post(f"/api/libraries/{root}/scan")
+
+        boeken = client.get("/api/books?limit=5").json()["items"]
+        gevonden = [b for b in boeken if b["published_year"]]
+        assert gevonden, "geen enkel boek kreeg een publicatiedatum"
+        assert gevonden[0]["published_year"] == 1988
+        assert gevonden[0]["published_month"] == 8
+
+    def test_sorting_by_name_is_still_the_default(self, scanned):
+        """Op `sort_title` en niet op de titel zelf: die laat een lidwoord
+        vallen, dus "Een Testboek" sorteert onder de T."""
+        eerst = scanned.get("/api/series").json()["items"]
+        op_naam = scanned.get("/api/series?sort=naam").json()["items"]
+        assert [s["id"] for s in eerst] == [s["id"] for s in op_naam]
+        sleutels = [s["sort_title"] for s in eerst]
+        assert sleutels == sorted(sleutels)
+
+    def test_an_unknown_sort_is_a_bad_request(self, scanned):
+        assert scanned.get("/api/series?sort=onzin").status_code == 422
+
+    def test_series_without_a_date_sort_last(self, scanned):
+        """Onbekend is geen 1900: die horen achteraan, niet bovenaan."""
+        titels = [s["title"] for s in scanned.get("/api/series?sort=verschenen").json()["items"]]
+        assert len(titels) == 4

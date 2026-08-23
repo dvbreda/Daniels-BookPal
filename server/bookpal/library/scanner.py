@@ -27,6 +27,7 @@ from bookpal.metadata import (
     from_root_default,
     normalise_number,
     parse_filename,
+    publicatiedatum,
     resolve,
     sort_title,
 )
@@ -334,6 +335,14 @@ def _index_file(session: Session, root: LibraryRoot, path: Path, file_row: File)
     # is nummer 188 in jaargang 17 — en dat is echte informatie: zonder deze
     # regel staan achttien jaargangen door elkaar op alleen het nummer.
     book.volume = meta.volume or parsed.volume or _jaargang_uit_pad(path, root_path)
+    # Uit de bestandsnaam, en anders uit de map: "Gardeners World (UK)" zegt
+    # niets, maar `1989-LEGO-Catalog-...` en `...Issue 001 July-August 1988`
+    # wel. Alleen zetten als er iets gevonden is — een lege datum overschrijven
+    # met niets zou een handmatige correctie wegvegen.
+    verschenen = publicatiedatum.uit_naam(path.stem) or publicatiedatum.uit_naam(path.parent.name)
+    if verschenen:
+        book.published_year = verschenen.jaar
+        book.published_month = verschenen.maand
     book.sort_volume = normalise_number(book.volume)
     book.page_count = page_count
     # Manga leest van rechts naar links; het ComicInfo-veld is de enige plek
