@@ -496,6 +496,19 @@ enum Soortfilter: String, CaseIterable, Identifiable, Sendable {
     /// De naam die de server kent (`?group=`), of niets bij "alles".
     var query: String? { self == .alles ? nil : rawValue }
 
+    /// Zes categorieën passen niet meer als tekstchips op een telefoon; met een
+    /// icoontje erboven en kleine tekst eronder wel, net als de hoofdtabbalk.
+    var icoon: String {
+        switch self {
+        case .alles: return "square.grid.2x2"
+        case .boeken: return "book.closed"
+        case .strips: return "books.vertical"
+        case .manga: return "character.book.closed"
+        case .tijdschriften: return "newspaper"
+        case .print: return "doc.richtext"
+        }
+    }
+
     var naam: String {
         switch self {
         case .alles: return "Alles"

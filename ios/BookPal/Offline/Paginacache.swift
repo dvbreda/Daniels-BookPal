@@ -122,6 +122,18 @@ actor Paginacache {
         }
     }
 
+    /// Welke series er pagina's op dit toestel hebben staan.
+    ///
+    /// Voor de offlinestand: dan toont de bibliotheek alleen wat je zonder NAS
+    /// werkelijk kunt openen, in plaats van een lijst waarvan de helft een
+    /// grijze tegel wordt zodra je erop tikt.
+    func seriesMetInhoud() -> Set<Int> {
+        guard let mappen = try? FileManager.default.contentsOfDirectory(
+            at: basis, includingPropertiesForKeys: nil
+        ) else { return [] }
+        return Set(mappen.compactMap { Int($0.lastPathComponent) })
+    }
+
     /// Alles weggooien, voor de knop in Instellingen.
     func maakLeeg() {
         try? FileManager.default.removeItem(at: basis)

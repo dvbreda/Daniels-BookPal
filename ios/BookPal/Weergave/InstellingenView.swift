@@ -30,6 +30,11 @@ struct InstellingenView: View {
         NavigationStack {
             Form {
                 serverSectie($instellingen.adres)
+                eldersSectie(
+                    $instellingen.adresElders,
+                    $instellingen.gebruikElders,
+                    $instellingen.alleenOffline
+                )
                 if let gezondheid { serverInfo(gezondheid) }
                 beeldSectie
                 lezenSectie
@@ -77,6 +82,35 @@ struct InstellingenView: View {
             Text("Server")
         } footer: {
             Text("Het adres van BookPal op je NAS, zoals je het ook in de browser intikt.")
+        }
+    }
+
+    /// Een tweede adres voor buiten je netwerk, en de knop om te doen alsof er
+    /// helemaal geen NAS is.
+    private func eldersSectie(
+        _ elders: Binding<String>, _ aan: Binding<Bool>, _ offline: Binding<Bool>
+    ) -> some View {
+        Section {
+            TextField("http://10.147.20.1:1997", text: elders)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
+            Toggle("Adres van elders gebruiken", isOn: aan)
+                .disabled(elders.wrappedValue.isEmpty)
+            Toggle(isOn: offline) {
+                Label("Alleen offline", systemImage: "wifi.slash")
+            }
+        } header: {
+            Text("Buiten je netwerk")
+        } footer: {
+            Text(
+                "Een tweede adres voor onderweg, bijvoorbeeld via ZeroTier. Apart van het "
+                    + "gewone adres en niet in plaats daarvan: thuis is het directe adres "
+                    + "sneller, en een tunnel die er even uit ligt hoort je bibliotheek niet "
+                    + "onbereikbaar te maken.\n\n"
+                    + "«Alleen offline» doet alsof er geen NAS is. Dan zie je precies wat er op "
+                    + "dit toestel staat — handig om te controleren vóór je in de trein zit."
+            )
         }
     }
 

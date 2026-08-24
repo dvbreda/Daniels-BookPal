@@ -100,16 +100,34 @@ struct BibliotheekView: View {
     /// in leest, dan pas welke tab. Hij blijft dus staan als je een tab kiest,
     /// anders dan de losse filters onder het trechtertje.
     private var soortbalk: some View {
-        HStack(spacing: 8) {
+        // Icoon met kleine tekst eronder, net als de hoofdtabbalk. Als chips
+        // met alleen tekst pasten zes categorieën niet meer op een telefoon;
+        // zo blijft elke keuze leesbaar en even breed.
+        HStack(spacing: 0) {
             ForEach(Soortfilter.allCases) { keuze in
-                chip(naam: keuze.naam, icoon: nil, actief: filter.groep == keuze) {
+                let actief = filter.groep == keuze
+                Button {
                     filter.groep = keuze
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: keuze.icoon)
+                            .font(.system(size: 17))
+                            .symbolVariant(actief ? .fill : .none)
+                        Text(keuze.naam)
+                            .font(.system(size: 10))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(actief ? Color.accentColor : Color.secondary)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
-            Spacer()
         }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 6)
     }
 
     /// De tabs uit de web-app als filterbalk. Hun regel blijft op de server —
@@ -249,9 +267,16 @@ struct BibliotheekView: View {
                 try await client.series(filter: filter, zoek: zoek, sortering: sortering)
             }
         }
-        vanCache = terugval
+        vanCache = terugval || instellingen.alleenOffline
         if let resultaat {
             series = resultaat.items
+            if instellingen.alleenOffline {
+                // Alleen wat je hier ook echt kunt openen. Een lijst met
+                // series die bij het aantikken een grijze tegel opleveren is
+                // erger dan een korte lijst.
+                let aanwezig = await Paginacache.gedeeld.seriesMetInhoud()
+                series = series.filter { aanwezig.contains($0.id) }
+            }
             fout = nil
         } else if series.isEmpty {
             fout = ClientFout.netwerk(URLError(.notConnectedToInternet)).localizedDescription
