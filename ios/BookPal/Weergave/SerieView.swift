@@ -97,7 +97,12 @@ struct SerieView: View {
         List {
             if let verder { verderSectie(verder) }
 
-            // De samenvatting staat bij "lees verder" en niet nog een keer los.
+            if let samenvatting = detail.summary, !samenvatting.isEmpty {
+                Section("Over deze reeks") {
+                    Text(samenvatting).font(.callout).foregroundStyle(.secondary)
+                }
+            }
+
             if boeken.isEmpty && verbergGelezen {
                 Section {
                     Text("Alles gelezen. Zet het oogje uit om ze weer te zien.")
@@ -273,11 +278,20 @@ struct SerieView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
-                if let samenvatting = detail?.summary, !samenvatting.isEmpty {
-                    Text(samenvatting)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(3)
+                // Over dít deel, niet over de reeks — die staat verderop als
+                // eigen sectie. Een hoofdstuksamenvatting hebben we niet in de
+                // gegevens, dus dit is wat we wél weten: waar je bent en hoe
+                // lang het is.
+                if let boek = detail?.books.first(where: { $0.id == verder.bookID }) {
+                    HStack(spacing: 8) {
+                        if let paginas = boek.pageCount { Text("\(paginas) pagina's") }
+                        if let verschenen = boek.verschenen { Text(verschenen) }
+                        if let voortgang = boek.progress, voortgang.percent > 0 {
+                            Text("\(Int(voortgang.percent))% gelezen")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                 }
             }
             Spacer(minLength: 0)

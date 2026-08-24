@@ -95,7 +95,7 @@ struct InstellingenView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .keyboardType(.URL)
-            Toggle("Adres van elders gebruiken", isOn: aan)
+            Toggle("Uitwijken als de NAS niet reageert", isOn: aan)
                 .disabled(elders.wrappedValue.isEmpty)
             Toggle(isOn: offline) {
                 Label("Alleen offline", systemImage: "wifi.slash")
@@ -104,10 +104,10 @@ struct InstellingenView: View {
             Text("Buiten je netwerk")
         } footer: {
             Text(
-                "Een tweede adres voor onderweg, bijvoorbeeld via ZeroTier. Apart van het "
-                    + "gewone adres en niet in plaats daarvan: thuis is het directe adres "
-                    + "sneller, en een tunnel die er even uit ligt hoort je bibliotheek niet "
-                    + "onbereikbaar te maken.\n\n"
+                "Een tweede adres voor onderweg, bijvoorbeeld via ZeroTier. Het lokale "
+                    + "adres gaat altijd voor; pas als dat binnen twee seconden niet "
+                    + "antwoordt wordt hiernaar uitgeweken, en zodra het weer opneemt gaat "
+                    + "het vanzelf terug.\n\n"
                     + "«Alleen offline» doet alsof er geen NAS is. Dan zie je precies wat er op "
                     + "dit toestel staat — handig om te controleren vóór je in de trein zit."
             )

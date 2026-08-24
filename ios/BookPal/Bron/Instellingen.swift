@@ -59,6 +59,11 @@ final class Instellingen {
             ?? Client.standaardProfiel
     }
 
+    /// Draait het lokale adres nu niet? Dan pas komt het adres van elders in
+    /// beeld. Wordt gezet door `kiesAdres()` en niet door jou: thuis hoort er
+    /// niets te veranderen, en onderweg hoort het vanzelf te werken.
+    private(set) var eldersNodig = false
+
     /// De client voor het huidige adres, of `nil` als er onzin staat.
     ///
     /// Geeft `nil` terug in offlinestand. Dat is geen omweg maar precies de
@@ -66,10 +71,39 @@ final class Instellingen {
     /// zo zie je thuis al wat je onderweg zou zien.
     var client: Client? {
         guard !alleenOffline else { return nil }
-        let gekozen = gebruikElders && !adresElders.isEmpty ? adresElders : adres
-        guard let url = URL(string: gekozen.trimmingCharacters(in: .whitespaces)),
+        let uitwijken = eldersNodig && gebruikElders && !adresElders.isEmpty
+        guard let url = URL(string: (uitwijken ? adresElders : adres)
+            .trimmingCharacters(in: .whitespaces)),
               url.scheme != nil, url.host() != nil
         else { return nil }
         return Client(basis: url)
+    }
+
+    /// Kijken welk adres nu werkt.
+    ///
+    /// Het lokale eerst en altijd: thuis is dat sneller, en een tunnel die
+    /// blijft staan terwijl je op je eigen netwerk zit is verspilde omweg.
+    /// Antwoordt hij niet binnen twee seconden, dan schuiven we naar het adres
+    /// van elders — en zodra het lokale weer opneemt, weer terug.
+    func kiesAdres() async {
+        guard !alleenOffline, gebruikElders, !adresElders.isEmpty else {
+            eldersNodig = false
+            return
+        }
+        eldersNodig = !(await reageert(adres))
+    }
+
+    private func reageert(_ adres: String) async -> Bool {
+        guard let url = URL(string: adres.trimmingCharacters(in: .whitespaces)),
+              url.scheme != nil, url.host() != nil
+        else { return false }
+        var verzoek = URLRequest(url: url.appending(path: "api/health"))
+        // Kort: dit staat tussen jou en je bibliotheek in. Liever een keer te
+        // snel uitwijken dan seconden naar een leeg scherm kijken.
+        verzoek.timeoutInterval = 2
+        guard let (_, antwoord) = try? await URLSession.shared.data(for: verzoek),
+              let http = antwoord as? HTTPURLResponse
+        else { return false }
+        return (200..<300).contains(http.statusCode)
     }
 }

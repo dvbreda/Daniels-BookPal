@@ -26,8 +26,15 @@ struct BookPalApp: App {
                 // over wat er al ligt en houdt zelf een interval aan, dus het
                 // schakelen tussen apps kost niets.
                 .onChange(of: fase) { _, nieuw in
-                    guard nieuw == .active, let client = instellingen.client else { return }
-                    Voorraad.gedeeld.startIndienNodig(client)
+                    guard nieuw == .active else { return }
+                    Task {
+                        // Eerst kijken welk adres nu werkt: thuis het lokale,
+                        // onderweg dat van elders. Pas daarna bijwerken.
+                        await instellingen.kiesAdres()
+                        if let client = instellingen.client {
+                            Voorraad.gedeeld.startIndienNodig(client)
+                        }
+                    }
                 }
                 // Naar de achtergrond: netjes stoppen. Doorgaan zou iOS toch
                 // afkappen, en een halve ronde is geen probleem — de volgende

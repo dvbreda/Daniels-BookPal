@@ -182,6 +182,22 @@ class SidecarSyncOut(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class WikiSuggestieOut(BaseModel):
+    """Een voorgesteld Wikipedia-artikel bij een serie.
+
+    ``rol`` zegt waaróm het voorgesteld wordt — de reeks zelf of een van de
+    makers — zodat een client ze kan groeperen zonder de titels te hoeven
+    raden.
+    """
+
+    rol: str
+    voor: str
+    title: str
+    key: str
+    description: str | None = None
+    lang: str
+
+
 class HomeItemOut(BaseModel):
     """Eén tegel op de startpagina: genoeg om te tonen en te openen."""
 
