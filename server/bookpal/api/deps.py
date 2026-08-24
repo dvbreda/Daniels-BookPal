@@ -12,6 +12,7 @@ from bookpal.config import settings
 from bookpal.db import get_session
 from bookpal.images import ImageProfile, get_profile
 from bookpal.images.adjust import Adjustments
+from bookpal.metadata.opmaak import zonder_opmaak
 from bookpal.models import Book, File, Progress, Series, Source, User, utcnow
 from bookpal.schemas import BookOut, ProgressOut, SeriesOut
 from bookpal.sources import Source as SourceImpl
@@ -216,7 +217,7 @@ def to_series_out(series: Series, book_count: int, kinds: list[str]) -> SeriesOu
         publisher=series.publisher,
         authors=series.authors,
         tags=series.tags,
-        summary=series.summary,
+        summary=zonder_opmaak(series.summary),
         book_count=book_count,
         kinds=kinds,  # type: ignore[arg-type]
         from_source=series.source_id is not None,
