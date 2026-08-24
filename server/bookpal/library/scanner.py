@@ -151,6 +151,17 @@ def _jaargang_uit_pad(path: Path, root_path: Path) -> str | None:
     return None
 
 
+def _is_drukwerk(root_path: Path) -> bool:
+    """Is dit een tijdschriften- of drukwerkmap?
+
+    Dezelfde lijst die de categorieën gebruiken (`groups`), zodat er niet twee
+    plekken zijn die moeten weten welke mappen drukwerk zijn.
+    """
+    from bookpal.library.groups import _MAP_GROEPEN
+
+    return str(root_path) in set(_MAP_GROEPEN.values())
+
+
 def _bovenste_map(path: Path, root_path: Path) -> str | None:
     """De eerste map onder de wortel, of niets als het bestand er los in ligt.
 
@@ -194,6 +205,18 @@ def _series_title(meta: BookMetadata, path: Path, root_path: Path, kind: BookKin
             return parent.name
         parsed = parse_filename(path.stem)
         return parsed.series or path.stem
+
+    # In een drukwerkmap wint de map altijd. Daar heb jij de indeling zelf
+    # gemaakt — "Gardeners World (UK)" is de reeks — terwijl de bestandsnamen
+    # van uitgevers komen en alle kanten op gaan: de ene heet
+    # `BBCGardeners'World-June2026`, de andere `BBC_Gardeners'_World_09.2026`.
+    # Een ingebedde pdf-titel is al helemaal onbetrouwbaar; die staat vaak nog
+    # op de naam van het drukwerkbestand.
+    #
+    # Alleen voor deze mappen, want bij boeken is een map juist een categorie
+    # ("sci-fi") en zegt de bestandsnaam wél wat het boek is.
+    if _is_drukwerk(root_path) and (map_ := _bovenste_map(path, root_path)):
+        return map_
 
     # Draagt vrijwel alles in de map de mapnaam, dan is die map de reeks —
     # ook als het bestand zelf een naam heeft. Zo vallen de zestien

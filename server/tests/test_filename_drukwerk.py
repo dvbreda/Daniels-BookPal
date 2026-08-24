@@ -250,3 +250,63 @@ class TestMapAlsReeksHerkennen:
                 "BBCGardeners'World-June2026.pdf",
             ],
         )
+
+
+class TestDrukwerkMapWint:
+    """In een tijdschriftenmap wint de mapnaam van alles.
+
+    Die indeling heeft Daniël zelf gemaakt; de bestandsnamen komen van
+    uitgevers en gaan alle kanten op. Twee nummers van hetzelfde blad heetten
+    `BBCGardeners'World-June2026` en `BBC_Gardeners'_World_09.2026_clean`, en
+    stonden daardoor als twee losse series in de bibliotheek.
+    """
+
+    def _titel(self, tmp_path, monkeypatch, bestand: str, submap: str, *, drukwerk: bool):
+        from bookpal.formats.base import BookMetadata
+        from bookpal.library import groups
+        from bookpal.library.scanner import _series_title
+        from bookpal.models import BookKind
+
+        wortel = tmp_path / "collectie"
+        if drukwerk:
+            monkeypatch.setitem(groups._MAP_GROEPEN, groups.SeriesGroup.TIJDSCHRIFTEN, str(wortel))
+        map_ = wortel / submap
+        map_.mkdir(parents=True, exist_ok=True)
+        pad = map_ / bestand
+        pad.write_bytes(b"x")
+        # Mét ingebedde titel, want juist die won eerst van de map.
+        meta = BookMetadata(title="Iets Heel Anders")
+        return _series_title(meta, pad, wortel, BookKind.PDF)
+
+    def test_the_folder_wins_from_an_embedded_title(self, tmp_path, monkeypatch):
+        titel = self._titel(
+            tmp_path,
+            monkeypatch,
+            "BBCGardeners'World-June2026.pdf",
+            "Gardeners World (UK)",
+            drukwerk=True,
+        )
+        assert titel == "Gardeners World (UK)"
+
+    def test_both_issues_land_in_the_same_series(self, tmp_path, monkeypatch):
+        eerste = self._titel(
+            tmp_path,
+            monkeypatch,
+            "BBCGardeners'World-June2026.pdf",
+            "Gardeners World (UK)",
+            drukwerk=True,
+        )
+        tweede = self._titel(
+            tmp_path,
+            monkeypatch,
+            "BBC_Gardeners'_World_09.2026_clean.pdf",
+            "Gardeners World (UK)",
+            drukwerk=True,
+        )
+        assert eerste == tweede
+
+    def test_outside_a_print_root_the_title_still_wins(self, tmp_path, monkeypatch):
+        """Bij boeken is een map een categorie ("sci-fi") en zegt het bestand
+        wél wat het is; daar mag deze regel niet gelden."""
+        titel = self._titel(tmp_path, monkeypatch, "Een Roman.pdf", "sci-fi", drukwerk=False)
+        assert titel == "Iets Heel Anders"
