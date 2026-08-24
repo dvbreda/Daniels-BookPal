@@ -83,29 +83,35 @@ struct HomeView: View {
         }
     }
 
+    /// Dezelfde balk als in de bibliotheek: icoon met kleine tekst eronder.
+    /// Twee balken die hetzelfde doen maar er anders uitzien is verwarrend, en
+    /// met zes categorieën passen tekstchips toch niet meer.
     private var soortbalk: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 0) {
             ForEach(Soortfilter.allCases) { keuze in
+                let actief = soort == keuze
                 Button {
                     soortRuw = keuze.rawValue
                 } label: {
-                    Text(keuze.naam)
-                        .font(.subheadline)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 6)
-                        .background(
-                            Capsule().fill(
-                                soort == keuze ? Color.accentColor : Color(.secondarySystemBackground)
-                            )
-                        )
-                        .foregroundStyle(soort == keuze ? .white : .primary)
+                    VStack(spacing: 3) {
+                        Image(systemName: keuze.icoon)
+                            .font(.system(size: 17))
+                            .symbolVariant(actief ? .fill : .none)
+                        Text(keuze.naam)
+                            .font(.system(size: 10))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .foregroundStyle(actief ? Color.accentColor : Color.secondary)
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            Spacer()
         }
-        .padding(.horizontal)
-        .padding(.bottom, 8)
+        .padding(.horizontal, 4)
+        .padding(.bottom, 6)
     }
 
     private func railView(_ rail: HomeRail) -> some View {
@@ -166,12 +172,19 @@ struct HomeView: View {
     }
 
     private func haal() async {
-        guard let client = instellingen.client else {
-            fout = ClientFout.geenAdres.localizedDescription
-            return
-        }
         laadt = true
         defer { laadt = false }
+
+        // Zonder client — geen adres, of de offlinestand staat aan — niet
+        // afhaken met een foutmelding maar tonen wat er bewaard is. Dat is
+        // precies waar die stand voor bedoeld is.
+        guard let client = instellingen.client else {
+            rails = Bibliotheekcache.lees(Home.self, sleutel: "home")?.rails ?? []
+            vanCache = true
+            fout = rails.isEmpty ? "Er staat nog niets op dit toestel." : nil
+            return
+        }
+
         let (resultaat, terugval) = await Bibliotheekcache.metTerugval(sleutel: "home") {
             try await client.home()
         }

@@ -246,12 +246,20 @@ struct BibliotheekView: View {
     }
 
     private func haal() async {
-        guard let client = instellingen.client else {
-            fout = ClientFout.geenAdres.localizedDescription
-            return
-        }
         laadt = true
         defer { laadt = false }
+
+        guard let client = instellingen.client else {
+            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)-\(zoek)"
+            let bewaard = Bibliotheekcache.lees(Paginated<Series>.self, sleutel: sleutel)
+            let aanwezig = await Paginacache.gedeeld.seriesMetInhoud()
+            series = (bewaard?.items ?? []).filter { aanwezig.contains($0.id) }
+            vanCache = true
+            fout = series.isEmpty
+                ? "Er staan nog geen pagina's van deze categorie op dit toestel."
+                : nil
+            return
+        }
         // Een tab compileert op de server naar een query; die kunnen we
         // zonder NAS niet nabouwen, dus de terugval geldt alleen als er geen
         // tab gekozen is. Een gekozen tab zonder NAS toont dan niet ten
