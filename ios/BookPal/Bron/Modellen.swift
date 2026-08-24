@@ -117,6 +117,10 @@ struct Book: Codable, Sendable, Identifiable, Hashable {
     let hasFile: Bool
     let fromSource: Bool
     let extensionName: String?
+    /// Wanneer dit verscheen, uit de bestandsnaam. Los van wanneer jij het
+    /// binnenhaalde — bij een tijdschrift is dit wat het nummer ís.
+    let publishedYear: Int?
+    let publishedMonth: Int?
     let progress: Progress?
     let editionName: String?
     let editionLanguage: String?
@@ -142,6 +146,16 @@ struct Book: Codable, Sendable, Identifiable, Hashable {
 
     var isReadable: Bool { hasFile && kind.hasFixedPages && (pageCount ?? 0) > 0 }
 
+    /// "september 2026", "1989", of niets. Kort, want dit staat onder een
+    /// omslag in een raster waar geen ruimte is voor een volzin.
+    var verschenen: String? {
+        guard let jaar = publishedYear else { return nil }
+        guard let maand = publishedMonth, (1...12).contains(maand) else { return String(jaar) }
+        let namen = ["jan", "feb", "mrt", "apr", "mei", "jun",
+                     "jul", "aug", "sep", "okt", "nov", "dec"]
+        return "\(namen[maand - 1]) \(jaar)"
+    }
+
     // Op id vergelijken en hashen: de rest van de velden verandert (voortgang!)
     // zonder dat het een ander boek wordt, en navigatie hoort daar niet op te
     // reageren.
@@ -156,6 +170,8 @@ struct Book: Codable, Sendable, Identifiable, Hashable {
         case hasFile = "has_file"
         case fromSource = "from_source"
         case extensionName = "extension"
+        case publishedYear = "published_year"
+        case publishedMonth = "published_month"
         case editionName = "edition_name"
         case editionLanguage = "edition_language"
         case editionNote = "edition_note"

@@ -119,10 +119,14 @@ struct Client: Sendable {
 
     /// De bibliotheek, gefilterd. Dezelfde parameters als de web-app gebruikt;
     /// de tab-regels blijven op de server, waar ze naar een query compileren.
-    func series(filter: Bibliotheekfilter, zoek: String? = nil, limiet: Int = 200) async throws
-        -> Paginated<Series>
-    {
+    func series(
+        filter: Bibliotheekfilter,
+        zoek: String? = nil,
+        sortering: Sortering = .naam,
+        limiet: Int = 200
+    ) async throws -> Paginated<Series> {
         var items = [URLQueryItem(name: "limit", value: String(limiet))]
+        items.append(URLQueryItem(name: "sort", value: sortering.rawValue))
         if let zoek, !zoek.isEmpty { items.append(URLQueryItem(name: "search", value: zoek)) }
         if let groep = filter.groep.query { items.append(URLQueryItem(name: "group", value: groep)) }
         if let soort = filter.soort { items.append(URLQueryItem(name: "kind", value: soort.rawValue)) }

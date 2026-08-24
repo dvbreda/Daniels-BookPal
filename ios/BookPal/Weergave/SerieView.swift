@@ -12,6 +12,11 @@ struct SerieView: View {
     /// Dezelfde sleutel als de web-app: wie daar gelezen hoofdstukken verbergt,
     /// wil dat hier ook.
     @AppStorage("series.hideRead") private var verbergGelezen = false
+    /// Omslagen of een lijst. Bij een tijdschrift wil je de covers zien — die
+    /// dragen daar de herkenning, want "nummer 412" zegt je niets en die ene
+    /// kaft wel. Bij een reeks waar elk deel er hetzelfde uitziet is een lijst
+    /// juist rustiger, dus het is een keuze en geen automatisme.
+    @AppStorage("series.coverGrid") private var omslagen = false
 
     private var boeken: [Book] {
         guard let detail else { return [] }
@@ -38,6 +43,13 @@ struct SerieView: View {
         // strip in plaats van navigatie.
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Toggle(isOn: $omslagen) {
+                    Label("Omslagen", systemImage: omslagen ? "square.grid.2x2.fill" : "square.grid.2x2")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Toggle(isOn: $verbergGelezen) {
                     Label("Gelezen verbergen", systemImage: verbergGelezen ? "eye.slash" : "eye")
@@ -66,6 +78,9 @@ struct SerieView: View {
                     Text("Alles gelezen. Zet het oogje uit om ze weer te zien.")
                         .foregroundStyle(.secondary)
                 }
+            } else if omslagen {
+                Section(kop(detail)) { omslagraster }
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
             } else {
                 Section(kop(detail)) {
                     ForEach(boeken) { boek in
@@ -75,6 +90,60 @@ struct SerieView: View {
             }
         }
         .listStyle(.plain)
+    }
+
+    /// De omslagen naast elkaar, met het nummer en de verschijningsdatum
+    /// eronder. Geen voortgangsbalk: die past niet in een tegel van honderd
+    /// punten breed, en bij een tijdschrift blader je toch zelden halverwege
+    /// weg.
+    private var omslagraster: some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 14) {
+            ForEach(boeken) { boek in
+                NavigationLink {
+                    if boek.kind == .epub { EpubLezerView(boek: boek) } else { LezerView(boek: boek) }
+                } label: {
+                    omslagtegel(boek)
+                }
+                .buttonStyle(.plain)
+                .disabled(!boek.isReadable && !(boek.kind == .epub && boek.hasFile))
+            }
+        }
+    }
+
+    private func omslagtegel(_ boek: Book) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ZStack(alignment: .topTrailing) {
+                if let client = instellingen.client {
+                    OmslagView(url: client.boekOmslagURL(boek: boek.id), titel: boek.label)
+                }
+                if boek.progress?.finished == true {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .background(Circle().fill(.background))
+                        .padding(5)
+                }
+            }
+            Text(kort(boek))
+                .font(.caption2)
+                .lineLimit(1)
+            if let verschenen = boek.verschenen {
+                Text(verschenen)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else if !boek.hasFile {
+                Text("nog online").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// Kort label onder een omslag: het nummer als dat er is, anders de titel.
+    /// In een tegel van honderd punten past geen "Deel 3, hoofdstuk 12 — …".
+    private func kort(_ boek: Book) -> String {
+        if let nummer = boek.number {
+            return boek.volume.map { "jg \($0) · \(nummer)" } ?? "nr \(nummer)"
+        }
+        return boek.title
     }
 
     private func kop(_ detail: SeriesDetail) -> String {

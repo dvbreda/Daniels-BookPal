@@ -14,6 +14,29 @@ struct BibliotheekView: View {
     @State private var toontFilter = false
     /// Zie `HomeView` — dezelfde terugval, dezelfde balk.
     @State private var vanCache = false
+    /// Per categorie onthouden: bij tijdschriften wil je het nieuwste nummer
+    /// bovenaan, bij je strips de reeksnaam. Eén keuze voor alles zou je bij
+    /// elke tabwissel opnieuw laten omzetten.
+    @AppStorage("library.sortPerGroup") private var sorteringRuw = ""
+
+    private var sortering: Sortering {
+        get {
+            let bewaard = sorteringRuw
+                .split(separator: ",")
+                .first { $0.hasPrefix(filter.groep.rawValue + ":") }?
+                .split(separator: ":").last
+            return bewaard.flatMap { Sortering(rawValue: String($0)) }
+                ?? Sortering.standaard(voor: filter.groep)
+        }
+        nonmutating set {
+            var delen = sorteringRuw
+                .split(separator: ",")
+                .filter { !$0.hasPrefix(filter.groep.rawValue + ":") }
+                .map(String.init)
+            delen.append("\(filter.groep.rawValue):\(newValue.rawValue)")
+            sorteringRuw = delen.joined(separator: ",")
+        }
+    }
 
     private let kolommen = [GridItem(.adaptive(minimum: 110), spacing: 12)]
 
@@ -37,6 +60,20 @@ struct BibliotheekView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        Picker("Sorteren", selection: Binding(
+                            get: { sortering },
+                            set: { sortering = $0 }
+                        )) {
+                            ForEach(Sortering.allCases) { keuze in
+                                Label(keuze.naamgeving, systemImage: keuze.icoon).tag(keuze)
+                            }
+                        }
+                    } label: {
+                        Label("Sorteren", systemImage: "arrow.up.arrow.down")
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         toontInstellingen = true
                     } label: {
@@ -51,6 +88,7 @@ struct BibliotheekView: View {
                 FilterSheet(filter: $filter, roots: roots)
             }
             .onChange(of: filter) { _, _ in Task { await haal() } }
+        .onChange(of: sorteringRuw) { _, _ in Task { await haal() } }
             .task { await start() }
             .refreshable { await haal() }
         }
@@ -206,9 +244,9 @@ struct BibliotheekView: View {
             resultaat = try? await client.tabSeries(tab, groep: filter.groep, zoek: zoek)
             terugval = false
         } else {
-            let sleutel = "series-\(filter.groep.rawValue)-\(zoek)"
+            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)-\(zoek)"
             (resultaat, terugval) = await Bibliotheekcache.metTerugval(sleutel: sleutel) {
-                try await client.series(filter: filter, zoek: zoek)
+                try await client.series(filter: filter, zoek: zoek, sortering: sortering)
             }
         }
         vanCache = terugval
