@@ -566,6 +566,20 @@ struct Home: Codable, Sendable {
 }
 
 /// De panelen van één pagina, zoals de server ze vond.
+/// Een voorgesteld Wikipedia-artikel bij een serie.
+struct Wikisuggestie: Decodable, Sendable, Identifiable {
+    let rol: String
+    let voor: String
+    let title: String
+    let key: String
+    let description: String?
+    let lang: String
+
+    var id: String { "\(lang):\(key)" }
+
+    var overDeReeks: Bool { rol == "reeks" }
+}
+
 struct PanelsAntwoord: Decodable, Sendable {
     struct Vak: Decodable, Sendable {
         let box: [Double]

@@ -164,6 +164,26 @@ struct Client: Sendable {
         return try await haal("api/tabs/\(tab)/series", query: items)
     }
 
+    /// Wat er op Wikipedia over deze reeks en zijn makers staat. De server
+    /// kiest de zoektermen — die kent de titel en de auteurs al.
+    func wikiVoorSerie(_ serie: Int, taal: String = "nl") async throws -> [Wikisuggestie] {
+        try await haal(
+            "api/wiki/for-series/\(serie)", query: [URLQueryItem(name: "lang", value: taal)]
+        )
+    }
+
+    /// Het artikel als epub, zodat het in dezelfde lezer opengaat als je boeken.
+    func wikiEpubURL(sleutel: String, taal: String) -> URL? {
+        var onderdelen = URLComponents(
+            url: basis.appending(path: "api/wiki/article.epub"), resolvingAgainstBaseURL: false
+        )
+        onderdelen?.queryItems = [
+            URLQueryItem(name: "key", value: sleutel),
+            URLQueryItem(name: "lang", value: taal),
+        ]
+        return onderdelen?.url
+    }
+
     func tabs() async throws -> [Bibliotheektab] {
         try await haal("api/tabs")
     }

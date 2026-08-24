@@ -22,6 +22,11 @@ struct SerieView: View {
     /// maar een muur.
     @State private var openJaargangen: Set<String> = []
     @State private var mappen: [LibraryRoot] = []
+    @State private var wiki: [Wikisuggestie] = []
+    /// Dezelfde sleutel als de bibliotheek: hier omzetten zet het daar ook om.
+    /// Eén begrip van "omgekeerd" in de hele app is minder verwarrend dan twee
+    /// die uit de pas kunnen lopen.
+    @AppStorage("library.sortDesc") private var omgekeerd = false
 
     /// Hoe een deel hier heet. Bij Power Unlimited is "jaargang 17" juist, bij
     /// manga "deel 3" — en elke soort heeft zijn eigen bibliotheekmap, dus die
@@ -45,9 +50,10 @@ struct SerieView: View {
 
     private var boeken: [Book] {
         guard let detail else { return [] }
-        return verbergGelezen
+        let zichtbaar = verbergGelezen
             ? detail.books.filter { !($0.progress?.finished ?? false) }
             : detail.books
+        return omgekeerd ? zichtbaar.reversed() : zichtbaar
     }
 
     var body: some View {
@@ -68,6 +74,13 @@ struct SerieView: View {
         // strip in plaats van navigatie.
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Toggle(isOn: $omgekeerd) {
+                    Label("Omgekeerd", systemImage: "arrow.up.arrow.down")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Toggle(isOn: $omslagen) {
                     Label("Omslagen", systemImage: omslagen ? "square.grid.2x2.fill" : "square.grid.2x2")
@@ -96,6 +109,7 @@ struct SerieView: View {
     private func lijst(_ detail: SeriesDetail) -> some View {
         List {
             if let verder { verderSectie(verder) }
+            if !wiki.isEmpty { wikiSectie }
 
             if let samenvatting = detail.summary, !samenvatting.isEmpty {
                 Section("Over deze reeks") {
@@ -124,6 +138,50 @@ struct SerieView: View {
             }
         }
         .listStyle(.plain)
+    }
+
+    /// Achtergrond van Wikipedia, boven de delen.
+    ///
+    /// Een los paneel en niet ergens onderin: dit is wat je wilt lezen vóórdat
+    /// je aan een reeks begint, en bij een tijdschrift met tweeëndertig
+    /// jaargangen zou het anders onvindbaar diep staan.
+    ///
+    /// Het opent als epub in dezelfde lezer als je boeken — dat is wat de
+    /// server ervan maakt, dus het leest als alle andere tekst hier.
+    @ViewBuilder
+    private var wikiSectie: some View {
+        Section {
+            ForEach(wiki) { suggestie in
+                if let client = instellingen.client,
+                   let adres = client.wikiEpubURL(sleutel: suggestie.key, taal: suggestie.lang) {
+                    Link(destination: adres) {
+                        HStack(spacing: 10) {
+                            Image(systemName: suggestie.overDeReeks ? "books.vertical" : "person")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(suggestie.title).font(.callout)
+                                Text(
+                                    suggestie.description
+                                        ?? (suggestie.overDeReeks ? "over de reeks" : suggestie.voor)
+                                )
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                            }
+                            Spacer()
+                            Text(suggestie.lang.uppercased())
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+        } header: {
+            Text("Achtergrond")
+        } footer: {
+            Text("Artikelen van Wikipedia, als epub. Ze openen in je browser of leesapp.")
+        }
     }
 
     /// Eén jaargang, dichtgeklapt tot je erop tikt.
@@ -372,6 +430,9 @@ struct SerieView: View {
         do {
             detail = try await client.serie(serieID)
             if mappen.isEmpty { mappen = (try? await client.roots()) ?? [] }
+            // Mag mislukken: Wikipedia is achtergrond, geen voorwaarde om te
+            // kunnen lezen.
+            wiki = (try? await client.wikiVoorSerie(serieID, taal: instellingen.taal)) ?? []
             // Mag ontbreken: bij een uitgelezen serie is er niets om verder te
             // lezen, en dat is geen fout.
             verder = try? await client.verderLezen(serie: serieID)
