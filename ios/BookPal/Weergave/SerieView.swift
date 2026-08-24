@@ -17,6 +17,22 @@ struct SerieView: View {
     /// kaft wel. Bij een reeks waar elk deel er hetzelfde uitziet is een lijst
     /// juist rustiger, dus het is een keuze en geen automatisme.
     @AppStorage("series.coverGrid") private var omslagen = false
+    /// Welke jaargangen openstaan. Bij Power Unlimited zijn het er
+    /// tweeëndertig met 351 nummers; alles tegelijk tonen is geen lijst meer
+    /// maar een muur.
+    @State private var openJaargangen: Set<String> = []
+
+    /// De delen per jaargang, nieuwste eerst. Leeg als er geen jaargangen
+    /// zijn — dan is groeperen alleen maar een extra tik.
+    private var perJaargang: [(jaargang: String, delen: [Book])] {
+        let metJaargang = boeken.compactMap { boek in boek.volume.map { ($0, boek) } }
+        guard metJaargang.count == boeken.count, Set(metJaargang.map(\.0)).count > 1 else {
+            return []
+        }
+        return Dictionary(grouping: metJaargang, by: \.0)
+            .map { (jaargang: $0.key, delen: $0.value.map(\.1)) }
+            .sorted { (Double($0.jaargang) ?? 0) > (Double($1.jaargang) ?? 0) }
+    }
 
     private var boeken: [Book] {
         guard let detail else { return [] }
@@ -60,6 +76,11 @@ struct SerieView: View {
         }
         .task { await haal() }
         .refreshable { await haal() }
+        .onChange(of: detail?.id) { _, _ in
+            // De nieuwste jaargang open, de rest dicht. Dat is waar je bij een
+            // lopend tijdschrift begint te kijken.
+            if let eerste = perJaargang.first?.jaargang { openJaargangen = [eerste] }
+        }
     }
 
     @ViewBuilder
@@ -78,8 +99,12 @@ struct SerieView: View {
                     Text("Alles gelezen. Zet het oogje uit om ze weer te zien.")
                         .foregroundStyle(.secondary)
                 }
+            } else if !perJaargang.isEmpty {
+                ForEach(perJaargang, id: \.jaargang) { groep in
+                    jaargangSectie(groep.jaargang, groep.delen)
+                }
             } else if omslagen {
-                Section(kop(detail)) { omslagraster }
+                Section(kop(detail)) { omslagraster(boeken) }
                     .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
             } else {
                 Section(kop(detail)) {
@@ -92,13 +117,48 @@ struct SerieView: View {
         .listStyle(.plain)
     }
 
+    /// Eén jaargang, dichtgeklapt tot je erop tikt.
+    ///
+    /// Standaard dicht, behalve de nieuwste: bij tweeëndertig jaargangen wil je
+    /// een overzicht zien en niet meteen 351 regels. De kop zegt hoeveel er in
+    /// zitten, zodat je weet of het de moeite is om open te klappen.
+    @ViewBuilder
+    private func jaargangSectie(_ jaargang: String, _ delen: [Book]) -> some View {
+        let open = openJaargangen.contains(jaargang)
+        Section {
+            if open {
+                if omslagen {
+                    omslagraster(delen)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                } else {
+                    ForEach(delen) { boek in rij(boek) }
+                }
+            }
+        } header: {
+            Button {
+                if open { openJaargangen.remove(jaargang) } else { openJaargangen.insert(jaargang) }
+            } label: {
+                HStack {
+                    Image(systemName: open ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                    Text("Jaargang \(jaargang)")
+                    Spacer()
+                    Text("\(delen.count)")
+                        .foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// De omslagen naast elkaar, met het nummer en de verschijningsdatum
     /// eronder. Geen voortgangsbalk: die past niet in een tegel van honderd
     /// punten breed, en bij een tijdschrift blader je toch zelden halverwege
     /// weg.
-    private var omslagraster: some View {
+    private func omslagraster(_ delen: [Book]) -> some View {
         LazyVGrid(columns: [GridItem(.adaptive(minimum: 100), spacing: 10)], spacing: 14) {
-            ForEach(boeken) { boek in
+            ForEach(delen) { boek in
                 NavigationLink {
                     if boek.kind == .epub { EpubLezerView(boek: boek) } else { LezerView(boek: boek) }
                 } label: {
