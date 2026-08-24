@@ -88,12 +88,25 @@ struct Client: Sendable {
         return onderdelen?.url
     }
 
-    func omslagURL(serie: Int) -> URL {
-        basis.appending(path: "api/series/\(serie)/cover")
+    /// Het profiel waarin omslagen binnenkomen. `thumb` is 320px breed —
+    /// ruim voor een tegel van honderd punten op 3x, en klein genoeg dat de
+    /// hele bibliotheek aan omslagen op je toestel past.
+    static let omslagProfiel = "thumb"
+
+    func omslagURL(serie: Int, profiel: String = Client.omslagProfiel) -> URL {
+        var onderdelen = URLComponents(
+            url: basis.appending(path: "api/series/\(serie)/cover"), resolvingAgainstBaseURL: false
+        )
+        onderdelen?.queryItems = [URLQueryItem(name: "profile", value: profiel)]
+        return onderdelen?.url ?? basis.appending(path: "api/series/\(serie)/cover")
     }
 
-    func boekOmslagURL(boek: Int) -> URL {
-        basis.appending(path: "api/books/\(boek)/cover")
+    func boekOmslagURL(boek: Int, profiel: String = Client.omslagProfiel) -> URL {
+        var onderdelen = URLComponents(
+            url: basis.appending(path: "api/books/\(boek)/cover"), resolvingAgainstBaseURL: false
+        )
+        onderdelen?.queryItems = [URLQueryItem(name: "profile", value: profiel)]
+        return onderdelen?.url ?? basis.appending(path: "api/books/\(boek)/cover")
     }
 
     // MARK: - Lezen
@@ -123,10 +136,12 @@ struct Client: Sendable {
         filter: Bibliotheekfilter,
         zoek: String? = nil,
         sortering: Sortering = .naam,
+        omgekeerd: Bool = false,
         limiet: Int = 200
     ) async throws -> Paginated<Series> {
         var items = [URLQueryItem(name: "limit", value: String(limiet))]
         items.append(URLQueryItem(name: "sort", value: sortering.rawValue))
+        if omgekeerd { items.append(URLQueryItem(name: "desc", value: "true")) }
         if let zoek, !zoek.isEmpty { items.append(URLQueryItem(name: "search", value: zoek)) }
         if let groep = filter.groep.query { items.append(URLQueryItem(name: "group", value: groep)) }
         if let soort = filter.soort { items.append(URLQueryItem(name: "kind", value: soort.rawValue)) }

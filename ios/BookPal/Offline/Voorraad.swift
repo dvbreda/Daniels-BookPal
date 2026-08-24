@@ -28,6 +28,7 @@ final class Voorraad {
     enum Stand: Equatable {
         case stil
         case sidecars(klaar: Int, totaal: Int)
+        case omslagen
         case paginas(klaar: Int, van: String)
         case vol
         /// De server had het te druk; we proberen het later nog eens.
@@ -111,6 +112,18 @@ final class Voorraad {
             // Abonnementen achteraan: die haal je toch weer op.
             if links.fromSource != rechts.fromSource { return !links.fromSource }
             return links.sortTitle < rechts.sortTitle
+        }
+
+        // Eerst alle omslagen, van élke serie. Ze zijn klein (320px) en ze
+        // zijn wat je offline als eerste mist: zonder omslag is een
+        // bibliotheek een raster grijze vakjes waarin niets te herkennen valt.
+        // Ze tellen niet mee in het paginabudget.
+        stand = .omslagen
+        for serie in series {
+            if Task.isCancelled { return }
+            let adres = client.omslagURL(serie: serie.id)
+            _ = try? await URLSession.shared.data(from: adres)
+            try? await Task.sleep(for: Self.pauze)
         }
 
         var opgehaald = 0

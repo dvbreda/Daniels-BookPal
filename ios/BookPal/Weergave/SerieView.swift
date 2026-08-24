@@ -21,6 +21,15 @@ struct SerieView: View {
     /// tweeëndertig met 351 nummers; alles tegelijk tonen is geen lijst meer
     /// maar een muur.
     @State private var openJaargangen: Set<String> = []
+    @State private var mappen: [LibraryRoot] = []
+
+    /// Hoe een deel hier heet. Bij Power Unlimited is "jaargang 17" juist, bij
+    /// manga "deel 3" — en elke soort heeft zijn eigen bibliotheekmap, dus die
+    /// map is het hele antwoord. Geen serverveld voor nodig.
+    private var deelwoord: String {
+        let pad = mappen.first { $0.id == detail?.libraryRootID }?.path ?? ""
+        return pad.contains("tijdschriften") || pad.contains("print") ? "Jaargang" : "Deel"
+    }
 
     /// De delen per jaargang, nieuwste eerst. Leeg als er geen jaargangen
     /// zijn — dan is groeperen alleen maar een extra tik.
@@ -88,12 +97,7 @@ struct SerieView: View {
         List {
             if let verder { verderSectie(verder) }
 
-            if let samenvatting = detail.summary, !samenvatting.isEmpty {
-                Section {
-                    Text(samenvatting).font(.callout).foregroundStyle(.secondary)
-                }
-            }
-
+            // De samenvatting staat bij "lees verder" en niet nog een keer los.
             if boeken.isEmpty && verbergGelezen {
                 Section {
                     Text("Alles gelezen. Zet het oogje uit om ze weer te zien.")
@@ -141,7 +145,7 @@ struct SerieView: View {
                 HStack {
                     Image(systemName: open ? "chevron.down" : "chevron.right")
                         .font(.caption2)
-                    Text("Jaargang \(jaargang)")
+                    Text("\(deelwoord) \(jaargang)")
                     Spacer()
                     Text("\(delen.count)")
                         .foregroundStyle(.secondary)
@@ -250,14 +254,35 @@ struct SerieView: View {
         }
     }
 
+    /// Waar je verder leest, met de omslag van dát deel ernaast.
+    ///
+    /// Een regel tekst zegt bij een tijdschrift met 351 nummers weinig; de kaft
+    /// van het nummer waar je in zit wél. De samenvatting van de serie staat
+    /// eronder als die er is — bij een boek is dat de flaptekst, en die wil je
+    /// juist hier zien en niet drie secties lager.
     private func label(_ verder: VerderLezen) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(verder.resuming ? "Lees verder" : "Beginnen")
-                .font(.headline)
-            Text(verder.title + (verder.hasFile ? "" : " — moet nog opgehaald"))
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        HStack(alignment: .top, spacing: 12) {
+            if let client = instellingen.client {
+                OmslagView(url: client.boekOmslagURL(boek: verder.bookID), titel: verder.title)
+                    .frame(width: 64)
+            }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(verder.resuming ? "Lees verder" : "Beginnen")
+                    .font(.headline)
+                Text(verder.title + (verder.hasFile ? "" : " — moet nog opgehaald"))
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                if let samenvatting = detail?.summary, !samenvatting.isEmpty {
+                    Text(samenvatting)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
+            Spacer(minLength: 0)
         }
+        .padding(.vertical, 2)
     }
 
     @ViewBuilder
@@ -332,6 +357,7 @@ struct SerieView: View {
         }
         do {
             detail = try await client.serie(serieID)
+            if mappen.isEmpty { mappen = (try? await client.roots()) ?? [] }
             // Mag ontbreken: bij een uitgelezen serie is er niets om verder te
             // lezen, en dat is geen fout.
             verder = try? await client.verderLezen(serie: serieID)

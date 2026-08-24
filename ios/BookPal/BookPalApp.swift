@@ -3,6 +3,17 @@ import SwiftUI
 @main
 struct BookPalApp: App {
     @State private var instellingen = Instellingen()
+
+    init() {
+        // Ruimer dan de standaard van iOS, en op schijf. `AsyncImage` leest
+        // hieruit, dus dit is wat een omslag zonder NAS alsnog laat zien —
+        // zonder dit is de hele bibliotheek offline een raster grijze vakjes.
+        // Omslagen zijn klein (320px), dus 300 MB is er ruim genoeg voor.
+        URLCache.shared = URLCache(
+            memoryCapacity: 32 * 1024 * 1024,
+            diskCapacity: 300 * 1024 * 1024
+        )
+    }
     @Environment(\.scenePhase) private var fase
 
     var body: some Scene {

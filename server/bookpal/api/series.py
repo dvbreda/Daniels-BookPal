@@ -105,7 +105,7 @@ class SeriesSort(enum.StrEnum):
     TOEGEVOEGD = "toegevoegd"
 
 
-def _geordend(statement: SelectT, sort: SeriesSort) -> SelectT:
+def _geordend(statement: SelectT, sort: SeriesSort, *, omgekeerd: bool = False) -> SelectT:
     """De volgorde. Altijd met de titel als laatste sleutel, zodat twee series
     uit hetzelfde jaar niet bij elke aanroep van plek wisselen.
 
@@ -114,19 +114,25 @@ def _geordend(statement: SelectT, sort: SeriesSort) -> SelectT:
     jaargangen. Series zonder datum gaan achteraan in plaats van vooraan —
     onbekend is geen 1900.
     """
+    # Elke sortering heeft een natuurlijke kant: namen lopen van A naar Z,
+    # data van nieuw naar oud. `omgekeerd` klapt precies dát om, zodat de knop
+    # doet wat je verwacht ongeacht waarop je sorteert.
     if sort is SeriesSort.NAAM:
-        return statement.order_by(Series.sort_title)
+        titel = Series.sort_title.desc() if omgekeerd else Series.sort_title
+        return statement.order_by(titel)
 
     if sort is SeriesSort.TOEGEVOEGD:
         nieuwste = (
             select(func.max(Book.added_at)).where(Book.series_id == Series.id).scalar_subquery()
         )
-        return statement.order_by(nieuwste.desc().nulls_last(), Series.sort_title)
+        volgorde = nieuwste.asc().nulls_last() if omgekeerd else nieuwste.desc().nulls_last()
+        return statement.order_by(volgorde, Series.sort_title)
 
     jaar = (
         select(func.max(Book.published_year)).where(Book.series_id == Series.id).scalar_subquery()
     )
-    return statement.order_by(jaar.desc().nulls_last(), Series.sort_title)
+    volgorde = jaar.asc().nulls_last() if omgekeerd else jaar.desc().nulls_last()
+    return statement.order_by(volgorde, Series.sort_title)
 
 
 @router.get("", response_model=Paginated[SeriesOut])
@@ -137,6 +143,7 @@ def list_series(
     group: groups.SeriesGroup | None = None,
     search: str | None = Query(default=None, max_length=200),
     sort: SeriesSort = SeriesSort.NAAM,
+    desc: bool = Query(default=False, description="De sorteervolgorde omkeren."),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=60, ge=1, le=500),
     session: Session = Depends(get_session),
@@ -160,7 +167,9 @@ def list_series(
             search=search,
         )
     )
-    rows = session.scalars(_geordend(base, sort).offset(offset).limit(limit)).all()
+    rows = session.scalars(
+        _geordend(base, sort, omgekeerd=desc).offset(offset).limit(limit)
+    ).all()
     items = deps.series_out_list(session, list(rows))
 
     return Paginated(items=items, total=int(total or 0), offset=offset, limit=limit)

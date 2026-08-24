@@ -114,6 +114,7 @@ struct OfflineView: View {
         switch voorraad.stand {
         case .stil: return nil
         case .sidecars: return "Vertalingen ophalen…"
+        case .omslagen: return "Omslagen ophalen…"
         case let .paginas(klaar, van): return "\(klaar) pagina's opgehaald — nu «\(van)»"
         case .vol: return "De limiet is bereikt. Verhoog hem of vink minder series aan."
         case .wacht: return "De NAS had het druk — later gaat hij verder."

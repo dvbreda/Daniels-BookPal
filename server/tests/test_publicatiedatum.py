@@ -111,3 +111,9 @@ class TestDoorDeKeten:
         """Onbekend is geen 1900: die horen achteraan, niet bovenaan."""
         titels = [s["title"] for s in scanned.get("/api/series?sort=verschenen").json()["items"]]
         assert len(titels) == 4
+
+    def test_reversing_flips_the_order(self, scanned):
+        """Elke sortering heeft een natuurlijke kant; de knop klapt die om."""
+        heen = [s["id"] for s in scanned.get("/api/series?sort=naam").json()["items"]]
+        terug = [s["id"] for s in scanned.get("/api/series?sort=naam&desc=true").json()["items"]]
+        assert terug == list(reversed(heen))

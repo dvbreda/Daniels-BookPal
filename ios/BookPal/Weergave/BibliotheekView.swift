@@ -18,6 +18,9 @@ struct BibliotheekView: View {
     /// bovenaan, bij je strips de reeksnaam. Eén keuze voor alles zou je bij
     /// elke tabwissel opnieuw laten omzetten.
     @AppStorage("library.sortPerGroup") private var sorteringRuw = ""
+    /// Elke sortering heeft een natuurlijke kant — namen van A naar Z, data van
+    /// nieuw naar oud. Dit klapt die om.
+    @AppStorage("library.sortDesc") private var omgekeerd = false
 
     private var sortering: Sortering {
         get {
@@ -69,6 +72,10 @@ struct BibliotheekView: View {
                                 Label(keuze.naamgeving, systemImage: keuze.icoon).tag(keuze)
                             }
                         }
+                        Divider()
+                        Toggle(isOn: $omgekeerd) {
+                            Label("Omgekeerd", systemImage: "arrow.up.arrow.down.circle")
+                        }
                     } label: {
                         Label("Sorteren", systemImage: "arrow.up.arrow.down")
                     }
@@ -89,6 +96,7 @@ struct BibliotheekView: View {
             }
             .onChange(of: filter) { _, _ in Task { await haal() } }
         .onChange(of: sorteringRuw) { _, _ in Task { await haal() } }
+            .onChange(of: omgekeerd) { _, _ in Task { await haal() } }
             .task { await start() }
             .refreshable { await haal() }
         }
@@ -250,7 +258,7 @@ struct BibliotheekView: View {
         defer { laadt = false }
 
         guard let client = instellingen.client else {
-            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)-\(zoek)"
+            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)\(omgekeerd ? "-omg" : "")-\(zoek)"
             let bewaard = Bibliotheekcache.lees(Paginated<Series>.self, sleutel: sleutel)
             let aanwezig = await Paginacache.gedeeld.seriesMetInhoud()
             series = (bewaard?.items ?? []).filter { aanwezig.contains($0.id) }
@@ -270,9 +278,9 @@ struct BibliotheekView: View {
             resultaat = try? await client.tabSeries(tab, groep: filter.groep, zoek: zoek)
             terugval = false
         } else {
-            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)-\(zoek)"
+            let sleutel = "series-\(filter.groep.rawValue)-\(sortering.rawValue)\(omgekeerd ? "-omg" : "")-\(zoek)"
             (resultaat, terugval) = await Bibliotheekcache.metTerugval(sleutel: sleutel) {
-                try await client.series(filter: filter, zoek: zoek, sortering: sortering)
+                try await client.series(filter: filter, zoek: zoek, sortering: sortering, omgekeerd: omgekeerd)
             }
         }
         vanCache = terugval || instellingen.alleenOffline

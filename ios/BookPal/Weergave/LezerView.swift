@@ -1,7 +1,17 @@
 import SwiftUI
 
 struct LezerView: View {
-    let boek: Book
+    /// Waarmee de lezer geopend werd; `boek` schuift daarna door.
+    let beginBoek: Book
+
+    /// Welk deel er nu open ligt.
+    ///
+    /// Het volgende hoofdstuk vervangt dit in plaats van een nieuwe lezer op de
+    /// stapel te duwen. Dat deed het eerst wel, en bij een tijdschrift met 351
+    /// nummers betekende dat: tien nummers doorlezen, tien keer terug drukken
+    /// voordat je weer bij het overzicht was. Eén keer terug hoort je terug te
+    /// brengen waar je vandaan kwam.
+    @State private var boek: Book
 
     @Environment(Instellingen.self) private var instellingen
     @Environment(\.dismiss) private var sluit
@@ -59,11 +69,11 @@ struct LezerView: View {
 
     // Het volgende hoofdstuk, om aan te bieden als je aan het eind bent.
     @State private var volgendAanbod: VolgendHoofdstuk?
-    @State private var volgendBoek: Book?
     @State private var aanbodWeg = false
 
     init(boek: Book) {
-        self.boek = boek
+        self.beginBoek = boek
+        _boek = State(initialValue: boek)
         _rechtsNaarLinks = State(initialValue: boek.rightToLeft)
     }
 
@@ -183,9 +193,6 @@ struct LezerView: View {
             verhuis(van: van, naar: naar)
         }
         .onChange(of: huidigePagina) { _, _ in aanbodWeg = false }
-        .navigationDestination(item: $volgendBoek) { boek in
-            LezerView(boek: boek)
-        }
         .onChange(of: bijsnijden) { _, _ in pasBewerkingToe() }
         .onChange(of: contrast) { _, _ in pasBewerkingToe() }
         .onDisappear {
@@ -496,6 +503,28 @@ struct LezerView: View {
         }
     }
 
+    /// Een ander deel in dezelfde lezer openen, met alles wat bij het vorige
+    /// hoorde opgeruimd. Zonder dat blijf je de pagina's, vertalingen en
+    /// panelen van het vorige nummer zien.
+    private func openVervangend(_ nieuw: Book) {
+        bewaartaak?.cancel()
+        boek = nieuw
+        rechtsNaarLinks = nieuw.rightToLeft
+        lader = nil
+        paneelbron = nil
+        vertalingen = [:]
+        kleuren = [:]
+        spreadIndex = 0
+        rastercel = 0
+        paneelpad = Paneelpad(pagina: 0, paneel: Paneelpad.overzicht)
+        startpagina = 0
+        doorlopendGeplaatst = false
+        volgendAanbod = nil
+        aanbodWeg = false
+        start()
+        Task { volgendAanbod = try? await instellingen.client?.volgendHoofdstuk(boek: nieuw.id) }
+    }
+
     /// Ben je aan het eind? Dan het volgende hoofdstuk aanbieden.
     ///
     /// Aanbieden en niet automatisch doorschuiven: doorlezen is een keuze, en
@@ -536,7 +565,8 @@ struct LezerView: View {
         guard let client = instellingen.client else { return }
         // Het hele boek ophalen: de lezer heeft leesrichting, paginacount en
         // voortgang nodig, en die zitten niet in het aanbod.
-        volgendBoek = try? await client.boek(volgende.bookID)
+        guard let nieuw = try? await client.boek(volgende.bookID) else { return }
+        openVervangend(nieuw)
     }
 
     // MARK: - Balk

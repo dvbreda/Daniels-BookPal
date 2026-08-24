@@ -183,6 +183,15 @@ struct SeriesDetail: Decodable, Sendable {
     let title: String
     let summary: String?
     let books: [Book]
+    /// In welke bibliotheekmap deze serie staat. Elke soort heeft zijn eigen
+    /// map, dus dit is alles wat de app hoeft te weten om te bepalen of een
+    /// deel een "jaargang" of een "deel" heet.
+    let libraryRootID: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id, title, summary, books
+        case libraryRootID = "library_root_id"
+    }
 }
 
 /// Eén tekstvlak uit een vertaalde pagina.
